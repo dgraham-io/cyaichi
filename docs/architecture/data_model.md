@@ -222,7 +222,7 @@ Example:
         "inputs": [{ "port": "in", "schema": "artifact/news_item" }],
         "outputs": [{ "port": "out", "schema": "artifact/enriched_item" }],
         "config": {
-          "prompt_ref": { "doc_id": "pppppppp-pppp-pppp-pppp-pppppppppppp", "ver_id": null, "selector": "head" }
+          "prompt_ref": { "doc_id": "<uuid>", "ver_id": null, "selector": "head" }
         }
       }
     ],
@@ -279,7 +279,7 @@ Example:
       },
       "node_id": "n_enrich",
       "derived_from": [
-        { "doc_id": "88888888-8888-8888-8888-888888888888", "ver_id": "77777777-7777-7777-7777-777777777777", "selector": "pinned" }
+        { "doc_id": "<uuid>", "ver_id": "<uuid>", "selector": "pinned" }
       ]
     }
   }

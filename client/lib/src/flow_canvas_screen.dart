@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:client/api/api_client.dart';
@@ -35,6 +36,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefWorkspaceIds = 'client.workspace_ids';
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
+  static const _prefNodeTypesCache = 'client.node_types.cache.v1';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   final LocalFileReader _localFileReader = createLocalFileReader();
@@ -44,10 +46,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   late final TextEditingController _outputFileController;
 
   late ApiClient _apiClient;
+  NodeTypeRegistry _nodeTypeRegistry = NodeTypeRegistry.fallback();
 
   String _serverBaseUrl = _defaultServerBaseUrl;
   String _workspaceDataRoot = _defaultWorkspaceDataRoot;
   bool _settingsLoaded = false;
+  String _nodeTypesStatus = 'cached/fallback';
 
   final List<String> _workspaceIds = <String>[];
   String? _selectedWorkspaceId;
@@ -126,9 +130,29 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         prefs.getStringList(_prefWorkspaceIds) ?? <String>[];
     final loadedSelectedWorkspace = prefs.getString(_prefSelectedWorkspaceId);
     final loadedAutoSetHead = prefs.getBool(_prefAutoSetHeadOnSave) ?? false;
+    final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
     _apiClient = ApiClient(baseUrl: loadedBaseUrl);
+
+    var loadedRegistry = NodeTypeRegistry.fallback();
+    if (nodeTypeCacheRaw != null && nodeTypeCacheRaw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(nodeTypeCacheRaw);
+        if (decoded is List<dynamic>) {
+          final cachedDefs = decoded
+              .whereType<Map<String, dynamic>>()
+              .map(NodeTypeDef.fromJson)
+              .toList(growable: false);
+          loadedRegistry = NodeTypeRegistry.fromServerNodeTypes(
+            cachedDefs,
+            source: NodeTypeRegistrySource.cached,
+          );
+        }
+      } catch (_) {
+        loadedRegistry = NodeTypeRegistry.fallback();
+      }
+    }
 
     if (!mounted) {
       return;
@@ -145,9 +169,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ? loadedSelectedWorkspace
           : null;
       _autoSetHeadOnSave = loadedAutoSetHead;
+      _nodeTypeRegistry = loadedRegistry;
+      _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
     });
 
+    unawaited(_refreshNodeTypesFromServer(showFailureSnack: true));
     await _refreshWorkspaceData();
   }
 
@@ -295,7 +322,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           DecoratedBox(
             decoration: const BoxDecoration(color: CyaichiTheme.surface),
             child: _PalettePanel(
-              nodeTypes: NodeTypeRegistry.all,
+              nodeTypes: _nodeTypeRegistry.all,
               onAddNode: _addNode,
             ),
           ),
@@ -372,7 +399,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                           _isPrimaryWriteNode(selectedNode.id),
                       nodeType: selectedNode == null
                           ? null
-                          : NodeTypeRegistry.byType(selectedNode.type),
+                          : _nodeTypeRegistry.byType(selectedNode.type),
                       onTitleChanged: (value) =>
                           _updateNodeTitle(selectedNode, value),
                       onConfigChanged: (key, value) =>
@@ -540,7 +567,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   Widget _buildNodeCard(BuildContext context, Node<Map<String, dynamic>> node) {
     final data = node.data;
-    final nodeType = NodeTypeRegistry.byType(node.type);
+    final nodeType = _nodeTypeRegistry.byType(node.type);
     final title = (data['title'] as String?)?.trim();
     final visibleTitle = (title == null || title.isEmpty)
         ? (nodeType?.displayName ?? node.type)
@@ -668,6 +695,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                         });
                       },
                     ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Node types: $_nodeTypesStatus',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -714,6 +749,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     });
     _apiClient.close();
     _apiClient = ApiClient(baseUrl: _serverBaseUrl);
+    await _refreshNodeTypesFromServer(showFailureSnack: true);
     await _persistSettings();
     await _refreshWorkspaceData();
     _showSnack('Settings saved');
@@ -793,6 +829,54 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     await _loadFlows();
     await _loadRuns();
     await _loadNotes();
+  }
+
+  Future<void> _refreshNodeTypesFromServer({
+    required bool showFailureSnack,
+  }) async {
+    try {
+      final defs = await _apiClient.getNodeTypes();
+      if (defs.isEmpty) {
+        throw ApiError(message: 'empty node type registry from server');
+      }
+      final nextRegistry = NodeTypeRegistry.fromServerNodeTypes(
+        defs,
+        source: NodeTypeRegistrySource.server,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = jsonEncode(
+        defs.map((item) => item.toJson()).toList(growable: false),
+      );
+      await prefs.setString(_prefNodeTypesCache, encoded);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _nodeTypeRegistry = nextRegistry;
+        _nodeTypesStatus = _nodeTypesStatusLabel(nextRegistry.source);
+      });
+    } on ApiError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _nodeTypesStatus = _nodeTypesStatusLabel(_nodeTypeRegistry.source);
+      });
+      if (showFailureSnack) {
+        _showSnack('Node types fetch failed. Using cached/fallback registry.');
+      }
+      debugPrint('node types fetch failed: ${_formatApiError(error)}');
+    }
+  }
+
+  String _nodeTypesStatusLabel(NodeTypeRegistrySource source) {
+    switch (source) {
+      case NodeTypeRegistrySource.server:
+        return 'server';
+      case NodeTypeRegistrySource.cached:
+      case NodeTypeRegistrySource.fallback:
+        return 'cached/fallback';
+    }
   }
 
   Future<void> _loadFlows() async {
@@ -1359,6 +1443,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             ),
           )
           .toList(growable: false),
+      nodeTypeLookup: _nodeTypeRegistry.byType,
     );
 
     final message = <String>[
@@ -1992,7 +2077,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final rawConfig = Map<String, dynamic>.from(item.config);
       final ui = rawConfig['_ui'];
       final uiMap = ui is Map<String, dynamic> ? ui : <String, dynamic>{};
-      final nodeType = NodeTypeRegistry.byType(item.type);
+      final nodeType = _nodeTypeRegistry.byType(item.type);
       final inputs = item.inputs.isNotEmpty
           ? item.inputs
           : (nodeType?.inputs.map((port) => port.toFlowPort()).toList() ??
@@ -2064,7 +2149,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   void _addNode(String typeId) {
-    final template = NodeTypeRegistry.createTemplate(typeId);
+    final template = _nodeTypeRegistry.createTemplate(typeId);
     final nodeId = _uuid.v4();
     final title = '${template.displayName} $_nodeCounter';
     final position = Offset(
@@ -2130,7 +2215,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   void _updateNodeConfig(
     Node<Map<String, dynamic>>? node,
     String key,
-    String value,
+    dynamic value,
   ) {
     if (node == null) {
       return;
@@ -2138,7 +2223,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
     setState(() {
       final config = _readConfig(node.data);
-      if (value.trim().isEmpty) {
+      if (value is String && value.trim().isEmpty) {
         config.remove(key);
       } else {
         config[key] = value;
@@ -2151,7 +2236,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   _collectCanvasFlowSnapshot() {
     final nodes = _controller.nodes.values
         .map((node) {
-          final nodeType = NodeTypeRegistry.byType(node.type);
+          final nodeType = _nodeTypeRegistry.byType(node.type);
           final fallbackInputs = _readFlowPorts(node.data['inputs']);
           final fallbackOutputs = _readFlowPorts(node.data['outputs']);
           final inputs = nodeType != null
@@ -2438,6 +2523,13 @@ class _PalettePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final grouped = <String, List<NodeTypeDefinition>>{};
+    for (final type in nodeTypes) {
+      grouped
+          .putIfAbsent(type.category, () => <NodeTypeDefinition>[])
+          .add(type);
+    }
+
     return SizedBox(
       width: 220,
       child: Padding(
@@ -2447,16 +2539,26 @@ class _PalettePanel extends StatelessWidget {
           children: [
             Text('Nodes', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
-            ...nodeTypes.map((nodeType) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: FilledButton.icon(
-                  key: Key('add-${nodeType.typeId}'),
-                  onPressed: () => onAddNode(nodeType.typeId),
-                  icon: Icon(nodeType.icon),
-                  label: Text('Add ${nodeType.typeId}'),
+            ...grouped.entries.expand((entry) sync* {
+              yield Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  entry.key.toUpperCase(),
+                  style: Theme.of(context).textTheme.labelMedium,
                 ),
               );
+              for (final nodeType in entry.value) {
+                yield Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: FilledButton.icon(
+                    key: Key('add-${nodeType.typeId}'),
+                    onPressed: () => onAddNode(nodeType.typeId),
+                    icon: Icon(nodeType.icon),
+                    label: Text(nodeType.displayName),
+                  ),
+                );
+              }
+              yield const SizedBox(height: 6);
             }),
             const SizedBox(height: 24),
             Text(
@@ -2488,7 +2590,7 @@ class _InspectorPanel extends StatelessWidget {
   final bool isPrimaryWriteNode;
   final NodeTypeDefinition? nodeType;
   final ValueChanged<String> onTitleChanged;
-  final void Function(String key, String value) onConfigChanged;
+  final void Function(String key, dynamic value) onConfigChanged;
   final Future<void> Function() onDeleteNode;
   final Future<void> Function() onDeleteConnection;
   final VoidCallback? onSetPrimaryOutput;
@@ -2559,20 +2661,34 @@ class _InspectorPanel extends StatelessWidget {
             final label = field.optionalHint
                 ? '${field.label} (optional)'
                 : field.label;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: TextFormField(
-                key: Key('${field.key}-field-${node.id}'),
-                initialValue: (config[field.key] as String?) ?? '',
-                minLines: field.multiline ? 2 : 1,
-                maxLines: field.multiline ? 5 : 1,
-                decoration: InputDecoration(
-                  labelText: label,
-                  border: const OutlineInputBorder(),
-                ),
-                onChanged: (value) => onConfigChanged(field.key, value),
-              ),
-            );
+            switch (field.kind) {
+              case NodeInspectorFieldKind.string:
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: TextFormField(
+                    key: Key('${field.key}-field-${node.id}'),
+                    initialValue: (config[field.key] as String?) ?? '',
+                    minLines: field.multiline ? 2 : 1,
+                    maxLines: field.multiline ? 5 : 1,
+                    decoration: InputDecoration(
+                      labelText: label,
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) => onConfigChanged(field.key, value),
+                  ),
+                );
+              case NodeInspectorFieldKind.boolType:
+                final value = config[field.key] == true;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(label),
+                    value: value,
+                    onChanged: (value) => onConfigChanged(field.key, value),
+                  ),
+                );
+            }
           }),
           if (node.type == 'file.write') ...[
             const SizedBox(height: 4),

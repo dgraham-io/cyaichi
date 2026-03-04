@@ -61,21 +61,18 @@ flutter run
 - **Duplicate** creates a new `doc_id` + new `ver_id` with empty `parents`.
 - **Set Head** maps workspace head for a flow `doc_id` to a specific `ver_id`.
 
-## Node Types (MVP)
+## Node Types Registry
 
-- `file.read`
-  - output: `out` (`artifact/text`)
-  - config: `input_file`
-- `llm.chat`
-  - input: `in` (`artifact/text`)
-  - output: `out` (`artifact/text`)
-  - config: `model`, `system_prompt`
-- `file.write`
-  - input: `in` (`artifact/text`)
-  - output: `out` (`artifact/output_file`)
-  - config: `output_file`
+- The client fetches node types from the server via `GET /v1/node-types`.
+- The response drives:
+  - palette groups/labels
+  - node input/output ports
+  - inspector config fields (`string` and `bool`)
+- The last successful node type set is cached locally (`SharedPreferences`).
+- If fetch fails, the app falls back to cached or built-in registry and continues offline.
+- Settings shows source status as `Node types: server` or `Node types: cached/fallback`.
 
-Node config values are always written into flow JSON for forward compatibility, even where current server execution still uses run-level inputs.
+Node config values are always written into flow JSON for forward compatibility.
 
 ## Flow Validation (Client-side)
 
@@ -114,6 +111,7 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 - `PUT /v1/docs/flow/{doc_id}/{ver_id}`
 - `PUT /v1/workspaces/{workspace_id}/heads/{doc_id}`
 - `POST /v1/runs`
+- `GET /v1/node-types`
 - `GET /v1/workspaces/{workspace_id}/runs`
 - `GET /v1/docs/run/{doc_id}/{ver_id}`
 - `GET /v1/docs/artifact/{doc_id}/{ver_id}` (for output preview in run details)

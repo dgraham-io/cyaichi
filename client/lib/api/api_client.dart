@@ -240,6 +240,11 @@ class ApiClient {
     return parseFlowListResponse(json);
   }
 
+  Future<List<NodeTypeDef>> getNodeTypes() async {
+    final json = await _requestJson('GET', '/v1/node-types');
+    return parseNodeTypeListResponse(json);
+  }
+
   Future<Map<String, dynamic>> getRun({
     required String docId,
     required String verId,

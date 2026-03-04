@@ -48,6 +48,7 @@ class FlowValidationEdge {
 FlowValidationResult validateFlowGraph({
   required List<FlowValidationNode> nodes,
   required List<FlowValidationEdge> edges,
+  NodeTypeDefinition? Function(String typeId)? nodeTypeLookup,
 }) {
   final errors = <FlowValidationIssue>[];
   final warnings = <FlowValidationIssue>[];
@@ -89,7 +90,9 @@ FlowValidationResult validateFlowGraph({
   }
 
   for (final node in nodes) {
-    final def = NodeTypeRegistry.byType(node.type);
+    final def =
+        nodeTypeLookup?.call(node.type) ??
+        NodeTypeRegistry.fallback().byType(node.type);
     if (def == null) {
       continue;
     }

@@ -22,6 +22,7 @@ Optional environment variables:
 - `CYAI_VLLM_BASE_URL` (required for `llm.chat`, example `http://192.168.1.92:8000`)
 - `VLLM_KEY` (required for `llm.chat`, sent as `Authorization: Bearer ...`)
 - `CYAI_LLM_MODEL` (default `gpt-oss120:b`)
+- `CYAI_VLLM_TIMEOUT_SECONDS` (default `120`, clamped to `5..900`)
 
 By default, SQLite data is created at `/tmp/cyaichi.db`.
 On startup, the server logs the resolved absolute `CYAI_WORKSPACE_ROOT`.
@@ -138,6 +139,7 @@ curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111
 `llm.chat` node config:
 - `node.config.model` overrides `CYAI_LLM_MODEL` for that node
 - `node.config.system_prompt` (if non-empty) is sent as a system message before the user message
+- `node.config.timeout_seconds` overrides `CYAI_VLLM_TIMEOUT_SECONDS` for that node (`>0`, clamped to `5..900`)
 
 Export environment variables:
 
@@ -147,6 +149,7 @@ export CYAI_WORKSPACE_ROOT="./workspace-data"
 export CYAI_VLLM_BASE_URL="http://192.168.1.92:8000"
 export VLLM_KEY="replace-with-real-key"
 export CYAI_LLM_MODEL="gpt-oss120:b"
+export CYAI_VLLM_TIMEOUT_SECONDS=120
 ```
 
 Start the server:

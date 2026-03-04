@@ -71,9 +71,10 @@ type PinnedFlowRefID struct {
 }
 
 type runFailure struct {
-	Message string
-	Kind    string
-	NodeID  string
+	Message        string
+	Kind           string
+	NodeID         string
+	TimeoutSeconds int
 }
 
 type RunService struct {
@@ -90,7 +91,7 @@ type filePathResolution struct {
 
 func NewRunService(store *store.Store, validator *schema.Validator, runner NodeRunner, workspaceRoot string) *RunService {
 	if runner == nil {
-		runner = NewDefaultNodeRunner("", "", defaultLLMModel, nil)
+		runner = NewDefaultNodeRunner("", "", defaultLLMModel, defaultLLMTimeoutSec, nil)
 	}
 	if workspaceRoot == "" {
 		workspaceRoot = defaultWorkspaceRoot
@@ -276,6 +277,13 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			if errors.As(err, &upstreamErr) {
 				failure.Message = upstreamErr.Message
 				failure.Kind = "llm"
+				statusCode = http.StatusBadGateway
+			}
+			var llmTimeoutErr *LLMTimeoutError
+			if errors.As(err, &llmTimeoutErr) {
+				failure.Message = llmTimeoutErr.Message
+				failure.Kind = "llm_timeout"
+				failure.TimeoutSeconds = llmTimeoutErr.TimeoutSeconds
 				statusCode = http.StatusBadGateway
 			}
 			var validationErr *ValidationError
@@ -503,6 +511,9 @@ func (s *RunService) persistFailedRun(
 	}
 	if failure.NodeID != "" {
 		errorObject["node_id"] = failure.NodeID
+	}
+	if failure.TimeoutSeconds > 0 {
+		errorObject["timeout_seconds"] = failure.TimeoutSeconds
 	}
 
 	runDocMap := map[string]any{

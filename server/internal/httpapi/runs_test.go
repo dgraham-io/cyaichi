@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -139,6 +140,22 @@ func newMockVLLMServer(t *testing.T, responseStatus int, responseBody string) (*
 
 	t.Cleanup(server.Close)
 	return server, captured
+}
+
+func newDelayedMockVLLMServer(t *testing.T, delay time.Duration) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		time.Sleep(delay)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"too late"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func TestRunsSelectorHeadResolvesThroughHeadsTable(t *testing.T) {
@@ -593,6 +610,85 @@ func TestRunsLLMFailureReturnsBadGateway(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(rr.Body.String()), "llm.chat failed") {
 		t.Fatalf("expected llm failure message, got %q", rr.Body.String())
+	}
+}
+
+func TestRunsLLMTimeoutReturnsBadGatewayAndPersistsFailedRun(t *testing.T) {
+	mockServer := newDelayedMockVLLMServer(t, 6*time.Second)
+	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	workspace := createWorkspaceViaAPI(t, h, "Runs LLM Timeout")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"timeout_seconds":5}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "file content from test")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{"input_file":"input.txt","output_file":"output.txt"}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadGateway, rr.Code, rr.Body.String())
+	}
+
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		RunID    string `json:"run_id"`
+		RunVerID string `json:"run_ver_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("decode timeout response: %v", err)
+	}
+	if !strings.Contains(errResp.Error.Message, "timed out after 5s") {
+		t.Fatalf("expected timeout message with seconds, got %q", errResp.Error.Message)
+	}
+	if errResp.RunID == "" || errResp.RunVerID == "" {
+		t.Fatalf("expected run ids in timeout response, got %+v", errResp)
+	}
+
+	runDocReq := httptest.NewRequest(http.MethodGet, "/v1/docs/run/"+errResp.RunID+"/"+errResp.RunVerID, nil)
+	runDocRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(runDocRR, runDocReq)
+	if runDocRR.Code != http.StatusOK {
+		t.Fatalf("expected persisted timeout run doc status %d, got %d body=%s", http.StatusOK, runDocRR.Code, runDocRR.Body.String())
+	}
+
+	var runDoc struct {
+		Body struct {
+			Status   string `json:"status"`
+			TraceRef struct {
+				Error struct {
+					Kind           string `json:"kind"`
+					TimeoutSeconds int    `json:"timeout_seconds"`
+				} `json:"error"`
+			} `json:"trace_ref"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(runDocRR.Body.Bytes(), &runDoc); err != nil {
+		t.Fatalf("decode persisted timeout run doc: %v", err)
+	}
+	if runDoc.Body.Status != "failed" {
+		t.Fatalf("expected failed run status, got %q", runDoc.Body.Status)
+	}
+	if runDoc.Body.TraceRef.Error.Kind != "llm_timeout" {
+		t.Fatalf("expected llm_timeout kind, got %q", runDoc.Body.TraceRef.Error.Kind)
+	}
+	if runDoc.Body.TraceRef.Error.TimeoutSeconds != 5 {
+		t.Fatalf("expected timeout_seconds=5, got %d", runDoc.Body.TraceRef.Error.TimeoutSeconds)
 	}
 }
 

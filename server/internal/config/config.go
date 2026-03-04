@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 const (
 	defaultHTTPAddr      = ":8080"
@@ -8,6 +11,7 @@ const (
 	defaultDBPath        = "/tmp/cyaichi.db"
 	defaultWorkspaceRoot = "./workspace-data"
 	defaultLLMModel      = "gpt-oss120:b"
+	defaultVLLMTimeout   = 120
 )
 
 type Config struct {
@@ -18,6 +22,7 @@ type Config struct {
 	VLLMBaseURL   string
 	VLLMKey       string
 	LLMModel      string
+	VLLMTimeout   int
 }
 
 func FromEnv() Config {
@@ -29,6 +34,7 @@ func FromEnv() Config {
 		VLLMBaseURL:   envOrDefault("CYAI_VLLM_BASE_URL", envOrDefault("VLLM_URL", "")),
 		VLLMKey:       envOrDefault("VLLM_KEY", ""),
 		LLMModel:      envOrDefault("CYAI_LLM_MODEL", defaultLLMModel),
+		VLLMTimeout:   envOrDefaultInt("CYAI_VLLM_TIMEOUT_SECONDS", defaultVLLMTimeout),
 	}
 }
 
@@ -37,4 +43,16 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envOrDefaultInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

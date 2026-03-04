@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,9 @@ import (
 const (
 	defaultWorkspaceRoot = "./workspace-data"
 	defaultLLMModel      = "gpt-oss120:b"
+	defaultLLMTimeoutSec = 120
+	minLLMTimeoutSec     = 5
+	maxLLMTimeoutSec     = 900
 )
 
 type ArtifactRef struct {
@@ -79,20 +83,23 @@ type LLMChatClient interface {
 }
 
 type DefaultNodeRunner struct {
-	llmClient    LLMChatClient
-	defaultModel string
+	llmClient         LLMChatClient
+	defaultModel      string
+	defaultTimeoutSec int
 }
 
-func NewDefaultNodeRunner(baseURL, apiKey, model string, httpClient *http.Client) *DefaultNodeRunner {
+func NewDefaultNodeRunner(baseURL, apiKey, model string, timeoutSeconds int, httpClient *http.Client) *DefaultNodeRunner {
 	if model == "" {
 		model = defaultLLMModel
 	}
+	timeoutSeconds = clampLLMTimeoutSeconds(timeoutSeconds)
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{}
 	}
 	return &DefaultNodeRunner{
-		llmClient:    &VLLMChatClient{baseURL: baseURL, apiKey: apiKey, httpClient: httpClient},
-		defaultModel: model,
+		llmClient:         &VLLMChatClient{baseURL: baseURL, apiKey: apiKey, httpClient: httpClient},
+		defaultModel:      model,
+		defaultTimeoutSec: timeoutSeconds,
 	}
 }
 
@@ -239,8 +246,22 @@ func (r *DefaultNodeRunner) runLLMChat(ctx context.Context, req NodeRunRequest) 
 		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("invalid llm.chat config.system_prompt: %v", err)}
 	}
 
-	outputText, err := r.llmClient.Chat(ctx, model, req.UpstreamArtifact.Text, systemPrompt)
+	timeoutSeconds, err := llmTimeoutSeconds(req.Node.Config, r.defaultTimeoutSec)
 	if err != nil {
+		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("invalid llm.chat config.timeout_seconds: %v", err)}
+	}
+
+	chatCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	outputText, err := r.llmClient.Chat(chatCtx, model, req.UpstreamArtifact.Text, systemPrompt)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
+			return NodeRunResult{}, &LLMTimeoutError{
+				Message:        fmt.Sprintf("llm.chat request timed out after %ds", timeoutSeconds),
+				TimeoutSeconds: timeoutSeconds,
+			}
+		}
 		return NodeRunResult{}, &UpstreamError{Message: fmt.Sprintf("llm.chat failed: %v", err)}
 	}
 	if strings.TrimSpace(outputText) == "" {
@@ -434,6 +455,15 @@ type VLLMChatClient struct {
 	httpClient *http.Client
 }
 
+type LLMTimeoutError struct {
+	Message        string
+	TimeoutSeconds int
+}
+
+func (e *LLMTimeoutError) Error() string {
+	return e.Message
+}
+
 func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string, systemPrompt string) (string, error) {
 	if strings.TrimSpace(c.baseURL) == "" {
 		return "", fmt.Errorf("CYAI_VLLM_BASE_URL is required for llm.chat")
@@ -547,6 +577,45 @@ func getNodeConfigBool(config map[string]any, key string) (bool, bool, error) {
 		return false, true, fmt.Errorf("must be a boolean")
 	}
 	return value, true, nil
+}
+
+func llmTimeoutSeconds(config map[string]any, defaultTimeoutSeconds int) (int, error) {
+	timeout := clampLLMTimeoutSeconds(defaultTimeoutSeconds)
+	if config == nil {
+		return timeout, nil
+	}
+	raw, ok := config["timeout_seconds"]
+	if !ok || raw == nil {
+		return timeout, nil
+	}
+
+	switch value := raw.(type) {
+	case float64:
+		if value <= 0 {
+			return 0, fmt.Errorf("must be > 0")
+		}
+		return clampLLMTimeoutSeconds(int(value)), nil
+	case int:
+		if value <= 0 {
+			return 0, fmt.Errorf("must be > 0")
+		}
+		return clampLLMTimeoutSeconds(value), nil
+	default:
+		return 0, fmt.Errorf("must be a number")
+	}
+}
+
+func clampLLMTimeoutSeconds(seconds int) int {
+	if seconds <= 0 {
+		return defaultLLMTimeoutSec
+	}
+	if seconds < minLLMTimeoutSec {
+		return minLLMTimeoutSec
+	}
+	if seconds > maxLLMTimeoutSec {
+		return maxLLMTimeoutSec
+	}
+	return seconds
 }
 
 func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, error) {

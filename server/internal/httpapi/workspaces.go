@@ -15,9 +15,9 @@ import (
 )
 
 type WorkspacesHandler struct {
-	store     *store.Store
-	validator *schema.Validator
-	notes     *NotesHandler
+	store         *store.Store
+	validator     *schema.Validator
+	notes         *NotesHandler
 	workspaceRoot string
 }
 

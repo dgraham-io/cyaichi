@@ -51,6 +51,7 @@ func main() {
 			cfg.VLLMBaseURL,
 			cfg.VLLMKey,
 			cfg.LLMModel,
+			cfg.VLLMTimeout,
 		),
 	}
 

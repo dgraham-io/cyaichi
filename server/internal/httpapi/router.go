@@ -15,6 +15,7 @@ func NewMux(
 	vllmBaseURL string,
 	vllmKey string,
 	llmModel string,
+	vllmTimeoutSeconds int,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", HealthHandler)
@@ -34,9 +35,9 @@ func NewMux(
 		mux.HandleFunc("/v1/docs/", h.Handle)
 
 		wh := &WorkspacesHandler{
-			store:     docStore,
-			validator: validator,
-			notes:     nh,
+			store:         docStore,
+			validator:     validator,
+			notes:         nh,
 			workspaceRoot: workspaceRoot,
 		}
 		mux.HandleFunc("/v1/workspaces", wh.Handle)
@@ -46,7 +47,7 @@ func NewMux(
 			service: engine.NewRunService(
 				docStore,
 				validator,
-				engine.NewDefaultNodeRunner(vllmBaseURL, vllmKey, llmModel, nil),
+				engine.NewDefaultNodeRunner(vllmBaseURL, vllmKey, llmModel, vllmTimeoutSeconds, nil),
 				workspaceRoot,
 			),
 		}

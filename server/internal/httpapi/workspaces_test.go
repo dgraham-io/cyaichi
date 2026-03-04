@@ -48,7 +48,7 @@ func newAPITestHarnessWithLLM(t *testing.T, vllmBaseURL, vllmKey, llmModel strin
 	workspaceRoot := t.TempDir()
 
 	return &apiTestHarness{
-		mux:           NewMux(s, v, workspaceRoot, vllmBaseURL, vllmKey, llmModel),
+		mux:           NewMux(s, v, workspaceRoot, vllmBaseURL, vllmKey, llmModel, 120),
 		store:         s,
 		workspaceRoot: workspaceRoot,
 	}

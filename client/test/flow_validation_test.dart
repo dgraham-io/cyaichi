@@ -43,5 +43,11 @@ void main() {
       result.warnings.any((warning) => warning.message.contains('file.write')),
       isTrue,
     );
+    expect(
+      result.warnings.any(
+        (warning) => warning.message.contains('primary output'),
+      ),
+      isTrue,
+    );
   });
 }

@@ -96,6 +96,16 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 - Select a node in the canvas and use **Delete node** in Inspector or press `Delete` / `Backspace` (desktop).
 - Select a connection in the canvas and use **Delete connection** in Inspector or press `Delete` / `Backspace` (desktop).
 
+## Primary Output for Multi-write Flows
+
+- When a `file.write` node is selected, use **Set as Primary Output** in Inspector.
+- The primary selection is stored in flow JSON as `node.config.primary=true` on the selected write node.
+- Run output selection logic:
+  - if a primary write exists, Run uses that node’s `config.output_file`
+  - else if exactly one `file.write` exists, Run uses that node’s `config.output_file`
+  - else Run prompts you to pick a primary write node before continuing
+- Run input selection uses `file.read` `config.input_file` by default, with run-panel input field as override.
+
 ## Required Server Endpoints
 
 - `POST /v1/workspaces`

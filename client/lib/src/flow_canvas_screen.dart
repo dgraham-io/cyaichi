@@ -5,6 +5,7 @@ import 'package:client/src/flow/connection_validation.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/flow/flow_validation.dart';
 import 'package:client/src/flow/node_registry.dart';
+import 'package:client/src/flow/primary_output.dart';
 import 'package:client/src/io/local_file_reader.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/theme/cyaichi_theme.dart';
@@ -26,6 +27,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   static const _defaultServerBaseUrl = 'http://localhost:8080';
   static const _defaultWorkspaceDataRoot = './workspace-data';
+  static const _defaultRunInputFile = 'input.txt';
+  static const _defaultRunOutputFile = 'output.txt';
 
   static const _prefServerBaseUrl = 'client.server_base_url';
   static const _prefWorkspaceDataRoot = 'client.workspace_data_root';
@@ -51,6 +54,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   String? _selectedNodeId;
   String? _selectedConnectionId;
+  String? _primaryWriteNodeId;
   int _nodeCounter = 1;
 
   bool _isCreatingWorkspace = false;
@@ -95,8 +99,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       config: NodeFlowConfig(scrollToZoom: false),
     );
     _flowTitleController = TextEditingController(text: 'My Flow');
-    _inputFileController = TextEditingController(text: 'input.txt');
-    _outputFileController = TextEditingController(text: 'output.txt');
+    _inputFileController = TextEditingController(text: _defaultRunInputFile);
+    _outputFileController = TextEditingController(text: _defaultRunOutputFile);
     _apiClient = ApiClient(baseUrl: _serverBaseUrl);
 
     _loadSettings();
@@ -163,6 +167,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   Future<void> _onWorkspaceSelected(String? workspaceId) async {
     setState(() {
       _selectedWorkspaceId = workspaceId;
+      _primaryWriteNodeId = null;
     });
     await _persistSettings();
     await _refreshWorkspaceData();
@@ -361,6 +366,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     child: _InspectorPanel(
                       selectedNode: selectedNode,
                       selectedConnection: selectedConnection,
+                      isPrimaryWriteNode:
+                          selectedNode != null &&
+                          selectedNode.type == 'file.write' &&
+                          _isPrimaryWriteNode(selectedNode.id),
                       nodeType: selectedNode == null
                           ? null
                           : NodeTypeRegistry.byType(selectedNode.type),
@@ -370,6 +379,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                           _updateNodeConfig(selectedNode, key, value),
                       onDeleteNode: _deleteSelectedNode,
                       onDeleteConnection: _deleteSelectedConnection,
+                      onSetPrimaryOutput: selectedNode == null
+                          ? null
+                          : () => _setPrimaryOutputNode(selectedNode.id),
                     ),
                   ),
                   const Divider(height: 1),
@@ -534,10 +546,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         ? (nodeType?.displayName ?? node.type)
         : title;
     final config = _readConfig(data);
+    final isPrimaryWrite =
+        node.type == 'file.write' && _isPrimaryWriteNode(node.id);
     final configSummary = _nodeConfigSummary(node.type, config);
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: CyaichiTheme.surface,
         borderRadius: BorderRadius.circular(14),
@@ -570,15 +584,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               context,
             ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 6),
-          Text(
-            nodeType?.displayName ?? node.type,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+          if (isPrimaryWrite)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: _Pill(
+                label: 'Primary',
+                color: Theme.of(context).colorScheme.primaryContainer,
+              ),
             ),
-          ),
           if (configSummary != null) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Text(
               configSummary,
               maxLines: 1,
@@ -586,10 +601,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
-          const Spacer(),
+          const SizedBox(height: 2),
           Wrap(
             spacing: 8,
-            runSpacing: 6,
+            runSpacing: 2,
             children: [
               _Pill(
                 label: 'in ${_readFlowPorts(data['inputs']).length}',
@@ -1134,12 +1149,22 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return;
     }
 
-    final inputFile = _inputFileController.text.trim().isEmpty
-        ? 'input.txt'
-        : _inputFileController.text.trim();
-    final outputFile = _outputFileController.text.trim().isEmpty
-        ? 'output.txt'
-        : _outputFileController.text.trim();
+    final inputFile = _resolveInputFile();
+    if (inputFile == null || inputFile.trim().isEmpty) {
+      _showSnack('No input file selected');
+      return;
+    }
+    final outputSelection = await _resolveOutputSelection();
+    if (outputSelection == null || outputSelection.$1.trim().isEmpty) {
+      _showSnack(
+        'Select a primary output node with output_file before running.',
+      );
+      return;
+    }
+    final outputFile = outputSelection.$1;
+    if (outputSelection.$2.isNotEmpty) {
+      _primaryWriteNodeId = outputSelection.$2;
+    }
 
     setState(() {
       _isRunning = true;
@@ -1411,11 +1436,181 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       setState(() {
         _selectedNodeId = null;
         _selectedConnectionId = null;
+        if (_primaryWriteNodeId == nodeId) {
+          _primaryWriteNodeId = null;
+        }
       });
       _showSnack('Node deleted');
     } catch (error) {
       _showSnack('Failed to delete node: $error');
     }
+  }
+
+  bool _isPrimaryWriteNode(String nodeId) {
+    if (_primaryWriteNodeId == nodeId) {
+      return true;
+    }
+    final node = _controller.getNode(nodeId);
+    if (node == null || node.type != 'file.write') {
+      return false;
+    }
+    final config = _readConfig(node.data);
+    return config['primary'] == true;
+  }
+
+  void _setPrimaryOutputNode(String nodeId) {
+    for (final node in _controller.nodes.values) {
+      if (node.type != 'file.write') {
+        continue;
+      }
+      final config = _readConfig(node.data);
+      if (node.id == nodeId) {
+        config['primary'] = true;
+      } else {
+        config.remove('primary');
+      }
+      node.data['config'] = config;
+    }
+    setState(() {
+      _primaryWriteNodeId = nodeId;
+    });
+    _showSnack('Primary output set');
+  }
+
+  List<WriteNodeOption> _collectWriteNodeOptions() {
+    return _controller.nodes.values
+        .where((node) => node.type == 'file.write')
+        .map((node) {
+          final config = _readConfig(node.data);
+          final outputFile = (config['output_file'] as String?)?.trim() ?? '';
+          final title =
+              (node.data['title'] as String?)?.trim().isNotEmpty == true
+              ? node.data['title'] as String
+              : node.id;
+          return WriteNodeOption(
+            nodeId: node.id,
+            title: title,
+            outputFile: outputFile,
+            isPrimary: _isPrimaryWriteNode(node.id),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  String? _resolveInputFile() {
+    final entered = _inputFileController.text.trim();
+    if (entered.isNotEmpty && entered != _defaultRunInputFile) {
+      return entered;
+    }
+    for (final node in _controller.nodes.values) {
+      if (node.type != 'file.read') {
+        continue;
+      }
+      final config = _readConfig(node.data);
+      final configured = (config['input_file'] as String?)?.trim() ?? '';
+      if (configured.isNotEmpty) {
+        return configured;
+      }
+    }
+    return entered.isNotEmpty ? entered : _defaultRunInputFile;
+  }
+
+  Future<(String outputFile, String primaryNodeId)?>
+  _resolveOutputSelection() async {
+    final writes = _collectWriteNodeOptions();
+    if (writes.isEmpty) {
+      final entered = _outputFileController.text.trim();
+      if (entered.isEmpty) {
+        return null;
+      }
+      return (entered, '');
+    }
+
+    final primaryId = _primaryWriteNodeId;
+    if (primaryId != null) {
+      for (final write in writes) {
+        if (write.nodeId == primaryId) {
+          final output = write.outputFile.trim();
+          if (output.isEmpty) {
+            _showSnack('Primary output node is missing output_file');
+            return null;
+          }
+          return (output, primaryId);
+        }
+      }
+    }
+
+    final chosenDirect = chooseRunOutputFile(
+      writes: writes,
+      primaryNodeId: null,
+    );
+    if (chosenDirect != null) {
+      final nodeId =
+          primaryId ??
+          writes
+              .firstWhere(
+                (write) => write.isPrimary,
+                orElse: () => writes.first,
+              )
+              .nodeId;
+      return (chosenDirect, nodeId);
+    }
+
+    if (writes.length > 1) {
+      final selectedNodeId = await _promptPrimaryOutputSelection(writes);
+      if (selectedNodeId == null) {
+        return null;
+      }
+      _setPrimaryOutputNode(selectedNodeId);
+      final selected = writes.firstWhere(
+        (write) => write.nodeId == selectedNodeId,
+      );
+      final outputFile = selected.outputFile.trim();
+      if (outputFile.isEmpty) {
+        _showSnack('Selected primary output node is missing output_file');
+        return null;
+      }
+      return (outputFile, selectedNodeId);
+    }
+
+    return null;
+  }
+
+  Future<String?> _promptPrimaryOutputSelection(
+    List<WriteNodeOption> writes,
+  ) async {
+    return showDialog<String?>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Select primary output'),
+          content: SizedBox(
+            width: 640,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: writes.length,
+              itemBuilder: (context, index) {
+                final write = writes[index];
+                final output = write.outputFile.isEmpty
+                    ? '(missing)'
+                    : write.outputFile;
+                return ListTile(
+                  title: Text(write.title),
+                  subtitle: Text(output),
+                  onTap: () => Navigator.of(context).pop(write.nodeId),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _openRunDetails(RunListItem item) async {
@@ -1792,6 +1987,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _controller.clearGraph();
 
     final knownNodeIds = <String>{};
+    String? importedPrimaryWriteNodeId;
     for (final item in parsed.nodes) {
       final rawConfig = Map<String, dynamic>.from(item.config);
       final ui = rawConfig['_ui'];
@@ -1835,6 +2031,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       );
       _controller.addNode(node);
       knownNodeIds.add(item.id);
+      if (item.type == 'file.write' && rawConfig['primary'] == true) {
+        importedPrimaryWriteNodeId = item.id;
+      }
     }
 
     for (final edge in parsed.edges) {
@@ -1860,6 +2059,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _currentFlowVerId = parsed.verId;
       _currentFlowWorkspaceId = parsed.workspaceId;
       _currentFlowParents = parsed.parents;
+      _primaryWriteNodeId = importedPrimaryWriteNodeId;
     });
   }
 
@@ -2274,20 +2474,24 @@ class _InspectorPanel extends StatelessWidget {
   const _InspectorPanel({
     required this.selectedNode,
     required this.selectedConnection,
+    required this.isPrimaryWriteNode,
     required this.nodeType,
     required this.onTitleChanged,
     required this.onConfigChanged,
     required this.onDeleteNode,
     required this.onDeleteConnection,
+    required this.onSetPrimaryOutput,
   });
 
   final Node<Map<String, dynamic>>? selectedNode;
   final Connection<dynamic>? selectedConnection;
+  final bool isPrimaryWriteNode;
   final NodeTypeDefinition? nodeType;
   final ValueChanged<String> onTitleChanged;
   final void Function(String key, String value) onConfigChanged;
   final Future<void> Function() onDeleteNode;
   final Future<void> Function() onDeleteConnection;
+  final VoidCallback? onSetPrimaryOutput;
 
   @override
   Widget build(BuildContext context) {
@@ -2370,6 +2574,18 @@ class _InspectorPanel extends StatelessWidget {
               ),
             );
           }),
+          if (node.type == 'file.write') ...[
+            const SizedBox(height: 4),
+            FilledButton.icon(
+              onPressed: onSetPrimaryOutput,
+              icon: const Icon(Icons.flag),
+              label: Text(
+                isPrimaryWriteNode
+                    ? 'Primary Output Selected'
+                    : 'Set as Primary Output',
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           FilledButton.icon(
             onPressed: onDeleteNode,

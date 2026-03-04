@@ -107,6 +107,9 @@ FlowValidationResult validateFlowGraph({
 
   final readNodes = nodes.where((node) => node.type == 'file.read').toList();
   final writeNodes = nodes.where((node) => node.type == 'file.write').toList();
+  final primaryWrites = writeNodes
+      .where((node) => node.config['primary'] == true)
+      .toList();
 
   if (readNodes.length != 1) {
     warnings.add(
@@ -121,6 +124,26 @@ FlowValidationResult validateFlowGraph({
         'MVP warning: expected exactly one file.write node.',
       ),
     );
+  }
+
+  if (primaryWrites.length > 1) {
+    errors.add(
+      const FlowValidationIssue('Only one file.write node can be primary.'),
+    );
+  }
+  if (writeNodes.length > 1 && primaryWrites.isEmpty) {
+    warnings.add(const FlowValidationIssue('Select a primary output.'));
+  }
+  if (primaryWrites.length == 1) {
+    final outputFile =
+        (primaryWrites.first.config['output_file'] as String?)?.trim() ?? '';
+    if (outputFile.isEmpty) {
+      errors.add(
+        const FlowValidationIssue(
+          'Primary output node is missing output_file.',
+        ),
+      );
+    }
   }
 
   if (readNodes.length == 1 && writeNodes.length == 1) {

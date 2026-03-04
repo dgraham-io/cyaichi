@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/dgraham-io/cyaichi/server/internal/engine"
 	"github.com/dgraham-io/cyaichi/server/internal/schema"
 	"github.com/dgraham-io/cyaichi/server/internal/store"
 )
@@ -23,6 +24,11 @@ func NewMux(docStore *store.Store, validator *schema.Validator) *http.ServeMux {
 		}
 		mux.HandleFunc("/v1/workspaces", wh.Handle)
 		mux.HandleFunc("/v1/workspaces/", wh.Handle)
+
+		rh := &RunsHandler{
+			service: engine.NewRunService(docStore, validator, nil),
+		}
+		mux.HandleFunc("/v1/runs", rh.Handle)
 	}
 	return mux
 }

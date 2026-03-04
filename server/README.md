@@ -99,3 +99,70 @@ Get a head:
 ```bash
 curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111/heads/44444444-4444-4444-4444-444444444444
 ```
+
+## Runs API
+
+Create a workspace:
+
+```bash
+WS_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/workspaces \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"name":"Run Demo"}')
+echo "$WS_RESP"
+WS_ID=$(echo "$WS_RESP" | jq -r '.workspace_id')
+```
+
+Put a flow document:
+
+```bash
+FLOW_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+FLOW_VER=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+
+curl -i -X PUT "http://127.0.0.1:8080/v1/docs/flow/$FLOW_ID/$FLOW_VER" \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"doc_type\": \"flow\",
+    \"doc_id\": \"$FLOW_ID\",
+    \"ver_id\": \"$FLOW_VER\",
+    \"workspace_id\": \"$WS_ID\",
+    \"created_at\": \"2026-03-03T00:00:00Z\",
+    \"body\": {
+      \"nodes\": [
+        {\"id\":\"n1\",\"type\":\"node.in\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
+        {\"id\":\"n2\",\"type\":\"node.out\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[],\"config\":{}}
+      ],
+      \"edges\": [
+        {\"from\":{\"node\":\"n1\",\"port\":\"out\"},\"to\":{\"node\":\"n2\",\"port\":\"in\"}}
+      ]
+    }
+  }"
+```
+
+Set the flow head in the workspace:
+
+```bash
+curl -i -X PUT "http://127.0.0.1:8080/v1/workspaces/$WS_ID/heads/$FLOW_ID" \
+  -H 'Content-Type: application/json' \
+  --data-binary "{\"ver_id\":\"$FLOW_VER\"}"
+```
+
+Create a run:
+
+```bash
+RUN_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/runs \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"workspace_id\": \"$WS_ID\",
+    \"flow_ref\": {\"doc_id\": \"$FLOW_ID\", \"ver_id\": null, \"selector\": \"head\"},
+    \"inputs\": {\"input_file\": \"input.txt\", \"output_file\": \"output.txt\"}
+  }")
+echo "$RUN_RESP"
+RUN_ID=$(echo "$RUN_RESP" | jq -r '.run_id')
+RUN_VER=$(echo "$RUN_RESP" | jq -r '.run_ver_id')
+```
+
+Fetch the run document:
+
+```bash
+curl -i "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER"
+```

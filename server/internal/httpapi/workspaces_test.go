@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,6 +119,15 @@ func TestPostWorkspacesCreatesAndCanFetchViaDocs(t *testing.T) {
 	}
 	if len(workspaceDoc.Body.Heads) != 0 {
 		t.Fatalf("expected empty heads map, got %v", workspaceDoc.Body.Heads)
+	}
+
+	workspaceDir := filepath.Join(h.workspaceRoot, created.WorkspaceID)
+	info, err := os.Stat(workspaceDir)
+	if err != nil {
+		t.Fatalf("expected workspace directory to exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected workspace path to be a directory: %q", workspaceDir)
 	}
 }
 

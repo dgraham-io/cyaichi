@@ -37,6 +37,7 @@ func NewMux(
 			store:     docStore,
 			validator: validator,
 			notes:     nh,
+			workspaceRoot: workspaceRoot,
 		}
 		mux.HandleFunc("/v1/workspaces", wh.Handle)
 		mux.HandleFunc("/v1/workspaces/", wh.Handle)

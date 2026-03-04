@@ -50,7 +50,10 @@ flutter run
   - read and display output file contents from local filesystem
 - Client settings (persisted with `SharedPreferences`):
   - `Server base URL` (default `http://localhost:8080`)
-  - `Workspace data root` (default `./workspace-data`)
+  - `Workspace data root (must match server)`:
+    - defaults to `../workspace-data` when running from `client/`
+    - otherwise defaults to `./workspace-data`
+    - settings also shows the resolved absolute path
   - `Auto-set head on save` (default `off`)
 
 ## Flow Versioning Model
@@ -143,7 +146,7 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 2. Launch the Flutter app (`cd client && flutter run`).
 3. Open Settings and confirm:
    - Server base URL (for example `http://localhost:8080`)
-   - Workspace data root (for example `./workspace-data`)
+   - Workspace data root (must match server) (for example `../workspace-data` when launched from `client/`)
 4. Click **New Workspace**.
 5. Add nodes (`file.read`, `llm.chat`, `file.write`) and connect edges.
 6. Set run inputs in Run Panel (`input.txt`, `output.txt` by default).
@@ -159,6 +162,10 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
    - output file contents loaded from `{workspace_data_root}/{workspace_id}/output.txt`
 12. Open **Runs** tab to view run history and inspect invocation/output details.
 13. Open **Notes** tab to create a note and verify it appears in list.
+
+Flow layout persistence:
+- node positions are stored in `node.config.ui = {"x": ..., "y": ...}` on save
+- on open/import, positions are restored and the canvas fits to content
 
 ## MVP Stability Checklist
 

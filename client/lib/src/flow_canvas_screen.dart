@@ -9,6 +9,7 @@ import 'package:client/src/flow/node_registry.dart';
 import 'package:client/src/flow/primary_output.dart';
 import 'package:client/src/flow/run_request_builder.dart';
 import 'package:client/src/io/local_file_reader.dart';
+import 'package:client/src/io/workspace_root_path.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/theme/cyaichi_theme.dart';
 import 'package:flutter/material.dart';
@@ -28,7 +29,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _uuid = Uuid();
 
   static const _defaultServerBaseUrl = 'http://localhost:8080';
-  static const _defaultWorkspaceDataRoot = './workspace-data';
   static const _defaultRunInputFile = 'input.txt';
   static const _defaultRunOutputFile = 'output.txt';
   static const _outputPreviewLimit = 4000;
@@ -39,6 +39,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
   static const _prefNodeTypesCache = 'client.node_types.cache.v1';
+  static const _prefWorkspaceEntries = 'client.workspace_entries.v1';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   final LocalFileReader _localFileReader = createLocalFileReader();
@@ -51,11 +52,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   NodeTypeRegistry _nodeTypeRegistry = NodeTypeRegistry.fallback();
 
   String _serverBaseUrl = _defaultServerBaseUrl;
-  String _workspaceDataRoot = _defaultWorkspaceDataRoot;
+  late String _workspaceDataRoot = defaultWorkspaceDataRoot();
   bool _settingsLoaded = false;
   String _nodeTypesStatus = 'cached/fallback';
 
   final List<String> _workspaceIds = <String>[];
+  final Map<String, String> _workspaceNames = <String, String>{};
   String? _selectedWorkspaceId;
 
   String? _selectedNodeId;
@@ -138,15 +140,40 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedBaseUrl =
         prefs.getString(_prefServerBaseUrl) ?? _defaultServerBaseUrl;
     final loadedWorkspaceRoot =
-        prefs.getString(_prefWorkspaceDataRoot) ?? _defaultWorkspaceDataRoot;
+        prefs.getString(_prefWorkspaceDataRoot) ?? defaultWorkspaceDataRoot();
     final loadedWorkspaceIds =
         prefs.getStringList(_prefWorkspaceIds) ?? <String>[];
+    final loadedWorkspaceEntries = prefs.getString(_prefWorkspaceEntries) ?? '';
     final loadedSelectedWorkspace = prefs.getString(_prefSelectedWorkspaceId);
     final loadedAutoSetHead = prefs.getBool(_prefAutoSetHeadOnSave) ?? false;
     final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
     _apiClient = ApiClient(baseUrl: loadedBaseUrl);
+
+    final loadedWorkspaceNames = <String, String>{};
+    if (loadedWorkspaceEntries.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(loadedWorkspaceEntries);
+        if (decoded is List<dynamic>) {
+          for (final raw in decoded) {
+            if (raw is! Map<String, dynamic>) {
+              continue;
+            }
+            final id = raw['id'];
+            final name = raw['name'];
+            if (id is String &&
+                id.trim().isNotEmpty &&
+                name is String &&
+                name.trim().isNotEmpty) {
+              loadedWorkspaceNames[id] = name;
+            }
+          }
+        }
+      } catch (_) {
+        // Keep fallback empty name mapping.
+      }
+    }
 
     var loadedRegistry = NodeTypeRegistry.fallback();
     if (nodeTypeCacheRaw != null && nodeTypeCacheRaw.trim().isNotEmpty) {
@@ -177,6 +204,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _workspaceIds
         ..clear()
         ..addAll(loadedWorkspaceIds);
+      _workspaceNames
+        ..clear()
+        ..addAll(loadedWorkspaceNames);
+      for (final id in loadedWorkspaceIds) {
+        _workspaceNames.putIfAbsent(id, () => 'Workspace ${_shortId(id)}');
+      }
       _selectedWorkspaceId =
           loadedWorkspaceIds.contains(loadedSelectedWorkspace)
           ? loadedSelectedWorkspace
@@ -197,6 +230,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     await prefs.setString(_prefWorkspaceDataRoot, _workspaceDataRoot);
     await prefs.setBool(_prefAutoSetHeadOnSave, _autoSetHeadOnSave);
     await prefs.setStringList(_prefWorkspaceIds, _workspaceIds);
+    final entries = _workspaceIds
+        .map(
+          (id) => <String, dynamic>{
+            'id': id,
+            'name': _workspaceNames[id] ?? 'Workspace ${_shortId(id)}',
+          },
+        )
+        .toList(growable: false);
+    await prefs.setString(_prefWorkspaceEntries, jsonEncode(entries));
     if (_selectedWorkspaceId == null) {
       await prefs.remove(_prefSelectedWorkspaceId);
     } else {
@@ -310,6 +352,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 child: _TopControlsBar(
                   settingsLoaded: _settingsLoaded,
                   workspaceIds: _workspaceIds,
+                  workspaceNames: _workspaceNames,
                   selectedWorkspaceId: _selectedWorkspaceId,
                   flowTitleController: _flowTitleController,
                   isCreatingWorkspace: _isCreatingWorkspace,
@@ -792,9 +835,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     TextField(
                       controller: workspaceRootController,
                       decoration: const InputDecoration(
-                        labelText: 'Workspace data root',
+                        labelText: 'Workspace data root (must match server)',
                         hintText: './workspace-data',
                         border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) {
+                        setDialogState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Resolved path: ${resolveWorkspaceDataRoot(workspaceRootController.text)}',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -892,9 +946,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                           itemCount: _workspaceIds.length,
                           itemBuilder: (context, index) {
                             final workspaceId = _workspaceIds[index];
+                            final workspaceName =
+                                _workspaceNames[workspaceId] ??
+                                'Workspace ${_shortId(workspaceId)}';
                             return RadioListTile<String>(
                               dense: true,
-                              title: Text(workspaceId),
+                              title: Text(workspaceName),
+                              subtitle: Text(_shortId(workspaceId)),
                               value: workspaceId,
                               groupValue: selected,
                               onChanged: (value) {
@@ -1241,19 +1299,22 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _isCreatingWorkspace = true;
     });
 
+    final workspaceName =
+        'Client Workspace ${DateTime.now().toIso8601String()}';
     try {
-      final created = await _apiClient.createWorkspace(
-        name: 'Client Workspace ${DateTime.now().toIso8601String()}',
-      );
+      final created = await _apiClient.createWorkspace(name: workspaceName);
       setState(() {
         if (!_workspaceIds.contains(created.workspaceId)) {
           _workspaceIds.add(created.workspaceId);
         }
+        _workspaceNames[created.workspaceId] = workspaceName;
         _selectedWorkspaceId = created.workspaceId;
       });
       await _persistSettings();
       await _refreshWorkspaceData();
-      _showSnack('Workspace created: ${_shortId(created.workspaceId)}');
+      _showSnack(
+        'Workspace created: $workspaceName (${_shortId(created.workspaceId)})',
+      );
     } on ApiError catch (error) {
       _showSnack(_formatApiError(error));
     } finally {
@@ -2446,6 +2507,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     if (!_workspaceIds.contains(parsed.workspaceId)) {
       _workspaceIds.add(parsed.workspaceId);
     }
+    _workspaceNames.putIfAbsent(
+      parsed.workspaceId,
+      () => 'Workspace ${_shortId(parsed.workspaceId)}',
+    );
     _selectedWorkspaceId = parsed.workspaceId;
     _persistSettings();
     _refreshWorkspaceData();
@@ -2460,8 +2525,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     String? importedPrimaryWriteNodeId;
     for (final item in parsed.nodes) {
       final rawConfig = Map<String, dynamic>.from(item.config);
-      final ui = rawConfig['_ui'];
-      final uiMap = ui is Map<String, dynamic> ? ui : <String, dynamic>{};
+      final ui = rawConfig['ui'];
+      final legacyUI = rawConfig['_ui'];
+      final uiMap = ui is Map<String, dynamic>
+          ? ui
+          : (legacyUI is Map<String, dynamic> ? legacyUI : <String, dynamic>{});
       final nodeType = _nodeTypeRegistry.byType(item.type);
       final inputs = item.inputs.isNotEmpty
           ? item.inputs
@@ -2494,7 +2562,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         ports: ports,
         data: <String, dynamic>{
           'title': item.title,
-          'config': rawConfig..remove('_ui'),
+          'config': rawConfig
+            ..remove('_ui')
+            ..remove('ui'),
           'inputs': inputs.map((port) => port.toJson()).toList(),
           'outputs': outputs.map((port) => port.toJson()).toList(),
         },
@@ -2531,6 +2601,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _currentFlowParents = parsed.parents;
       _primaryWriteNodeId = importedPrimaryWriteNodeId;
       _isFlowDirty = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _controller.fitToView();
     });
   }
 
@@ -2635,7 +2708,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               ? nodeType.outputs.map((port) => port.toFlowPort()).toList()
               : fallbackOutputs;
           final config = _readConfig(node.data)
-            ..['_ui'] = <String, dynamic>{
+            ..['ui'] = <String, dynamic>{
               'x': node.position.value.dx,
               'y': node.position.value.dy,
               'width': node.size.value.width,
@@ -2786,6 +2859,7 @@ class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
     required this.settingsLoaded,
     required this.workspaceIds,
+    required this.workspaceNames,
     required this.selectedWorkspaceId,
     required this.flowTitleController,
     required this.isCreatingWorkspace,
@@ -2805,6 +2879,7 @@ class _TopControlsBar extends StatelessWidget {
 
   final bool settingsLoaded;
   final List<String> workspaceIds;
+  final Map<String, String> workspaceNames;
   final String? selectedWorkspaceId;
   final TextEditingController flowTitleController;
   final bool isCreatingWorkspace;
@@ -2853,7 +2928,17 @@ class _TopControlsBar extends StatelessWidget {
                                   .map(
                                     (id) => DropdownMenuItem<String>(
                                       value: id,
-                                      child: Text(id),
+                                      child: Builder(
+                                        builder: (context) {
+                                          final short = id.length > 8
+                                              ? id.substring(0, 8)
+                                              : id;
+                                          return Text(
+                                            '${workspaceNames[id] ?? 'Workspace $short'} · $short',
+                                            overflow: TextOverflow.ellipsis,
+                                          );
+                                        },
+                                      ),
                                     ),
                                   )
                                   .toList(),

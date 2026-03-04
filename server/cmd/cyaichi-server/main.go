@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -18,6 +19,11 @@ import (
 
 func main() {
 	cfg := config.FromEnv()
+	workspaceRootAbs, err := filepath.Abs(cfg.WorkspaceRoot)
+	if err != nil {
+		log.Fatalf("failed to resolve workspace root %q: %v", cfg.WorkspaceRoot, err)
+	}
+	log.Printf("workspace root: %s", workspaceRootAbs)
 
 	dbStore, err := store.Open(context.Background(), cfg.DBPath)
 	if err != nil {

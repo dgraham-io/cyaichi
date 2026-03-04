@@ -24,6 +24,9 @@ Optional environment variables:
 - `CYAI_LLM_MODEL` (default `gpt-oss120:b`)
 
 By default, SQLite data is created at `/tmp/cyaichi.db`.
+On startup, the server logs the resolved absolute `CYAI_WORKSPACE_ROOT`.
+When creating a workspace, the server also creates
+`{CYAI_WORKSPACE_ROOT}/{workspace_id}/`.
 
 Compatibility alias:
 

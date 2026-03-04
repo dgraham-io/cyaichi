@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ type WorkspacesHandler struct {
 	store     *store.Store
 	validator *schema.Validator
 	notes     *NotesHandler
+	workspaceRoot string
 }
 
 type createWorkspaceRequest struct {
@@ -268,6 +271,13 @@ func (h *WorkspacesHandler) handleCreateWorkspace(w http.ResponseWriter, r *http
 		}
 		http.Error(w, "failed to store workspace", http.StatusInternalServerError)
 		return
+	}
+	if strings.TrimSpace(h.workspaceRoot) != "" {
+		workspaceDir := filepath.Join(h.workspaceRoot, workspaceID)
+		if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
+			http.Error(w, "failed to create workspace directory", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

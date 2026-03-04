@@ -15,10 +15,14 @@ if [ -z "${VLLM_KEY:-}" ]; then
   echo "error: VLLM_KEY is required (export VLLM_KEY before running this script)" >&2
   exit 1
 fi
+if [ -z "${VLLM_URL:-}" ]; then
+  echo "error: VLLM_URL is required (export VLLM_URL before running this script)" >&2
+  exit 1
+fi
 
 CYAI_BASE_URL="${CYAI_BASE_URL:-http://localhost:8080}"
 CYAI_WORKSPACE_ROOT="${CYAI_WORKSPACE_ROOT:-./workspace-data}"
-CYAI_VLLM_BASE_URL="${CYAI_VLLM_BASE_URL:-http://192.168.1.92:8000}"
+CYAI_VLLM_BASE_URL="${VLLM_URL}"
 CYAI_LLM_MODEL="${CYAI_LLM_MODEL:-openai/gpt-oss-120b}"
 
 INPUT_FILE_REL="input.txt"
@@ -74,6 +78,49 @@ echo "  CYAI_BASE_URL=$CYAI_BASE_URL"
 echo "  CYAI_WORKSPACE_ROOT=$CYAI_WORKSPACE_ROOT"
 echo "  CYAI_VLLM_BASE_URL=$CYAI_VLLM_BASE_URL"
 echo "  CYAI_LLM_MODEL=$CYAI_LLM_MODEL"
+
+if [[ "$CYAI_VLLM_BASE_URL" == */v1 ]]; then
+  MODELS_URL="${CYAI_VLLM_BASE_URL}/models"
+else
+  MODELS_URL="${CYAI_VLLM_BASE_URL}/v1/models"
+fi
+
+log_step "0) Probe vLLM models"
+models_tmp="$(mktemp)"
+probe_status="$(curl -fsS -o "$models_tmp" -w "%{http_code}" \
+  -H "Authorization: Bearer $VLLM_KEY" \
+  "$MODELS_URL" || true)"
+if [ "$probe_status" != "200" ]; then
+  echo "error: failed to probe vLLM models at $MODELS_URL (HTTP ${probe_status:-unknown})" >&2
+  if [ -s "$models_tmp" ]; then
+    cat "$models_tmp" >&2
+  fi
+  rm -f "$models_tmp"
+  exit 1
+fi
+
+models_json="$(cat "$models_tmp")"
+rm -f "$models_tmp"
+
+model_ids="$(echo "$models_json" | jq -r '.data[]?.id // empty')"
+model_count="$(printf '%s\n' "$model_ids" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+if [ -z "$model_count" ] || [ "$model_count" = "0" ]; then
+  echo "error: vLLM returned no models at $MODELS_URL" >&2
+  echo "$models_json" >&2
+  exit 1
+fi
+
+echo "available models:"
+printf '%s\n' "$model_ids"
+
+if ! printf '%s\n' "$model_ids" | grep -Fxq "$CYAI_LLM_MODEL"; then
+  echo "error: configured model '$CYAI_LLM_MODEL' was not found at $MODELS_URL" >&2
+  echo "available models:" >&2
+  printf '%s\n' "$model_ids" >&2
+  exit 1
+fi
+
+echo "vLLM OK: $model_count models found at $MODELS_URL"
 
 log_step "1) Create workspace"
 workspace_resp="$(api_request POST "$CYAI_BASE_URL/v1/workspaces" '{"name":"MVP Demo Workspace"}')"

@@ -33,6 +33,13 @@ type Store struct {
 	db *sql.DB
 }
 
+type MemoryRow struct {
+	DocID     string
+	VerID     string
+	CreatedAt string
+	JSON      string
+}
+
 func Open(ctx context.Context, dbPath string) (*Store, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -173,4 +180,31 @@ func (s *Store) GetHead(ctx context.Context, workspaceID, docID string) (string,
 		return "", fmt.Errorf("get head: %w", err)
 	}
 	return verID, nil
+}
+
+func (s *Store) ListMemoryByWorkspace(ctx context.Context, workspaceID string, limit, offset int) ([]MemoryRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT doc_id, ver_id, created_at, json
+		FROM documents
+		WHERE doc_type = 'memory' AND workspace_id = ?
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`, workspaceID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list memory by workspace: %w", err)
+	}
+	defer rows.Close()
+
+	result := []MemoryRow{}
+	for rows.Next() {
+		var row MemoryRow
+		if err := rows.Scan(&row.DocID, &row.VerID, &row.CreatedAt, &row.JSON); err != nil {
+			return nil, fmt.Errorf("scan memory row: %w", err)
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate memory rows: %w", err)
+	}
+	return result, nil
 }

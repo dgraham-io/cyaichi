@@ -19,6 +19,13 @@ func NewMux(
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", HealthHandler)
 	if docStore != nil && validator != nil {
+		nh := &NotesHandler{
+			store:     docStore,
+			validator: validator,
+		}
+		mux.HandleFunc("/v1/notes", nh.Handle)
+		mux.HandleFunc("/v1/notes/", nh.Handle)
+
 		h := &DocsHandler{
 			store:     docStore,
 			validator: validator,
@@ -28,6 +35,7 @@ func NewMux(
 		wh := &WorkspacesHandler{
 			store:     docStore,
 			validator: validator,
+			notes:     nh,
 		}
 		mux.HandleFunc("/v1/workspaces", wh.Handle)
 		mux.HandleFunc("/v1/workspaces/", wh.Handle)

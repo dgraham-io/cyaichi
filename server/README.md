@@ -211,3 +211,43 @@ OUT_ART_ID=$(echo "$RUN_DOC" | jq -r '.body.outputs[0].artifact_ref.doc_id')
 OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.outputs[0].artifact_ref.ver_id')
 curl -i "http://127.0.0.1:8080/v1/docs/artifact/$OUT_ART_ID/$OUT_ART_VER"
 ```
+
+## Notes API
+
+Create workspace:
+
+```bash
+WS_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/workspaces \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"name":"Notes Demo"}')
+WS_ID=$(echo "$WS_RESP" | jq -r '.workspace_id')
+echo "$WS_RESP"
+```
+
+Create note:
+
+```bash
+NOTE_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/notes \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"workspace_id\":\"$WS_ID\",
+    \"scope\":\"personal\",
+    \"title\":\"My first note\",
+    \"body\":\"# Notes\\nThis is saved as a memory document.\"
+  }")
+echo "$NOTE_RESP"
+NOTE_ID=$(echo "$NOTE_RESP" | jq -r '.doc_id')
+NOTE_VER=$(echo "$NOTE_RESP" | jq -r '.ver_id')
+```
+
+List notes:
+
+```bash
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/notes" | jq
+```
+
+Fetch note by `doc_id` + `ver_id`:
+
+```bash
+curl -i "http://127.0.0.1:8080/v1/notes/$NOTE_ID/$NOTE_VER"
+```

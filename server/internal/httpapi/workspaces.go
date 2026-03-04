@@ -15,6 +15,7 @@ import (
 type WorkspacesHandler struct {
 	store     *store.Store
 	validator *schema.Validator
+	notes     *NotesHandler
 }
 
 type createWorkspaceRequest struct {
@@ -43,6 +44,15 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleCreateWorkspace(w, r)
+		return
+	}
+
+	if workspaceID, ok := parseWorkspaceNotesPath(r.URL.Path); ok {
+		if h.notes == nil {
+			http.NotFound(w, r)
+			return
+		}
+		h.notes.HandleWorkspaceList(w, r, workspaceID)
 		return
 	}
 
@@ -249,4 +259,16 @@ func parseWorkspaceHeadPath(path string) (workspaceID, docID string, ok bool) {
 		return "", "", false
 	}
 	return parts[2], parts[4], true
+}
+
+func parseWorkspaceNotesPath(path string) (workspaceID string, ok bool) {
+	trimmed := strings.Trim(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "workspaces" || parts[3] != "notes" {
+		return "", false
+	}
+	if parts[2] == "" {
+		return "", false
+	}
+	return parts[2], true
 }

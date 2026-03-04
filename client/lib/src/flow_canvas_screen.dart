@@ -27,6 +27,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefWorkspaceDataRoot = 'client.workspace_data_root';
   static const _prefWorkspaceIds = 'client.workspace_ids';
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
+  static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
 
   late final NodeFlowController<Map<String, dynamic>, Map<String, dynamic>>
   _controller;
@@ -59,10 +60,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastOutputPath;
   String? _lastOutputContent;
 
-  String? _lastSavedFlowDocId;
-  String? _lastSavedFlowVerId;
+  String? _currentFlowDocId;
+  String? _currentFlowVerId;
+  String? _currentFlowWorkspaceId;
+  List<String> _currentFlowParents = const <String>[];
+  bool _autoSetHeadOnSave = false;
 
   int _selectedTabIndex = 0;
+
+  bool _flowsLoading = false;
+  String? _flowsError;
+  List<FlowListItem> _flows = const <FlowListItem>[];
 
   bool _runsLoading = false;
   String? _runsError;
@@ -109,6 +117,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedWorkspaceIds =
         prefs.getStringList(_prefWorkspaceIds) ?? <String>[];
     final loadedSelectedWorkspace = prefs.getString(_prefSelectedWorkspaceId);
+    final loadedAutoSetHead = prefs.getBool(_prefAutoSetHeadOnSave) ?? false;
 
     _apiClient.close();
     _apiClient = ApiClient(baseUrl: loadedBaseUrl);
@@ -127,6 +136,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           loadedWorkspaceIds.contains(loadedSelectedWorkspace)
           ? loadedSelectedWorkspace
           : null;
+      _autoSetHeadOnSave = loadedAutoSetHead;
       _settingsLoaded = true;
     });
 
@@ -137,6 +147,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefServerBaseUrl, _serverBaseUrl);
     await prefs.setString(_prefWorkspaceDataRoot, _workspaceDataRoot);
+    await prefs.setBool(_prefAutoSetHeadOnSave, _autoSetHeadOnSave);
     await prefs.setStringList(_prefWorkspaceIds, _workspaceIds);
     if (_selectedWorkspaceId == null) {
       await prefs.remove(_prefSelectedWorkspaceId);
@@ -196,7 +207,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   isRunning: _isRunning,
                   onWorkspaceSelected: _onWorkspaceSelected,
                   onCreateWorkspace: _createWorkspace,
-                  onSaveToServer: _saveFlowToServer,
+                  onSaveToServer: _saveNewFlowVersionToServer,
+                  onSetHead: _setCurrentFlowAsHead,
+                  onDuplicate: _duplicateCurrentFlow,
                   onRun: _runFlow,
                 ),
               )
@@ -204,7 +217,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       ),
       body: IndexedStack(
         index: _selectedTabIndex,
-        children: [_buildFlowTab(), _buildRunsTab(), _buildNotesTab()],
+        children: [
+          _buildFlowTab(),
+          _buildFlowsTab(),
+          _buildRunsTab(),
+          _buildNotesTab(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedTabIndex,
@@ -213,19 +231,26 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             _selectedTabIndex = index;
           });
           if (index == 1) {
-            await _loadRuns();
+            await _loadFlows();
           }
           if (index == 2) {
+            await _loadRuns();
+          }
+          if (index == 3) {
             await _loadNotes();
           }
         },
         destinations: const <NavigationDestination>[
           NavigationDestination(icon: Icon(Icons.account_tree), label: 'Flow'),
+          NavigationDestination(
+            icon: Icon(Icons.library_books),
+            label: 'Flows',
+          ),
           NavigationDestination(icon: Icon(Icons.play_circle), label: 'Runs'),
           NavigationDestination(icon: Icon(Icons.note_alt), label: 'Notes'),
         ],
       ),
-      floatingActionButton: _selectedTabIndex == 2
+      floatingActionButton: _selectedTabIndex == 3
           ? FloatingActionButton.extended(
               onPressed: _showCreateNoteDialog,
               icon: const Icon(Icons.add),
@@ -307,6 +332,55 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFlowsTab() {
+    if (_selectedWorkspaceId == null) {
+      return const Center(
+        child: Text('Select or create a workspace to view flows.'),
+      );
+    }
+    if (_flowsLoading && _flows.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_flowsError != null && _flows.isEmpty) {
+      return _ErrorState(message: _flowsError!, onRetry: _loadFlows);
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadFlows,
+      child: _flows.isEmpty
+          ? ListView(
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('No flows found for this workspace.')),
+              ],
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: _flows.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final flow = _flows[index];
+                return ListTile(
+                  title: Text(
+                    flow.title.isEmpty ? '(untitled flow)' : flow.title,
+                  ),
+                  subtitle: SelectionArea(
+                    child: Text(
+                      '${_friendlyDate(flow.createdAt)}'
+                      '${flow.ref.isEmpty ? '' : ' • ref: ${flow.ref}'}\n'
+                      'doc_id: ${flow.docId}\n'
+                      'ver_id: ${flow.verId}',
+                    ),
+                  ),
+                  isThreeLine: true,
+                  trailing: const Icon(Icons.open_in_new),
+                  onTap: () => _openFlowFromLibrary(flow),
+                );
+              },
+            ),
     );
   }
 
@@ -454,47 +528,63 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final workspaceRootController = TextEditingController(
       text: _workspaceDataRoot,
     );
+    var autoSetHeadOnSave = _autoSetHeadOnSave;
 
     final result = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Client Settings'),
-          content: SizedBox(
-            width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: baseUrlController,
-                  decoration: const InputDecoration(
-                    labelText: 'Server base URL',
-                    hintText: 'http://localhost:8080',
-                    border: OutlineInputBorder(),
-                  ),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Client Settings'),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: baseUrlController,
+                      decoration: const InputDecoration(
+                        labelText: 'Server base URL',
+                        hintText: 'http://localhost:8080',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: workspaceRootController,
+                      decoration: const InputDecoration(
+                        labelText: 'Workspace data root',
+                        hintText: './workspace-data',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Auto-set head on save'),
+                      value: autoSetHeadOnSave,
+                      onChanged: (value) {
+                        setDialogState(() {
+                          autoSetHeadOnSave = value;
+                        });
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: workspaceRootController,
-                  decoration: const InputDecoration(
-                    labelText: 'Workspace data root',
-                    hintText: './workspace-data',
-                    border: OutlineInputBorder(),
-                  ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Save'),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Save'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
@@ -522,6 +612,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     setState(() {
       _serverBaseUrl = nextBaseUrl;
       _workspaceDataRoot = nextWorkspaceRoot;
+      _autoSetHeadOnSave = autoSetHeadOnSave;
     });
     _apiClient.close();
     _apiClient = ApiClient(baseUrl: _serverBaseUrl);
@@ -601,8 +692,55 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _refreshWorkspaceData() async {
+    await _loadFlows();
     await _loadRuns();
     await _loadNotes();
+  }
+
+  Future<void> _loadFlows() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _flows = const <FlowListItem>[];
+        _flowsError = null;
+        _flowsLoading = false;
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _flowsLoading = true;
+        _flowsError = null;
+      });
+    }
+
+    try {
+      final flows = await _apiClient.getFlows(workspaceId: workspaceId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _flows = flows;
+      });
+    } on ApiError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _flowsError = _formatApiError(error);
+      });
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _flowsLoading = false;
+      });
+    }
   }
 
   Future<void> _loadRuns() async {
@@ -730,7 +868,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
-  Future<bool> _saveFlowToServer() async {
+  Future<bool> _saveNewFlowVersionToServer() async {
     if (_isSavingToServer) {
       return false;
     }
@@ -744,37 +882,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _isSavingToServer = true;
     });
 
-    final flowDocId = _uuid.v4();
+    final flowDocId =
+        _currentFlowDocId != null &&
+            _currentFlowWorkspaceId == workspaceId &&
+            _currentFlowVerId != null
+        ? _currentFlowDocId!
+        : _uuid.v4();
+    final previousVerID = _currentFlowWorkspaceId == workspaceId
+        ? _currentFlowVerId
+        : null;
     final flowVerId = _uuid.v4();
-
-    final nodes = _controller.nodes.values.map((node) {
-      final config = _readConfig(node.data)
-        ..['_ui'] = <String, dynamic>{
-          'x': node.position.value.dx,
-          'y': node.position.value.dy,
-          'width': node.size.value.width,
-          'height': node.size.value.height,
-        };
-      return FlowNodeSnapshot(
-        id: node.id,
-        type: node.type,
-        title: (node.data['title'] as String?)?.trim().isNotEmpty == true
-            ? node.data['title'] as String
-            : node.type,
-        inputs: _readFlowPorts(node.data['inputs']),
-        outputs: _readFlowPorts(node.data['outputs']),
-        config: config,
-      );
-    }).toList();
-
-    final edges = _controller.connections.map((connection) {
-      return FlowEdgeSnapshot(
-        sourceNode: connection.sourceNodeId,
-        sourcePort: connection.sourcePortId,
-        targetNode: connection.targetNodeId,
-        targetPort: connection.targetPortId,
-      );
-    }).toList();
+    final snapshot = _collectCanvasFlowSnapshot();
 
     final document = buildFlowDocumentEnvelope(
       workspaceId: workspaceId,
@@ -782,8 +900,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       verId: flowVerId,
       createdAt: DateTime.now().toUtc(),
       title: _flowTitleController.text,
-      nodes: nodes,
-      edges: edges,
+      parents: previousVerID == null
+          ? const <String>[]
+          : <String>[previousVerID],
+      nodes: snapshot.$1,
+      edges: snapshot.$2,
     );
 
     try {
@@ -792,17 +913,28 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         verId: flowVerId,
         document: document,
       );
-      await _apiClient.setHead(
-        workspaceId: workspaceId,
-        docId: flowDocId,
-        verId: flowVerId,
-      );
+      if (_autoSetHeadOnSave) {
+        await _apiClient.setHead(
+          workspaceId: workspaceId,
+          docId: flowDocId,
+          verId: flowVerId,
+        );
+      }
 
       setState(() {
-        _lastSavedFlowDocId = flowDocId;
-        _lastSavedFlowVerId = flowVerId;
+        _currentFlowDocId = flowDocId;
+        _currentFlowVerId = flowVerId;
+        _currentFlowWorkspaceId = workspaceId;
+        _currentFlowParents = previousVerID == null
+            ? const <String>[]
+            : <String>[previousVerID];
       });
-      _showSnack('Flow saved and set as head (${_shortId(flowDocId)})');
+      await _loadFlows();
+      _showSnack(
+        _autoSetHeadOnSave
+            ? 'Saved new version and set head (${_shortId(flowDocId)} @ ${_shortId(flowVerId)})'
+            : 'Saved new version (${_shortId(flowDocId)} @ ${_shortId(flowVerId)})',
+      );
       return true;
     } on ApiError catch (error) {
       _showSnack(_formatApiError(error));
@@ -813,6 +945,98 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _isSavingToServer = false;
         });
       }
+    }
+  }
+
+  Future<void> _duplicateCurrentFlow() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      _showSnack('Select or create a workspace first.');
+      return;
+    }
+    if (_isSavingToServer) {
+      return;
+    }
+
+    setState(() {
+      _isSavingToServer = true;
+    });
+
+    final docId = _uuid.v4();
+    final verId = _uuid.v4();
+    final snapshot = _collectCanvasFlowSnapshot();
+    final document = buildDuplicateFlowDocument(
+      workspaceId: workspaceId,
+      docId: docId,
+      verId: verId,
+      createdAt: DateTime.now().toUtc(),
+      title: _flowTitleController.text,
+      nodes: snapshot.$1,
+      edges: snapshot.$2,
+    );
+
+    try {
+      await _apiClient.putFlowDocument(
+        docId: docId,
+        verId: verId,
+        document: document,
+      );
+      if (_autoSetHeadOnSave) {
+        await _apiClient.setHead(
+          workspaceId: workspaceId,
+          docId: docId,
+          verId: verId,
+        );
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _currentFlowDocId = docId;
+        _currentFlowVerId = verId;
+        _currentFlowWorkspaceId = workspaceId;
+        _currentFlowParents = const <String>[];
+      });
+      await _loadFlows();
+      _showSnack(
+        _autoSetHeadOnSave
+            ? 'Duplicated flow and set head (${_shortId(docId)} @ ${_shortId(verId)})'
+            : 'Duplicated flow (${_shortId(docId)} @ ${_shortId(verId)})',
+      );
+    } on ApiError catch (error) {
+      _showSnack(_formatApiError(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingToServer = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _setCurrentFlowAsHead() async {
+    final workspaceId = _selectedWorkspaceId;
+    final docId = _currentFlowDocId;
+    final verId = _currentFlowVerId;
+    if (workspaceId == null || docId == null || verId == null) {
+      _showSnack('Open or save a flow first.');
+      return;
+    }
+    if (_currentFlowWorkspaceId != workspaceId) {
+      _showSnack(
+        'Current flow belongs to workspace ${_shortId(_currentFlowWorkspaceId ?? '')}; select/open a flow in this workspace first.',
+      );
+      return;
+    }
+    try {
+      await _apiClient.setHead(
+        workspaceId: workspaceId,
+        docId: docId,
+        verId: verId,
+      );
+      _showSnack('Head set to ${_shortId(docId)} @ ${_shortId(verId)}');
+    } on ApiError catch (error) {
+      _showSnack(_formatApiError(error));
     }
   }
 
@@ -844,8 +1068,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastOutputContent = null;
     });
 
-    final saved = await _saveFlowToServer();
-    if (!saved || _lastSavedFlowDocId == null) {
+    final saved = await _saveNewFlowVersionToServer();
+    if (!saved || _currentFlowDocId == null || _currentFlowVerId == null) {
       if (mounted) {
         setState(() {
           _isRunning = false;
@@ -857,9 +1081,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
 
     try {
+      await _apiClient.setHead(
+        workspaceId: workspaceId,
+        docId: _currentFlowDocId!,
+        verId: _currentFlowVerId!,
+      );
       final run = await _apiClient.createRun(
         workspaceId: workspaceId,
-        flowDocId: _lastSavedFlowDocId!,
+        flowDocId: _currentFlowDocId!,
         inputFile: inputFile,
         outputFile: outputFile,
       );
@@ -969,6 +1198,30 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openFlowFromLibrary(FlowListItem flow) async {
+    try {
+      final document = await _apiClient.getDocument(
+        docType: 'flow',
+        docId: flow.docId,
+        verId: flow.verId,
+      );
+      _importFlowDocumentMap(document);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedTabIndex = 0;
+      });
+      _showSnack(
+        'Loaded flow ${_shortId(flow.docId)} @ ${_shortId(flow.verId)}',
+      );
+    } on ApiError catch (error) {
+      _showSnack(_formatApiError(error));
+    } on FormatException catch (error) {
+      _showSnack('Invalid flow document: ${error.message}');
+    }
   }
 
   Future<void> _openNote(NoteListItem item) async {
@@ -1166,37 +1419,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   Future<void> _onExportJson() async {
     final workspaceId = _selectedWorkspaceId ?? _uuid.v4();
-    final docId = _uuid.v4();
-    final verId = _uuid.v4();
-
-    final nodes = _controller.nodes.values.map((node) {
-      final config = _readConfig(node.data)
-        ..['_ui'] = <String, dynamic>{
-          'x': node.position.value.dx,
-          'y': node.position.value.dy,
-          'width': node.size.value.width,
-          'height': node.size.value.height,
-        };
-      return FlowNodeSnapshot(
-        id: node.id,
-        type: node.type,
-        title: (node.data['title'] as String?) ?? node.type,
-        inputs: _readFlowPorts(node.data['inputs']),
-        outputs: _readFlowPorts(node.data['outputs']),
-        config: config,
-      );
-    }).toList();
-
-    final edges = _controller.connections
-        .map(
-          (connection) => FlowEdgeSnapshot(
-            sourceNode: connection.sourceNodeId,
-            sourcePort: connection.sourcePortId,
-            targetNode: connection.targetNodeId,
-            targetPort: connection.targetPortId,
-          ),
-        )
-        .toList();
+    final docId = _currentFlowDocId ?? _uuid.v4();
+    final verId = _currentFlowVerId ?? _uuid.v4();
+    final snapshot = _collectCanvasFlowSnapshot();
 
     final exported = buildFlowDocumentEnvelope(
       workspaceId: workspaceId,
@@ -1204,8 +1429,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       verId: verId,
       createdAt: DateTime.now().toUtc(),
       title: _flowTitleController.text,
-      nodes: nodes,
-      edges: edges,
+      parents: _currentFlowParents,
+      nodes: snapshot.$1,
+      edges: snapshot.$2,
     );
 
     final prettyJson = const JsonEncoder.withIndent('  ').convert(exported);
@@ -1308,58 +1534,29 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('Top-level JSON must be an object.');
     }
+    _importFlowDocumentMap(decoded);
+  }
 
-    final body = decoded['body'];
-    if (body is! Map<String, dynamic>) {
-      throw const FormatException('Missing body object.');
-    }
+  void _importFlowDocumentMap(Map<String, dynamic> decoded) {
+    final parsed = parseFlowDocumentEnvelope(decoded);
 
-    final nodesJson = body['nodes'];
-    final edgesJson = body['edges'];
-    if (nodesJson is! List) {
-      throw const FormatException('body.nodes must be an array.');
+    if (!_workspaceIds.contains(parsed.workspaceId)) {
+      _workspaceIds.add(parsed.workspaceId);
     }
-    if (edgesJson is! List) {
-      throw const FormatException('body.edges must be an array.');
-    }
+    _selectedWorkspaceId = parsed.workspaceId;
+    _persistSettings();
+    _refreshWorkspaceData();
 
-    final importedWorkspaceId = decoded['workspace_id'];
-    if (importedWorkspaceId is String &&
-        importedWorkspaceId.trim().isNotEmpty) {
-      if (!_workspaceIds.contains(importedWorkspaceId)) {
-        _workspaceIds.add(importedWorkspaceId);
-      }
-      _selectedWorkspaceId = importedWorkspaceId;
-      _persistSettings();
-      _refreshWorkspaceData();
-    }
-
-    final meta = decoded['meta'];
-    if (meta is Map<String, dynamic>) {
-      final title = meta['title'];
-      if (title is String && title.trim().isNotEmpty) {
-        _flowTitleController.text = title;
-      }
+    if (parsed.title.trim().isNotEmpty) {
+      _flowTitleController.text = parsed.title;
     }
 
     _controller.clearGraph();
 
     final knownNodeIds = <String>{};
-    for (final item in nodesJson) {
-      if (item is! Map<String, dynamic>) {
-        continue;
-      }
-      final nodeId = item['id'] as String?;
-      final nodeType = item['type'] as String?;
-      if (nodeId == null || nodeType == null) {
-        continue;
-      }
-
-      final rawConfig = item['config'];
-      final config = rawConfig is Map<String, dynamic>
-          ? Map<String, dynamic>.from(rawConfig)
-          : <String, dynamic>{};
-      final ui = config['_ui'];
+    for (final item in parsed.nodes) {
+      final rawConfig = Map<String, dynamic>.from(item.config);
+      final ui = rawConfig['_ui'];
       final uiMap = ui is Map<String, dynamic> ? ui : <String, dynamic>{};
 
       final position = Offset(
@@ -1371,64 +1568,40 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         (uiMap['height'] as num?)?.toDouble() ?? 132,
       );
 
-      final inputs = _readFlowPorts(item['inputs']);
-      final outputs = _readFlowPorts(item['outputs']);
-
       final ports = <Port>[
-        ..._buildPorts(inputs, PortPosition.left),
-        ..._buildPorts(outputs, PortPosition.right),
+        ..._buildPorts(item.inputs, PortPosition.left),
+        ..._buildPorts(item.outputs, PortPosition.right),
       ];
 
       final node = Node<Map<String, dynamic>>(
-        id: nodeId,
-        type: nodeType,
+        id: item.id,
+        type: item.type,
         position: position,
         size: size,
         ports: ports,
         data: <String, dynamic>{
-          'title': (item['title'] as String?) ?? nodeType,
-          'config': config..remove('_ui'),
-          'inputs': inputs.map((port) => port.toJson()).toList(),
-          'outputs': outputs.map((port) => port.toJson()).toList(),
+          'title': item.title,
+          'config': rawConfig..remove('_ui'),
+          'inputs': item.inputs.map((port) => port.toJson()).toList(),
+          'outputs': item.outputs.map((port) => port.toJson()).toList(),
         },
       );
       _controller.addNode(node);
-      knownNodeIds.add(nodeId);
+      knownNodeIds.add(item.id);
     }
 
-    for (final edge in edgesJson) {
-      if (edge is! Map<String, dynamic>) {
+    for (final edge in parsed.edges) {
+      if (!knownNodeIds.contains(edge.sourceNode) ||
+          !knownNodeIds.contains(edge.targetNode)) {
         continue;
       }
-      final from = edge['from'];
-      final to = edge['to'];
-      if (from is! Map<String, dynamic> || to is! Map<String, dynamic>) {
-        continue;
-      }
-
-      final sourceNodeId = from['node'] as String?;
-      final sourcePortId = from['port'] as String?;
-      final targetNodeId = to['node'] as String?;
-      final targetPortId = to['port'] as String?;
-
-      if (sourceNodeId == null ||
-          sourcePortId == null ||
-          targetNodeId == null ||
-          targetPortId == null) {
-        continue;
-      }
-      if (!knownNodeIds.contains(sourceNodeId) ||
-          !knownNodeIds.contains(targetNodeId)) {
-        continue;
-      }
-
       _controller.addConnection(
         Connection<Map<String, dynamic>>(
           id: _uuid.v4(),
-          sourceNodeId: sourceNodeId,
-          sourcePortId: sourcePortId,
-          targetNodeId: targetNodeId,
-          targetPortId: targetPortId,
+          sourceNodeId: edge.sourceNode,
+          sourcePortId: edge.sourcePort,
+          targetNodeId: edge.targetNode,
+          targetPortId: edge.targetPort,
         ),
       );
     }
@@ -1436,6 +1609,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     setState(() {
       _selectedNodeId = null;
       _lastExportJson = const JsonEncoder.withIndent('  ').convert(decoded);
+      _currentFlowDocId = parsed.docId;
+      _currentFlowVerId = parsed.verId;
+      _currentFlowWorkspaceId = parsed.workspaceId;
+      _currentFlowParents = parsed.parents;
     });
   }
 
@@ -1523,6 +1700,44 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     });
   }
 
+  (List<FlowNodeSnapshot>, List<FlowEdgeSnapshot>)
+  _collectCanvasFlowSnapshot() {
+    final nodes = _controller.nodes.values
+        .map((node) {
+          final config = _readConfig(node.data)
+            ..['_ui'] = <String, dynamic>{
+              'x': node.position.value.dx,
+              'y': node.position.value.dy,
+              'width': node.size.value.width,
+              'height': node.size.value.height,
+            };
+          return FlowNodeSnapshot(
+            id: node.id,
+            type: node.type,
+            title: (node.data['title'] as String?)?.trim().isNotEmpty == true
+                ? node.data['title'] as String
+                : node.type,
+            inputs: _readFlowPorts(node.data['inputs']),
+            outputs: _readFlowPorts(node.data['outputs']),
+            config: config,
+          );
+        })
+        .toList(growable: false);
+
+    final edges = _controller.connections
+        .map(
+          (connection) => FlowEdgeSnapshot(
+            sourceNode: connection.sourceNodeId,
+            sourcePort: connection.sourcePortId,
+            targetNode: connection.targetNodeId,
+            targetPort: connection.targetPortId,
+          ),
+        )
+        .toList(growable: false);
+
+    return (nodes, edges);
+  }
+
   String _shortId(String id) {
     if (id.length <= 8) {
       return id;
@@ -1600,6 +1815,8 @@ class _TopControlsBar extends StatelessWidget {
     required this.onWorkspaceSelected,
     required this.onCreateWorkspace,
     required this.onSaveToServer,
+    required this.onSetHead,
+    required this.onDuplicate,
     required this.onRun,
   });
 
@@ -1613,95 +1830,112 @@ class _TopControlsBar extends StatelessWidget {
   final Future<void> Function(String?) onWorkspaceSelected;
   final Future<void> Function() onCreateWorkspace;
   final Future<bool> Function() onSaveToServer;
+  final Future<void> Function() onSetHead;
+  final Future<void> Function() onDuplicate;
   final Future<void> Function() onRun;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 260,
-            child: InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Workspace',
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            SizedBox(
+              width: 260,
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Workspace',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+                child: settingsLoaded
+                    ? DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: selectedWorkspaceId,
+                          hint: const Text('Select workspace'),
+                          items: workspaceIds
+                              .map(
+                                (id) => DropdownMenuItem<String>(
+                                  value: id,
+                                  child: Text(id),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            onWorkspaceSelected(value);
+                          },
+                        ),
+                      )
+                    : const Text('Loading...'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: isCreatingWorkspace ? null : onCreateWorkspace,
+              icon: isCreatingWorkspace
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add),
+              label: const Text('New Workspace'),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 240,
+              child: TextField(
+                controller: flowTitleController,
+                decoration: const InputDecoration(
+                  labelText: 'Flow title',
+                  border: OutlineInputBorder(),
                 ),
               ),
-              child: settingsLoaded
-                  ? DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        isExpanded: true,
-                        value: selectedWorkspaceId,
-                        hint: const Text('Select workspace'),
-                        items: workspaceIds
-                            .map(
-                              (id) => DropdownMenuItem<String>(
-                                value: id,
-                                child: Text(id),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          onWorkspaceSelected(value);
-                        },
-                      ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.icon(
+              onPressed: isSavingToServer ? null : onSaveToServer,
+              icon: isSavingToServer
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('Loading...'),
+                  : const Icon(Icons.cloud_upload),
+              label: const Text('Save New Version'),
             ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: isCreatingWorkspace ? null : onCreateWorkspace,
-            icon: isCreatingWorkspace
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.add),
-            label: const Text('New Workspace'),
-          ),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 240,
-            child: TextField(
-              controller: flowTitleController,
-              decoration: const InputDecoration(
-                labelText: 'Flow title',
-                border: OutlineInputBorder(),
-              ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: isSavingToServer ? null : onDuplicate,
+              icon: const Icon(Icons.copy_all),
+              label: const Text('Duplicate'),
             ),
-          ),
-          const Spacer(),
-          FilledButton.icon(
-            onPressed: isSavingToServer ? null : onSaveToServer,
-            icon: isSavingToServer
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.cloud_upload),
-            label: const Text('Save to Server'),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: isRunning ? null : onRun,
-            icon: isRunning
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.play_arrow),
-            label: const Text('Run'),
-          ),
-        ],
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: isSavingToServer ? null : onSetHead,
+              icon: const Icon(Icons.push_pin),
+              label: const Text('Set Head'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: isRunning ? null : onRun,
+              icon: isRunning
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.play_arrow),
+              label: const Text('Run'),
+            ),
+          ],
+        ),
       ),
     );
   }

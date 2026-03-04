@@ -19,8 +19,9 @@ flutter run
 
 ## Implemented
 
-- Bottom navigation with three tabs:
+- Bottom navigation with four tabs:
   - **Flow**: node editor + save/run controls
+  - **Flows**: flow library for list/open/version management
   - **Runs**: recent run history + run details view
   - **Notes**: notes list + create/view note
 - Three-panel node editor in Flow tab:
@@ -32,8 +33,12 @@ flutter run
   - **Import JSON** (paste + rehydrate canvas)
 - Server integration:
   - create/select workspace (workspace picker + persisted list)
-  - save flow to server as canonical `flow` doc
-  - set flow head in workspace
+  - flow library:
+    - list flows in workspace
+    - open flow from server into canvas
+    - save **new version** (same `doc_id`, new `ver_id`, `parents=[previous_ver_id]`)
+    - duplicate flow (new `doc_id`, new `ver_id`, `parents=[]`)
+    - set workspace head for current flow/version
   - run flow via `/v1/runs`
   - display latest run status/error in Flow run panel
   - list recent runs in Runs tab and open details:
@@ -46,10 +51,21 @@ flutter run
 - Client settings (persisted with `SharedPreferences`):
   - `Server base URL` (default `http://localhost:8080`)
   - `Workspace data root` (default `./workspace-data`)
+  - `Auto-set head on save` (default `off`)
+
+## Flow Versioning Model
+
+- A flow identity is `doc_id`.
+- Every save creates a new `ver_id`.
+- **Save New Version** keeps `doc_id` and sets `parents` to `[current_ver_id]`.
+- **Duplicate** creates a new `doc_id` + new `ver_id` with empty `parents`.
+- **Set Head** maps workspace head for a flow `doc_id` to a specific `ver_id`.
 
 ## Required Server Endpoints
 
 - `POST /v1/workspaces`
+- `GET /v1/workspaces/{workspace_id}/flows`
+- `GET /v1/docs/flow/{doc_id}/{ver_id}`
 - `PUT /v1/docs/flow/{doc_id}/{ver_id}`
 - `PUT /v1/workspaces/{workspace_id}/heads/{doc_id}`
 - `POST /v1/runs`
@@ -70,13 +86,18 @@ flutter run
 4. Click **New Workspace**.
 5. Add nodes (`file.read`, `llm.chat`, `file.write`) and connect edges.
 6. Set run inputs in Run Panel (`input.txt`, `output.txt` by default).
-7. Click **Save to Server** (stores flow + sets head).
-8. Click **Run**.
-9. After success, inspect:
+7. Open **Flows** tab and verify the flow appears in the list.
+8. Click a flow in **Flows** tab to load/re-hydrate it into the canvas.
+9. In **Flow** tab:
+   - click **Save New Version** to create a new `ver_id`
+   - click **Duplicate** to create a new `doc_id`
+   - click **Set Head** to pin workspace head to current flow version
+10. Click **Run**.
+11. After success, inspect:
    - run status + ids in Run Panel
    - output file contents loaded from `{workspace_data_root}/{workspace_id}/output.txt`
-10. Open **Runs** tab to view run history and inspect invocation/output details.
-11. Open **Notes** tab to create a note and verify it appears in list.
+12. Open **Runs** tab to view run history and inspect invocation/output details.
+13. Open **Notes** tab to create a note and verify it appears in list.
 
 ## Test
 

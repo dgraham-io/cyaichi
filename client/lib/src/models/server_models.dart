@@ -60,6 +60,32 @@ class NoteCreated {
   final String verId;
 }
 
+class FlowListItem {
+  FlowListItem({
+    required this.docId,
+    required this.verId,
+    required this.createdAt,
+    required this.ref,
+    required this.title,
+  });
+
+  final String docId;
+  final String verId;
+  final String createdAt;
+  final String ref;
+  final String title;
+
+  factory FlowListItem.fromJson(Map<String, dynamic> json) {
+    return FlowListItem(
+      docId: json['doc_id'] as String? ?? '',
+      verId: json['ver_id'] as String? ?? '',
+      createdAt: json['created_at'] as String? ?? '',
+      ref: json['ref'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+    );
+  }
+}
+
 List<RunListItem> parseRunListResponse(Map<String, dynamic> json) {
   final rawItems = json['items'];
   if (rawItems is! List<dynamic>) {
@@ -82,6 +108,19 @@ List<NoteListItem> parseNoteListResponse(Map<String, dynamic> json) {
   return rawItems
       .whereType<Map<String, dynamic>>()
       .map(NoteListItem.fromJson)
+      .where((item) => item.docId.isNotEmpty && item.verId.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<FlowListItem> parseFlowListResponse(Map<String, dynamic> json) {
+  final rawItems = json['items'];
+  if (rawItems is! List<dynamic>) {
+    return const <FlowListItem>[];
+  }
+
+  return rawItems
+      .whereType<Map<String, dynamic>>()
+      .map(FlowListItem.fromJson)
       .where((item) => item.docId.isNotEmpty && item.verId.isNotEmpty)
       .toList(growable: false);
 }

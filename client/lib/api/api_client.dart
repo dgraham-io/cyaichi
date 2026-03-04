@@ -235,6 +235,11 @@ class ApiClient {
     return parseRunListResponse(json);
   }
 
+  Future<List<FlowListItem>> getFlows({required String workspaceId}) async {
+    final json = await _requestJson('GET', '/v1/workspaces/$workspaceId/flows');
+    return parseFlowListResponse(json);
+  }
+
   Future<Map<String, dynamic>> getRun({
     required String docId,
     required String verId,

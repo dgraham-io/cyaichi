@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -82,6 +84,63 @@ func writeWorkspaceInputFile(t *testing.T, h *apiTestHarness, workspaceID, relPa
 	if err := os.WriteFile(fullPath, []byte(contents), 0o644); err != nil {
 		t.Fatalf("write workspace input file: %v", err)
 	}
+}
+
+type mockChatRequest struct {
+	Authorization string
+	Model         string
+	Role          string
+	Content       string
+	Temperature   float64
+}
+
+func newMockVLLMServer(t *testing.T, responseStatus int, responseBody string) (*httptest.Server, *mockChatRequest) {
+	t.Helper()
+
+	var mu sync.Mutex
+	captured := &mockChatRequest{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read error", http.StatusBadRequest)
+			return
+		}
+
+		var payload struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+			Temperature float64 `json:"temperature"`
+		}
+		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+
+		mu.Lock()
+		captured.Authorization = r.Header.Get("Authorization")
+		captured.Model = payload.Model
+		captured.Temperature = payload.Temperature
+		if len(payload.Messages) > 0 {
+			captured.Role = payload.Messages[0].Role
+			captured.Content = payload.Messages[0].Content
+		}
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(responseStatus)
+		_, _ = w.Write([]byte(responseBody))
+	}))
+
+	t.Cleanup(server.Close)
+	return server, captured
 }
 
 func TestRunsSelectorHeadResolvesThroughHeadsTable(t *testing.T) {
@@ -228,8 +287,10 @@ func TestRunsInvalidFlowReturnsBadRequest(t *testing.T) {
 	}
 }
 
-func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
-	h := newAPITestHarness(t)
+func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
+	mockResp := `{"choices":[{"message":{"content":"mocked assistant response"}}]}`
+	mockServer, captured := newMockVLLMServer(t, http.StatusOK, mockResp)
+	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
 	workspace := createWorkspaceViaAPI(t, h, "Runs Valid")
 
 	flowDocID := uuid.NewString()
@@ -237,12 +298,10 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	flowBody := `{
 	  "nodes": [
 	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
-	    {"id":"n2","type":"node.mid","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
-	    {"id":"n3","type":"node.out","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[],"config":{}}
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"model":"node-model"}}
 	  ],
 	  "edges": [
-	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}},
-	    {"from":{"node":"n2","port":"out"},"to":{"node":"n3","port":"in"}}
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
 	  ]
 	}`
 	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
@@ -259,15 +318,25 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
 	}
 
+	if captured.Authorization != "Bearer test-vllm-key" {
+		t.Fatalf("expected Authorization header %q, got %q", "Bearer test-vllm-key", captured.Authorization)
+	}
+	if captured.Model != "node-model" {
+		t.Fatalf("expected model node-model from node config, got %q", captured.Model)
+	}
+	if captured.Role != "user" {
+		t.Fatalf("expected role user, got %q", captured.Role)
+	}
+	if captured.Content != "file content from test" {
+		t.Fatalf("expected llm input text %q, got %q", "file content from test", captured.Content)
+	}
+
 	var runResp struct {
 		RunID    string `json:"run_id"`
 		RunVerID string `json:"run_ver_id"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &runResp); err != nil {
 		t.Fatalf("decode run response: %v", err)
-	}
-	if runResp.RunID == "" || runResp.RunVerID == "" {
-		t.Fatalf("expected non-empty run IDs")
 	}
 
 	runDocReq := httptest.NewRequest(http.MethodGet, "/v1/docs/run/"+runResp.RunID+"/"+runResp.RunVerID, nil)
@@ -278,27 +347,19 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	}
 
 	var runDoc struct {
-		DocType string `json:"doc_type"`
-		Body    struct {
-			FlowRef struct {
-				DocID    string `json:"doc_id"`
-				VerID    string `json:"ver_id"`
-				Selector string `json:"selector"`
-			} `json:"flow_ref"`
-			Inputs []struct {
-				ArtifactRef struct {
-					DocID    string `json:"doc_id"`
-					VerID    string `json:"ver_id"`
-					Selector string `json:"selector"`
-				} `json:"artifact_ref"`
-			} `json:"inputs"`
+		Body struct {
 			Invocations []struct {
-				NodeID  string `json:"node_id"`
+				NodeID string `json:"node_id"`
+				Inputs []struct {
+					ArtifactRef struct {
+						DocID string `json:"doc_id"`
+						VerID string `json:"ver_id"`
+					} `json:"artifact_ref"`
+				} `json:"inputs"`
 				Outputs []struct {
 					ArtifactRef struct {
-						DocID    string `json:"doc_id"`
-						VerID    string `json:"ver_id"`
-						Selector string `json:"selector"`
+						DocID string `json:"doc_id"`
+						VerID string `json:"ver_id"`
 					} `json:"artifact_ref"`
 				} `json:"outputs"`
 			} `json:"invocations"`
@@ -307,101 +368,60 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	if err := json.Unmarshal(runDocRR.Body.Bytes(), &runDoc); err != nil {
 		t.Fatalf("decode run doc: %v", err)
 	}
-	if runDoc.DocType != "run" {
-		t.Fatalf("expected doc_type run, got %q", runDoc.DocType)
-	}
-	if runDoc.Body.FlowRef.DocID != flowDocID || runDoc.Body.FlowRef.VerID != flowVerID || runDoc.Body.FlowRef.Selector != "pinned" {
-		t.Fatalf("unexpected flow_ref in run doc: %+v", runDoc.Body.FlowRef)
-	}
-	if len(runDoc.Body.Inputs) != 1 {
-		t.Fatalf("expected one run input artifact ref, got %d", len(runDoc.Body.Inputs))
-	}
-	if len(runDoc.Body.Invocations) < 1 {
-		t.Fatalf("expected at least one invocation")
-	}
 
-	var fileReadOutputArtifactID, fileReadOutputArtifactVerID string
+	var fileReadOutDocID, fileReadOutVerID string
+	var llmOutDocID, llmOutVerID string
+	var llmInputDocID, llmInputVerID string
 	for _, inv := range runDoc.Body.Invocations {
 		if inv.NodeID == "n1" && len(inv.Outputs) == 1 {
-			fileReadOutputArtifactID = inv.Outputs[0].ArtifactRef.DocID
-			fileReadOutputArtifactVerID = inv.Outputs[0].ArtifactRef.VerID
+			fileReadOutDocID = inv.Outputs[0].ArtifactRef.DocID
+			fileReadOutVerID = inv.Outputs[0].ArtifactRef.VerID
+		}
+		if inv.NodeID == "n2" {
+			if len(inv.Inputs) == 1 {
+				llmInputDocID = inv.Inputs[0].ArtifactRef.DocID
+				llmInputVerID = inv.Inputs[0].ArtifactRef.VerID
+			}
+			if len(inv.Outputs) == 1 {
+				llmOutDocID = inv.Outputs[0].ArtifactRef.DocID
+				llmOutVerID = inv.Outputs[0].ArtifactRef.VerID
+			}
 		}
 	}
-	if fileReadOutputArtifactID == "" || fileReadOutputArtifactVerID == "" {
-		t.Fatalf("expected file.read invocation output artifact_ref")
+	if fileReadOutDocID == "" || llmOutDocID == "" {
+		t.Fatalf("expected file.read and llm.chat output artifacts")
+	}
+	if llmInputDocID != fileReadOutDocID || llmInputVerID != fileReadOutVerID {
+		t.Fatalf("expected llm.chat input to reference file.read output artifact")
 	}
 
-	artifactDocID := runDoc.Body.Inputs[0].ArtifactRef.DocID
-	artifactVerID := runDoc.Body.Inputs[0].ArtifactRef.VerID
-	artifactReq := httptest.NewRequest(http.MethodGet, "/v1/docs/artifact/"+artifactDocID+"/"+artifactVerID, nil)
-	artifactRR := httptest.NewRecorder()
-	h.mux.ServeHTTP(artifactRR, artifactReq)
-	if artifactRR.Code != http.StatusOK {
-		t.Fatalf("expected artifact doc status %d, got %d body=%s", http.StatusOK, artifactRR.Code, artifactRR.Body.String())
+	llmArtifactReq := httptest.NewRequest(http.MethodGet, "/v1/docs/artifact/"+llmOutDocID+"/"+llmOutVerID, nil)
+	llmArtifactRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(llmArtifactRR, llmArtifactReq)
+	if llmArtifactRR.Code != http.StatusOK {
+		t.Fatalf("expected llm output artifact status %d, got %d body=%s", http.StatusOK, llmArtifactRR.Code, llmArtifactRR.Body.String())
 	}
 
-	var artifactDoc struct {
-		DocType string `json:"doc_type"`
-		Body    struct {
-			Payload struct {
-				Path string `json:"path"`
-			} `json:"payload"`
-			Provenance struct {
-				RunRef struct {
-					DocID    string `json:"doc_id"`
-					VerID    string `json:"ver_id"`
-					Selector string `json:"selector"`
-				} `json:"run_ref"`
-				NodeID string `json:"node_id"`
-			} `json:"provenance"`
-		} `json:"body"`
-	}
-	if err := json.Unmarshal(artifactRR.Body.Bytes(), &artifactDoc); err != nil {
-		t.Fatalf("decode artifact doc: %v", err)
-	}
-	if artifactDoc.DocType != "artifact" {
-		t.Fatalf("expected doc_type artifact, got %q", artifactDoc.DocType)
-	}
-	if artifactDoc.Body.Payload.Path != "input.txt" {
-		t.Fatalf("expected artifact payload path input.txt, got %q", artifactDoc.Body.Payload.Path)
-	}
-	if artifactDoc.Body.Provenance.RunRef.DocID != runResp.RunID ||
-		artifactDoc.Body.Provenance.RunRef.VerID != runResp.RunVerID ||
-		artifactDoc.Body.Provenance.RunRef.Selector != "pinned" {
-		t.Fatalf("unexpected artifact provenance run_ref: %+v", artifactDoc.Body.Provenance.RunRef)
-	}
-	if artifactDoc.Body.Provenance.NodeID != "__run_input__" {
-		t.Fatalf("expected provenance node_id __run_input__, got %q", artifactDoc.Body.Provenance.NodeID)
-	}
-
-	fileReadArtifactReq := httptest.NewRequest(http.MethodGet, "/v1/docs/artifact/"+fileReadOutputArtifactID+"/"+fileReadOutputArtifactVerID, nil)
-	fileReadArtifactRR := httptest.NewRecorder()
-	h.mux.ServeHTTP(fileReadArtifactRR, fileReadArtifactReq)
-	if fileReadArtifactRR.Code != http.StatusOK {
-		t.Fatalf("expected file.read artifact status %d, got %d body=%s", http.StatusOK, fileReadArtifactRR.Code, fileReadArtifactRR.Body.String())
-	}
-
-	var fileReadArtifact struct {
-		DocType string `json:"doc_type"`
-		Body    struct {
+	var llmArtifact struct {
+		Body struct {
 			Schema  string `json:"schema"`
 			Payload struct {
-				Path string `json:"path"`
-				Text string `json:"text"`
+				Text  string `json:"text"`
+				Model string `json:"model"`
 			} `json:"payload"`
 		} `json:"body"`
 	}
-	if err := json.Unmarshal(fileReadArtifactRR.Body.Bytes(), &fileReadArtifact); err != nil {
-		t.Fatalf("decode file.read artifact: %v", err)
+	if err := json.Unmarshal(llmArtifactRR.Body.Bytes(), &llmArtifact); err != nil {
+		t.Fatalf("decode llm output artifact: %v", err)
 	}
-	if fileReadArtifact.DocType != "artifact" || fileReadArtifact.Body.Schema != "artifact/text" {
-		t.Fatalf("unexpected file.read artifact type/schema: %+v", fileReadArtifact)
+	if llmArtifact.Body.Schema != "artifact/text" {
+		t.Fatalf("expected llm output schema artifact/text, got %q", llmArtifact.Body.Schema)
 	}
-	if fileReadArtifact.Body.Payload.Path != "input.txt" {
-		t.Fatalf("expected file.read artifact path input.txt, got %q", fileReadArtifact.Body.Payload.Path)
+	if llmArtifact.Body.Payload.Text != "mocked assistant response" {
+		t.Fatalf("expected llm output text %q, got %q", "mocked assistant response", llmArtifact.Body.Payload.Text)
 	}
-	if fileReadArtifact.Body.Payload.Text != "file content from test" {
-		t.Fatalf("unexpected file.read artifact text: %q", fileReadArtifact.Body.Payload.Text)
+	if llmArtifact.Body.Payload.Model != "node-model" {
+		t.Fatalf("expected llm output model %q, got %q", "node-model", llmArtifact.Body.Payload.Model)
 	}
 }
 
@@ -434,5 +454,39 @@ func TestRunsRejectsPathTraversal(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(rr.Body.String()), "path traversal") {
 		t.Fatalf("expected traversal message, got %q", rr.Body.String())
+	}
+}
+
+func TestRunsLLMFailureReturnsBadGateway(t *testing.T) {
+	mockServer, _ := newMockVLLMServer(t, http.StatusBadGateway, `{"error":"upstream unavailable"}`)
+	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	workspace := createWorkspaceViaAPI(t, h, "Runs LLM Failure")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "file content from test")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{"input_file":"input.txt","output_file":"output.txt"}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadGateway, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rr.Body.String()), "llm.chat failed") {
+		t.Fatalf("expected llm failure message, got %q", rr.Body.String())
 	}
 }

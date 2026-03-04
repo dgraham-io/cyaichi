@@ -22,6 +22,11 @@ type apiTestHarness struct {
 
 func newAPITestHarness(t *testing.T) *apiTestHarness {
 	t.Helper()
+	return newAPITestHarnessWithLLM(t, "", "", "gpt-oss120:b")
+}
+
+func newAPITestHarnessWithLLM(t *testing.T, vllmBaseURL, vllmKey, llmModel string) *apiTestHarness {
+	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "api.db")
 	s, err := store.Open(context.Background(), dbPath)
@@ -41,7 +46,7 @@ func newAPITestHarness(t *testing.T) *apiTestHarness {
 	workspaceRoot := t.TempDir()
 
 	return &apiTestHarness{
-		mux:           NewMux(s, v, workspaceRoot),
+		mux:           NewMux(s, v, workspaceRoot, vllmBaseURL, vllmKey, llmModel),
 		store:         s,
 		workspaceRoot: workspaceRoot,
 	}

@@ -32,6 +32,11 @@ func (h *RunsHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.CreateRun(r.Context(), req)
 	if err != nil {
+		var upstreamErr *engine.UpstreamError
+		if errors.As(err, &upstreamErr) {
+			http.Error(w, upstreamErr.Error(), http.StatusBadGateway)
+			return
+		}
 		var validationErr *engine.ValidationError
 		if errors.As(err, &validationErr) {
 			http.Error(w, validationErr.Error(), http.StatusBadRequest)

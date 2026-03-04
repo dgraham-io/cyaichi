@@ -19,6 +19,9 @@ Optional environment variables:
 - `CYAI_LOG_LEVEL` (default `info`)
 - `CYAI_DB_PATH` (default `/tmp/cyaichi.db`)
 - `CYAI_WORKSPACE_ROOT` (default `./workspace-data`)
+- `CYAI_VLLM_BASE_URL` (required for `llm.chat`, example `http://192.168.1.92:8000`)
+- `VLLM_KEY` (required for `llm.chat`, sent as `Authorization: Bearer ...`)
+- `CYAI_LLM_MODEL` (default `gpt-oss120:b`)
 
 By default, SQLite data is created at `/tmp/cyaichi.db`.
 
@@ -103,6 +106,16 @@ curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111
 
 ## Runs API
 
+Start server with vLLM env vars:
+
+```bash
+cd server
+CYAI_VLLM_BASE_URL="http://192.168.1.92:8000" \
+VLLM_KEY="replace-with-real-key" \
+CYAI_LLM_MODEL="gpt-oss120:b" \
+make run
+```
+
 Create a workspace:
 
 ```bash
@@ -130,7 +143,7 @@ curl -i -X PUT "http://127.0.0.1:8080/v1/docs/flow/$FLOW_ID/$FLOW_VER" \
     \"body\": {
       \"nodes\": [
         {\"id\":\"n1\",\"type\":\"file.read\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
-        {\"id\":\"n2\",\"type\":\"node.out\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[],\"config\":{}}
+        {\"id\":\"n2\",\"type\":\"llm.chat\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}}
       ],
       \"edges\": [
         {\"from\":{\"node\":\"n1\",\"port\":\"out\"},\"to\":{\"node\":\"n2\",\"port\":\"in\"}}
@@ -175,11 +188,11 @@ Fetch the run document:
 curl -i "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER"
 ```
 
-Fetch the file.read output artifact text:
+Fetch the llm.chat output artifact text:
 
 ```bash
 RUN_DOC=$(curl -s "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER")
-OUT_ART_ID=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n1") | .outputs[0].artifact_ref.doc_id')
-OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n1") | .outputs[0].artifact_ref.ver_id')
+OUT_ART_ID=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n2") | .outputs[0].artifact_ref.doc_id')
+OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n2") | .outputs[0].artifact_ref.ver_id')
 curl -s "http://127.0.0.1:8080/v1/docs/artifact/$OUT_ART_ID/$OUT_ART_VER" | jq '.body.payload'
 ```

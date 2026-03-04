@@ -8,7 +8,14 @@ import (
 	"github.com/dgraham-io/cyaichi/server/internal/store"
 )
 
-func NewMux(docStore *store.Store, validator *schema.Validator, workspaceRoot string) *http.ServeMux {
+func NewMux(
+	docStore *store.Store,
+	validator *schema.Validator,
+	workspaceRoot string,
+	vllmBaseURL string,
+	vllmKey string,
+	llmModel string,
+) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", HealthHandler)
 	if docStore != nil && validator != nil {
@@ -26,7 +33,12 @@ func NewMux(docStore *store.Store, validator *schema.Validator, workspaceRoot st
 		mux.HandleFunc("/v1/workspaces/", wh.Handle)
 
 		rh := &RunsHandler{
-			service: engine.NewRunService(docStore, validator, nil, workspaceRoot),
+			service: engine.NewRunService(
+				docStore,
+				validator,
+				engine.NewDefaultNodeRunner(vllmBaseURL, vllmKey, llmModel, nil),
+				workspaceRoot,
+			),
 		}
 		mux.HandleFunc("/v1/runs", rh.Handle)
 	}

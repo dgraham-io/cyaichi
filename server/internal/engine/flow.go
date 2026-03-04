@@ -22,11 +22,12 @@ type FlowBody struct {
 }
 
 type FlowNode struct {
-	ID      string     `json:"id"`
-	Type    string     `json:"type"`
-	Title   string     `json:"title,omitempty"`
-	Inputs  []FlowPort `json:"inputs"`
-	Outputs []FlowPort `json:"outputs"`
+	ID      string         `json:"id"`
+	Type    string         `json:"type"`
+	Title   string         `json:"title,omitempty"`
+	Inputs  []FlowPort     `json:"inputs"`
+	Outputs []FlowPort     `json:"outputs"`
+	Config  map[string]any `json:"config"`
 }
 
 type FlowPort struct {

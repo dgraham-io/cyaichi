@@ -37,8 +37,15 @@ func main() {
 	log.Printf("schema validator ready")
 
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.NewMux(dbStore, validator, cfg.WorkspaceRoot),
+		Addr: cfg.HTTPAddr,
+		Handler: httpapi.NewMux(
+			dbStore,
+			validator,
+			cfg.WorkspaceRoot,
+			cfg.VLLMBaseURL,
+			cfg.VLLMKey,
+			cfg.LLMModel,
+		),
 	}
 
 	serverErr := make(chan error, 1)

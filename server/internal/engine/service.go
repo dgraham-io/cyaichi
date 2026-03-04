@@ -26,6 +26,14 @@ func (e *ValidationError) Error() string {
 	return e.Message
 }
 
+type UpstreamError struct {
+	Message string
+}
+
+func (e *UpstreamError) Error() string {
+	return e.Message
+}
+
 type CreateRunRequest struct {
 	WorkspaceID string            `json:"workspace_id"`
 	FlowRef     DocRefRequest     `json:"flow_ref"`
@@ -58,7 +66,7 @@ type RunService struct {
 
 func NewRunService(store *store.Store, validator *schema.Validator, runner NodeRunner, workspaceRoot string) *RunService {
 	if runner == nil {
-		runner = StubNodeRunner{}
+		runner = NewDefaultNodeRunner("", "", defaultLLMModel, nil)
 	}
 	if workspaceRoot == "" {
 		workspaceRoot = defaultWorkspaceRoot
@@ -169,6 +177,13 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	}}
 
 	invocations := make([]map[string]any, 0, len(executionOrder))
+	latestArtifact := &ResolvedArtifact{
+		Ref: ArtifactRef{
+			DocID: artifactID,
+			VerID: artifactVerID,
+		},
+		Schema: "artifact/input_file",
+	}
 	for _, node := range executionOrder {
 		result, err := s.runner.RunNode(ctx, NodeRunRequest{
 			Node:                 node,
@@ -178,8 +193,17 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			RunVerID:             runVerID,
 			InputFilePath:        inputPath,
 			InputPathArtifactRef: ArtifactRef{DocID: artifactID, VerID: artifactVerID},
+			UpstreamArtifact:     latestArtifact,
 		})
 		if err != nil {
+			var upstreamErr *UpstreamError
+			if errors.As(err, &upstreamErr) {
+				return CreateRunResponse{}, upstreamErr
+			}
+			var validationErr *ValidationError
+			if errors.As(err, &validationErr) {
+				return CreateRunResponse{}, validationErr
+			}
 			return CreateRunResponse{}, &ValidationError{Message: err.Error()}
 		}
 
@@ -205,6 +229,9 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			"inputs":        result.Invocation.Inputs,
 			"outputs":       result.Invocation.Outputs,
 		})
+		if result.NextArtifact != nil {
+			latestArtifact = result.NextArtifact
+		}
 	}
 
 	endedAt := time.Now().UTC().Format(time.RFC3339)

@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +15,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const defaultWorkspaceRoot = "./workspace-data"
+const (
+	defaultWorkspaceRoot = "./workspace-data"
+	defaultLLMModel      = "gpt-oss120:b"
+)
 
 type ArtifactRef struct {
 	DocID string `json:"doc_id"`
@@ -21,6 +27,12 @@ type ArtifactRef struct {
 
 type ArtifactRefWrapper struct {
 	ArtifactRef map[string]any `json:"artifact_ref"`
+}
+
+type ResolvedArtifact struct {
+	Ref    ArtifactRef
+	Schema string
+	Text   string
 }
 
 type InvocationRecord struct {
@@ -45,11 +57,13 @@ type NodeRunRequest struct {
 	RunVerID             string
 	InputFilePath        string
 	InputPathArtifactRef ArtifactRef
+	UpstreamArtifact     *ResolvedArtifact
 }
 
 type NodeRunResult struct {
-	Invocation InvocationRecord
-	Artifacts  []ArtifactDocument
+	Invocation   InvocationRecord
+	Artifacts    []ArtifactDocument
+	NextArtifact *ResolvedArtifact
 }
 
 type ArtifactDocument struct {
@@ -59,27 +73,58 @@ type ArtifactDocument struct {
 	JSON      string
 }
 
-type StubNodeRunner struct{}
+type LLMChatClient interface {
+	Chat(ctx context.Context, model string, userText string) (string, error)
+}
 
-func (s StubNodeRunner) RunNode(_ context.Context, req NodeRunRequest) (NodeRunResult, error) {
+type DefaultNodeRunner struct {
+	llmClient    LLMChatClient
+	defaultModel string
+}
+
+func NewDefaultNodeRunner(baseURL, apiKey, model string, httpClient *http.Client) *DefaultNodeRunner {
+	if model == "" {
+		model = defaultLLMModel
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &DefaultNodeRunner{
+		llmClient:    &VLLMChatClient{baseURL: baseURL, apiKey: apiKey, httpClient: httpClient},
+		defaultModel: model,
+	}
+}
+
+func (r *DefaultNodeRunner) RunNode(ctx context.Context, req NodeRunRequest) (NodeRunResult, error) {
+	switch req.Node.Type {
+	case "file.read":
+		return r.runFileRead(ctx, req)
+	case "llm.chat":
+		return r.runLLMChat(ctx, req)
+	default:
+		now := time.Now().UTC().Format(time.RFC3339)
+		return NodeRunResult{
+			Invocation: InvocationRecord{
+				InvocationID: uuid.NewString(),
+				NodeID:       req.Node.ID,
+				Status:       "succeeded",
+				StartedAt:    now,
+				EndedAt:      now,
+				Inputs:       []ArtifactRefWrapper{},
+				Outputs:      []ArtifactRefWrapper{},
+			},
+			Artifacts:    []ArtifactDocument{},
+			NextArtifact: nil,
+		}, nil
+	}
+}
+
+func (r *DefaultNodeRunner) runFileRead(_ context.Context, req NodeRunRequest) (NodeRunResult, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	inv := InvocationRecord{
-		InvocationID: uuid.NewString(),
-		NodeID:       req.Node.ID,
-		Status:       "succeeded",
-		StartedAt:    now,
-		EndedAt:      now,
-		Inputs:       []ArtifactRefWrapper{},
-		Outputs:      []ArtifactRefWrapper{},
-	}
-
-	if req.Node.Type != "file.read" {
-		return NodeRunResult{Invocation: inv, Artifacts: []ArtifactDocument{}}, nil
-	}
 
 	text, err := readWorkspaceFile(req.WorkspaceRoot, req.WorkspaceID, req.InputFilePath)
 	if err != nil {
-		return NodeRunResult{}, fmt.Errorf("file.read failed: %w", err)
+		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("file.read failed: %v", err)}
 	}
 
 	artifactID := uuid.NewString()
@@ -119,27 +164,32 @@ func (s StubNodeRunner) RunNode(_ context.Context, req NodeRunRequest) (NodeRunR
 		return NodeRunResult{}, fmt.Errorf("marshal file.read artifact: %w", err)
 	}
 
-	inv.Inputs = []ArtifactRefWrapper{
-		{
-			ArtifactRef: map[string]any{
-				"doc_id":   req.InputPathArtifactRef.DocID,
-				"ver_id":   req.InputPathArtifactRef.VerID,
-				"selector": "pinned",
-			},
-		},
-	}
-	inv.Outputs = []ArtifactRefWrapper{
-		{
-			ArtifactRef: map[string]any{
-				"doc_id":   artifactID,
-				"ver_id":   artifactVerID,
-				"selector": "pinned",
-			},
-		},
-	}
-
 	return NodeRunResult{
-		Invocation: inv,
+		Invocation: InvocationRecord{
+			InvocationID: uuid.NewString(),
+			NodeID:       req.Node.ID,
+			Status:       "succeeded",
+			StartedAt:    now,
+			EndedAt:      time.Now().UTC().Format(time.RFC3339),
+			Inputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   req.InputPathArtifactRef.DocID,
+						"ver_id":   req.InputPathArtifactRef.VerID,
+						"selector": "pinned",
+					},
+				},
+			},
+			Outputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   artifactID,
+						"ver_id":   artifactVerID,
+						"selector": "pinned",
+					},
+				},
+			},
+		},
 		Artifacts: []ArtifactDocument{
 			{
 				DocID:     artifactID,
@@ -148,7 +198,211 @@ func (s StubNodeRunner) RunNode(_ context.Context, req NodeRunRequest) (NodeRunR
 				JSON:      string(artifactBytes),
 			},
 		},
+		NextArtifact: &ResolvedArtifact{
+			Ref: ArtifactRef{
+				DocID: artifactID,
+				VerID: artifactVerID,
+			},
+			Schema: "artifact/text",
+			Text:   text,
+		},
 	}, nil
+}
+
+func (r *DefaultNodeRunner) runLLMChat(ctx context.Context, req NodeRunRequest) (NodeRunResult, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	if req.UpstreamArtifact == nil {
+		return NodeRunResult{}, &ValidationError{Message: "llm.chat requires an upstream artifact"}
+	}
+	if req.UpstreamArtifact.Schema != "artifact/text" {
+		return NodeRunResult{}, &ValidationError{Message: "llm.chat requires upstream artifact schema artifact/text"}
+	}
+	if strings.TrimSpace(req.UpstreamArtifact.Text) == "" {
+		return NodeRunResult{}, &ValidationError{Message: "llm.chat requires non-empty input text"}
+	}
+
+	model := r.defaultModel
+	if req.Node.Config != nil {
+		if raw, ok := req.Node.Config["model"]; ok {
+			if configModel, ok := raw.(string); ok && strings.TrimSpace(configModel) != "" {
+				model = configModel
+			}
+		}
+	}
+
+	outputText, err := r.llmClient.Chat(ctx, model, req.UpstreamArtifact.Text)
+	if err != nil {
+		return NodeRunResult{}, &UpstreamError{Message: fmt.Sprintf("llm.chat failed: %v", err)}
+	}
+	if strings.TrimSpace(outputText) == "" {
+		return NodeRunResult{}, &UpstreamError{Message: "llm.chat returned empty content"}
+	}
+
+	artifactID := uuid.NewString()
+	artifactVerID := uuid.NewString()
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	artifactDoc := map[string]any{
+		"doc_type":     "artifact",
+		"doc_id":       artifactID,
+		"ver_id":       artifactVerID,
+		"workspace_id": req.WorkspaceID,
+		"created_at":   createdAt,
+		"body": map[string]any{
+			"schema": "artifact/text",
+			"payload": map[string]any{
+				"text":  outputText,
+				"model": model,
+			},
+			"provenance": map[string]any{
+				"run_ref": map[string]any{
+					"doc_id":   req.RunID,
+					"ver_id":   req.RunVerID,
+					"selector": "pinned",
+				},
+				"node_id": req.Node.ID,
+				"derived_from": []map[string]any{
+					{
+						"doc_id":   req.UpstreamArtifact.Ref.DocID,
+						"ver_id":   req.UpstreamArtifact.Ref.VerID,
+						"selector": "pinned",
+					},
+				},
+			},
+		},
+	}
+	artifactBytes, err := json.Marshal(artifactDoc)
+	if err != nil {
+		return NodeRunResult{}, fmt.Errorf("marshal llm.chat artifact: %w", err)
+	}
+
+	return NodeRunResult{
+		Invocation: InvocationRecord{
+			InvocationID: uuid.NewString(),
+			NodeID:       req.Node.ID,
+			Status:       "succeeded",
+			StartedAt:    now,
+			EndedAt:      time.Now().UTC().Format(time.RFC3339),
+			Inputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   req.UpstreamArtifact.Ref.DocID,
+						"ver_id":   req.UpstreamArtifact.Ref.VerID,
+						"selector": "pinned",
+					},
+				},
+			},
+			Outputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   artifactID,
+						"ver_id":   artifactVerID,
+						"selector": "pinned",
+					},
+				},
+			},
+		},
+		Artifacts: []ArtifactDocument{
+			{
+				DocID:     artifactID,
+				VerID:     artifactVerID,
+				CreatedAt: createdAt,
+				JSON:      string(artifactBytes),
+			},
+		},
+		NextArtifact: &ResolvedArtifact{
+			Ref: ArtifactRef{
+				DocID: artifactID,
+				VerID: artifactVerID,
+			},
+			Schema: "artifact/text",
+			Text:   outputText,
+		},
+	}, nil
+}
+
+type VLLMChatClient struct {
+	baseURL    string
+	apiKey     string
+	httpClient *http.Client
+}
+
+func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string) (string, error) {
+	if strings.TrimSpace(c.baseURL) == "" {
+		return "", fmt.Errorf("CYAI_VLLM_BASE_URL is required for llm.chat")
+	}
+	if strings.TrimSpace(c.apiKey) == "" {
+		return "", fmt.Errorf("VLLM_KEY is required for llm.chat")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = defaultLLMModel
+	}
+
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": userText,
+			},
+		},
+		"temperature": 0.2,
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshal chat request: %w", err)
+	}
+
+	url := strings.TrimRight(c.baseURL, "/") + "/v1/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("build chat request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("chat request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read chat response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := string(respBody)
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		return "", fmt.Errorf("chat API status %d: %s", resp.StatusCode, msg)
+	}
+
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content any `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("parse chat response: %w", err)
+	}
+	if len(parsed.Choices) == 0 {
+		return "", fmt.Errorf("chat response missing choices")
+	}
+
+	switch content := parsed.Choices[0].Message.Content.(type) {
+	case string:
+		if strings.TrimSpace(content) == "" {
+			return "", fmt.Errorf("chat response content is empty")
+		}
+		return content, nil
+	default:
+		return "", fmt.Errorf("chat response content is not a string")
+	}
 }
 
 func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, error) {
@@ -167,12 +421,21 @@ func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, erro
 		return "", fmt.Errorf("path traversal is not allowed")
 	}
 
-	workspaceDir := filepath.Join(workspaceRoot, workspaceID)
+	rootReal, err := filepath.EvalSymlinks(workspaceRoot)
+	if err != nil {
+		return "", fmt.Errorf("workspace root is not accessible: %w", err)
+	}
+	rootReal = filepath.Clean(rootReal)
+
+	workspaceDir := filepath.Join(rootReal, workspaceID)
 	workspaceDirReal, err := filepath.EvalSymlinks(workspaceDir)
 	if err != nil {
 		return "", fmt.Errorf("workspace directory is not accessible: %w", err)
 	}
 	workspaceDirReal = filepath.Clean(workspaceDirReal)
+	if !isWithinRoot(rootReal, workspaceDirReal) {
+		return "", fmt.Errorf("workspace directory escapes workspace root")
+	}
 
 	targetPath := filepath.Join(workspaceDirReal, clean)
 	targetReal, err := filepath.EvalSymlinks(targetPath)

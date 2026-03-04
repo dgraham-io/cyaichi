@@ -7,6 +7,7 @@ const (
 	defaultLogLevel      = "info"
 	defaultDBPath        = "/tmp/cyaichi.db"
 	defaultWorkspaceRoot = "./workspace-data"
+	defaultLLMModel      = "gpt-oss120:b"
 )
 
 type Config struct {
@@ -14,6 +15,9 @@ type Config struct {
 	LogLevel      string
 	DBPath        string
 	WorkspaceRoot string
+	VLLMBaseURL   string
+	VLLMKey       string
+	LLMModel      string
 }
 
 func FromEnv() Config {
@@ -22,6 +26,9 @@ func FromEnv() Config {
 		LogLevel:      envOrDefault("CYAI_LOG_LEVEL", defaultLogLevel),
 		DBPath:        envOrDefault("CYAI_DB_PATH", defaultDBPath),
 		WorkspaceRoot: envOrDefault("CYAI_WORKSPACE_ROOT", defaultWorkspaceRoot),
+		VLLMBaseURL:   envOrDefault("CYAI_VLLM_BASE_URL", ""),
+		VLLMKey:       envOrDefault("VLLM_KEY", ""),
+		LLMModel:      envOrDefault("CYAI_LLM_MODEL", defaultLLMModel),
 	}
 }
 

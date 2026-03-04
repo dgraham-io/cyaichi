@@ -10,19 +10,26 @@ class ApiError implements Exception {
     this.statusCode,
     this.isNetwork = false,
     this.responseBody,
+    this.method,
+    this.endpoint,
   });
 
   final String message;
   final int? statusCode;
   final bool isNetwork;
   final Map<String, dynamic>? responseBody;
+  final String? method;
+  final String? endpoint;
 
   @override
   String toString() {
+    final endpointPrefix = method != null && endpoint != null
+        ? '$method $endpoint: '
+        : '';
     if (statusCode != null) {
-      return 'HTTP $statusCode: $message';
+      return '${endpointPrefix}HTTP $statusCode: $message';
     }
-    return message;
+    return '$endpointPrefix$message';
   }
 }
 
@@ -92,11 +99,15 @@ class ApiClient {
       throw ApiError(
         message: 'server not reachable (request timeout)',
         isNetwork: true,
+        method: method,
+        endpoint: path,
       );
     } on http.ClientException catch (error) {
       throw ApiError(
         message: 'server not reachable (${error.message})',
         isNetwork: true,
+        method: method,
+        endpoint: path,
       );
     }
 
@@ -122,6 +133,8 @@ class ApiClient {
         ),
         statusCode: response.statusCode,
         responseBody: decodedMap,
+        method: method,
+        endpoint: path,
       );
     }
 

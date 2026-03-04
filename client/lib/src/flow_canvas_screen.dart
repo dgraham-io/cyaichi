@@ -11,6 +11,7 @@ import 'package:client/src/flow/run_request_builder.dart';
 import 'package:client/src/io/local_file_reader.dart';
 import 'package:client/src/io/workspace_root_path.dart';
 import 'package:client/src/models/server_models.dart';
+import 'package:client/src/widgets/error_banner.dart';
 import 'package:client/theme/cyaichi_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -76,6 +77,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastRunError;
   String? _lastRunErrorKind;
   String? _lastRunErrorNodeId;
+  String? _lastRunErrorCopyText;
+  String? _lastRunErrorCopyJson;
   String? _lastRunId;
   String? _lastRunVerId;
   String? _lastOutputPath;
@@ -567,6 +570,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     error: _lastRunError,
                     errorKind: _lastRunErrorKind,
                     errorNodeId: _lastRunErrorNodeId,
+                    errorCopyText: _lastRunErrorCopyText,
+                    errorCopyJson: _lastRunErrorCopyJson,
                     invocations: _lastRunInvocations,
                     outputArtifactSummary: _lastOutputArtifactSummary,
                     outputPath: _lastOutputPath,
@@ -598,7 +603,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_flowsError != null && _flows.isEmpty) {
-      return _ErrorState(message: _flowsError!, onRetry: _loadFlows);
+      return _ErrorState(
+        title: 'Flow list error',
+        message: _flowsError!,
+        onRetry: _loadFlows,
+      );
     }
 
     return RefreshIndicator(
@@ -647,7 +656,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_runsError != null && _runs.isEmpty) {
-      return _ErrorState(message: _runsError!, onRetry: _loadRuns);
+      return _ErrorState(
+        title: 'Runs list error',
+        message: _runsError!,
+        onRetry: _loadRuns,
+      );
     }
 
     return RefreshIndicator(
@@ -688,7 +701,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_notesError != null && _notes.isEmpty) {
-      return _ErrorState(message: _notesError!, onRetry: _loadNotes);
+      return _ErrorState(
+        title: 'Notes list error',
+        message: _notesError!,
+        onRetry: _loadNotes,
+      );
     }
 
     return RefreshIndicator(
@@ -1034,7 +1051,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _nodeTypesStatus = _nodeTypesStatusLabel(_nodeTypeRegistry.source);
       });
       if (showFailureSnack) {
-        _showSnack('Node types fetch failed. Using cached/fallback registry.');
+        _showCopyableErrorSnack(
+          message: 'Node types fetch failed. Using cached/fallback registry.',
+          copyText: _buildApiErrorCopyText(
+            error,
+            title: 'Node types fetch failed',
+          ),
+        );
       }
       debugPrint('node types fetch failed: ${_formatApiError(error)}');
     }
@@ -1316,7 +1339,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         'Workspace created: $workspaceName (${_shortId(created.workspaceId)})',
       );
     } on ApiError catch (error) {
-      _showSnack(_formatApiError(error));
+      _showCopyableErrorSnack(
+        message: _formatApiError(error),
+        copyText: _buildApiErrorCopyText(error, title: 'Run request error'),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -1589,6 +1615,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastRunError = null;
       _lastRunErrorKind = null;
       _lastRunErrorNodeId = null;
+      _lastRunErrorCopyText = null;
+      _lastRunErrorCopyJson = null;
       _lastRunId = null;
       _lastRunVerId = null;
       _lastOutputPath = null;
@@ -1609,6 +1637,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _lastRunError = 'Flow save failed; run aborted.';
           _lastRunErrorKind = 'client';
           _lastRunErrorNodeId = null;
+          _lastRunErrorCopyText = _buildRunErrorCopyText(
+            title: 'Run failed',
+            message: 'Flow save failed; run aborted.',
+            kind: 'client',
+            workspaceId: workspaceId,
+            flowDocId: _currentFlowDocId,
+            flowVerId: _currentFlowVerId,
+          );
+          _lastRunErrorCopyJson = null;
         });
       }
       return;
@@ -1694,6 +1731,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunError = runError;
         _lastRunErrorKind = traceError?.kind;
         _lastRunErrorNodeId = traceError?.nodeId;
+        _lastRunErrorCopyText = runError == null
+            ? null
+            : _buildRunErrorCopyText(
+                title: status == 'succeeded' ? 'Run warning' : 'Run failed',
+                message: runError,
+                kind: traceError?.kind,
+                nodeId: traceError?.nodeId,
+                runId: run.runId,
+                runVerId: run.runVerId,
+                workspaceId: workspaceId,
+                flowDocId: _currentFlowDocId,
+                flowVerId: _currentFlowVerId,
+              );
+        _lastRunErrorCopyJson = null;
         _lastOutputPath = outputPath;
         _lastOutputContent = outputContent;
         _lastOutputContentFull = outputContentFull;
@@ -1751,6 +1802,19 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunError = traceError?.message ?? _formatApiError(error);
         _lastRunErrorKind = traceError?.kind;
         _lastRunErrorNodeId = traceError?.nodeId;
+        _lastRunErrorCopyText = _buildRunErrorCopyText(
+          title: 'Run failed',
+          message: traceError?.message ?? _formatApiError(error),
+          kind: traceError?.kind,
+          nodeId: traceError?.nodeId,
+          runId: runId,
+          runVerId: runVerId,
+          workspaceId: workspaceId,
+          flowDocId: _currentFlowDocId,
+          flowVerId: _currentFlowVerId,
+          apiError: error,
+        );
+        _lastRunErrorCopyJson = body == null ? null : jsonEncode(body);
         _lastRunInvocations = invocationSummaries;
         _lastRunRetryable = isRetryable;
         _lastRunDuration = DateTime.now().difference(runStartedAt);
@@ -2372,13 +2436,101 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   String _formatApiError(ApiError error) {
+    final endpoint = (error.method != null && error.endpoint != null)
+        ? '${error.method} ${error.endpoint}'
+        : null;
     if (error.isNetwork) {
+      if (endpoint != null) {
+        return 'server not reachable ($endpoint): ${error.message}';
+      }
       return 'server not reachable: ${error.message}';
     }
     if (error.statusCode != null) {
+      if (endpoint != null) {
+        return 'HTTP ${error.statusCode} ($endpoint): ${error.message}';
+      }
       return 'HTTP ${error.statusCode}: ${error.message}';
     }
+    if (endpoint != null) {
+      return '$endpoint: ${error.message}';
+    }
     return error.message;
+  }
+
+  String _buildApiErrorCopyText(ApiError error, {String? title}) {
+    final lines = <String>[
+      'timestamp: ${DateTime.now().toUtc().toIso8601String()}',
+      if (title != null && title.trim().isNotEmpty) 'title: $title',
+      if (error.statusCode != null) 'status_code: ${error.statusCode}',
+      if (error.method != null) 'method: ${error.method}',
+      if (error.endpoint != null) 'endpoint: ${error.endpoint}',
+      'message: ${error.message}',
+    ];
+    final body = error.responseBody;
+    if (body != null) {
+      final runID = body['run_id'];
+      final runVerID = body['run_ver_id'];
+      if (runID is String && runID.trim().isNotEmpty) {
+        lines.add('run_id: $runID');
+      }
+      if (runVerID is String && runVerID.trim().isNotEmpty) {
+        lines.add('run_ver_id: $runVerID');
+      }
+      final traceRef = body['trace_ref'];
+      if (traceRef is Map<String, dynamic>) {
+        final traceError = traceRef['error'];
+        if (traceError is Map<String, dynamic>) {
+          final traceMessage = traceError['message'];
+          final traceKind = traceError['kind'];
+          final traceNodeID = traceError['node_id'];
+          if (traceMessage is String && traceMessage.trim().isNotEmpty) {
+            lines.add('trace_ref.error.message: $traceMessage');
+          }
+          if (traceKind is String && traceKind.trim().isNotEmpty) {
+            lines.add('trace_ref.error.kind: $traceKind');
+          }
+          if (traceNodeID is String && traceNodeID.trim().isNotEmpty) {
+            lines.add('trace_ref.error.node_id: $traceNodeID');
+          }
+        }
+      }
+    }
+    return lines.join('\n');
+  }
+
+  String _buildRunErrorCopyText({
+    required String title,
+    required String message,
+    String? kind,
+    String? nodeId,
+    String? runId,
+    String? runVerId,
+    String? workspaceId,
+    String? flowDocId,
+    String? flowVerId,
+    ApiError? apiError,
+  }) {
+    final lines = <String>[
+      'timestamp: ${DateTime.now().toUtc().toIso8601String()}',
+      'title: $title',
+      'message: $message',
+      if (kind != null && kind.trim().isNotEmpty) 'kind: $kind',
+      if (nodeId != null && nodeId.trim().isNotEmpty) 'node_id: $nodeId',
+      if (runId != null && runId.trim().isNotEmpty) 'run_id: $runId',
+      if (runVerId != null && runVerId.trim().isNotEmpty)
+        'run_ver_id: $runVerId',
+      if (workspaceId != null && workspaceId.trim().isNotEmpty)
+        'workspace_id: $workspaceId',
+      if (flowDocId != null && flowDocId.trim().isNotEmpty)
+        'flow_doc_id: $flowDocId',
+      if (flowVerId != null && flowVerId.trim().isNotEmpty)
+        'flow_ver_id: $flowVerId',
+    ];
+    if (apiError != null) {
+      lines.add('');
+      lines.add(_buildApiErrorCopyText(apiError, title: 'API error'));
+    }
+    return lines.join('\n');
   }
 
   Future<void> _onExportJson() async {
@@ -2829,6 +2981,27 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
+
+  void _showCopyableErrorSnack({
+    required String message,
+    required String copyText,
+  }) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+          label: 'Copy',
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: copyText));
+            if (!mounted) {
+              return;
+            }
+            _showSnack('Copied');
+          },
+        ),
+      ),
+    );
+  }
 }
 
 class _TraceErrorDetails {
@@ -3255,6 +3428,8 @@ class _RunPanel extends StatelessWidget {
     required this.error,
     required this.errorKind,
     required this.errorNodeId,
+    required this.errorCopyText,
+    required this.errorCopyJson,
     required this.invocations,
     required this.outputArtifactSummary,
     required this.outputPath,
@@ -3280,6 +3455,8 @@ class _RunPanel extends StatelessWidget {
   final String? error;
   final String? errorKind;
   final String? errorNodeId;
+  final String? errorCopyText;
+  final String? errorCopyJson;
   final List<String> invocations;
   final String? outputArtifactSummary;
   final String? outputPath;
@@ -3329,37 +3506,20 @@ class _RunPanel extends StatelessWidget {
             if (validationError != null)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    validationError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                    ),
-                  ),
+                child: ErrorBanner(
+                  title: 'Validation error',
+                  message: validationError!,
+                  copyText:
+                      'title: Validation error\nmessage: ${validationError!}',
                 ),
               ),
             if (blockers.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    blockers.map((item) => '• $item').join('\n'),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                    ),
-                  ),
+                child: ErrorBanner(
+                  title: 'Run blocked',
+                  message: blockers.map((item) => '• $item').join('\n'),
+                  copyText: 'title: Run blocked\n${blockers.join('\n')}',
                 ),
               ),
             const SizedBox(height: 12),
@@ -3392,23 +3552,15 @@ class _RunPanel extends StatelessWidget {
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    [
-                      if (errorKind != null) 'kind: $errorKind',
-                      if (errorNodeId != null) 'node_id: $errorNodeId',
-                      error!,
-                    ].join('\n'),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                    ),
-                  ),
+                child: ErrorBanner(
+                  title: 'Run failed',
+                  message: [
+                    if (errorKind != null) 'kind: $errorKind',
+                    if (errorNodeId != null) 'node_id: $errorNodeId',
+                    error!,
+                  ].join('\n'),
+                  copyText: errorCopyText,
+                  copyJsonText: errorCopyJson,
                 ),
               ),
             if (invocations.isNotEmpty)
@@ -3621,8 +3773,13 @@ class _StatusBadge extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, required this.onRetry});
+  const _ErrorState({
+    required this.title,
+    required this.message,
+    required this.onRetry,
+  });
 
+  final String title;
   final String message;
   final Future<void> Function() onRetry;
 
@@ -3634,10 +3791,10 @@ class _ErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              message,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-              textAlign: TextAlign.center,
+            ErrorBanner(
+              title: title,
+              message: message,
+              copyText: 'title: $title\nmessage: $message',
             ),
             const SizedBox(height: 12),
             FilledButton(onPressed: onRetry, child: const Text('Retry')),
@@ -3821,7 +3978,7 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
         return;
       }
       setState(() {
-        _outputPreviewError = error.message;
+        _outputPreviewError = error.toString();
       });
     } catch (error) {
       if (!mounted) {
@@ -3865,7 +4022,11 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? _ErrorState(message: _error!, onRetry: _load)
+          ? _ErrorState(
+              title: 'Run details error',
+              message: _error!,
+              onRetry: _load,
+            )
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -3901,8 +4062,13 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
                 const SizedBox(height: 8),
                 if (traceErrorMap.isEmpty) const Text('(none)'),
                 if (traceErrorMap.isNotEmpty)
-                  Text(
-                    'message: ${traceErrorMap['message'] ?? ''}\nkind: ${traceErrorMap['kind'] ?? ''}\nnode_id: ${traceErrorMap['node_id'] ?? ''}',
+                  ErrorBanner(
+                    title: 'Run trace error',
+                    message:
+                        'message: ${traceErrorMap['message'] ?? ''}\nkind: ${traceErrorMap['kind'] ?? ''}\nnode_id: ${traceErrorMap['node_id'] ?? ''}',
+                    copyText:
+                        'title: Run trace error\nrun_id: ${widget.runItem.docId}\nrun_ver_id: ${widget.runItem.verId}\nmessage: ${traceErrorMap['message'] ?? ''}\nkind: ${traceErrorMap['kind'] ?? ''}\nnode_id: ${traceErrorMap['node_id'] ?? ''}',
+                    copyJsonText: jsonEncode(traceErrorMap),
                   ),
                 const SizedBox(height: 16),
                 Text('Outputs', style: Theme.of(context).textTheme.titleMedium),
@@ -3933,11 +4099,11 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
                 }),
                 if (_outputPath != null) Text('output_path: $_outputPath'),
                 if (_outputPreviewError != null)
-                  Text(
-                    _outputPreviewError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                  ErrorBanner(
+                    title: 'Output preview error',
+                    message: _outputPreviewError!,
+                    copyText:
+                        'title: Output preview error\nrun_id: ${widget.runItem.docId}\nrun_ver_id: ${widget.runItem.verId}\nmessage: ${_outputPreviewError!}',
                   ),
                 if (_outputPreview != null)
                   Padding(

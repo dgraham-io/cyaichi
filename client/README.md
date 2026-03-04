@@ -76,6 +76,7 @@ flutter run
 - Settings shows source status as `Node types: server` or `Node types: cached/fallback`.
 
 Node config values are always written into flow JSON for forward compatibility.
+Errors are selectable and include a **Copy** button for quick sharing/debugging.
 
 ## Flow Validation (Client-side)
 

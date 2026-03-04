@@ -106,13 +106,20 @@ curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111
 
 ## Runs API
 
-Start server with vLLM env vars:
+Export environment variables:
+
+```bash
+export CYAI_DB_PATH="/tmp/cyaichi.db"
+export CYAI_WORKSPACE_ROOT="./workspace-data"
+export CYAI_VLLM_BASE_URL="http://192.168.1.92:8000"
+export VLLM_KEY="replace-with-real-key"
+export CYAI_LLM_MODEL="gpt-oss120:b"
+```
+
+Start the server:
 
 ```bash
 cd server
-CYAI_VLLM_BASE_URL="http://192.168.1.92:8000" \
-VLLM_KEY="replace-with-real-key" \
-CYAI_LLM_MODEL="gpt-oss120:b" \
 make run
 ```
 
@@ -143,10 +150,12 @@ curl -i -X PUT "http://127.0.0.1:8080/v1/docs/flow/$FLOW_ID/$FLOW_VER" \
     \"body\": {
       \"nodes\": [
         {\"id\":\"n1\",\"type\":\"file.read\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
-        {\"id\":\"n2\",\"type\":\"llm.chat\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}}
+        {\"id\":\"n2\",\"type\":\"llm.chat\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
+        {\"id\":\"n3\",\"type\":\"file.write\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/output_file\"}],\"config\":{}}
       ],
       \"edges\": [
-        {\"from\":{\"node\":\"n1\",\"port\":\"out\"},\"to\":{\"node\":\"n2\",\"port\":\"in\"}}
+        {\"from\":{\"node\":\"n1\",\"port\":\"out\"},\"to\":{\"node\":\"n2\",\"port\":\"in\"}},
+        {\"from\":{\"node\":\"n2\",\"port\":\"out\"},\"to\":{\"node\":\"n3\",\"port\":\"in\"}}
       ]
     }
   }"
@@ -188,11 +197,17 @@ Fetch the run document:
 curl -i "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER"
 ```
 
-Fetch the llm.chat output artifact text:
+Show that output file was written:
+
+```bash
+cat "workspace-data/$WS_ID/output.txt"
+```
+
+Fetch the final output artifact (from `run.body.outputs[0]`):
 
 ```bash
 RUN_DOC=$(curl -s "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER")
-OUT_ART_ID=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n2") | .outputs[0].artifact_ref.doc_id')
-OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n2") | .outputs[0].artifact_ref.ver_id')
-curl -s "http://127.0.0.1:8080/v1/docs/artifact/$OUT_ART_ID/$OUT_ART_VER" | jq '.body.payload'
+OUT_ART_ID=$(echo "$RUN_DOC" | jq -r '.body.outputs[0].artifact_ref.doc_id')
+OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.outputs[0].artifact_ref.ver_id')
+curl -i "http://127.0.0.1:8080/v1/docs/artifact/$OUT_ART_ID/$OUT_ART_VER"
 ```

@@ -56,6 +56,7 @@ type NodeRunRequest struct {
 	RunID                string
 	RunVerID             string
 	InputFilePath        string
+	OutputFilePath       string
 	InputPathArtifactRef ArtifactRef
 	UpstreamArtifact     *ResolvedArtifact
 }
@@ -101,6 +102,8 @@ func (r *DefaultNodeRunner) RunNode(ctx context.Context, req NodeRunRequest) (No
 		return r.runFileRead(ctx, req)
 	case "llm.chat":
 		return r.runLLMChat(ctx, req)
+	case "file.write":
+		return r.runFileWrite(ctx, req)
 	default:
 		now := time.Now().UTC().Format(time.RFC3339)
 		return NodeRunResult{
@@ -321,6 +324,105 @@ func (r *DefaultNodeRunner) runLLMChat(ctx context.Context, req NodeRunRequest) 
 	}, nil
 }
 
+func (r *DefaultNodeRunner) runFileWrite(_ context.Context, req NodeRunRequest) (NodeRunResult, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	if req.UpstreamArtifact == nil {
+		return NodeRunResult{}, &ValidationError{Message: "file.write requires an upstream artifact"}
+	}
+	if req.UpstreamArtifact.Schema != "artifact/text" {
+		return NodeRunResult{}, &ValidationError{Message: "file.write requires upstream artifact schema artifact/text"}
+	}
+	if req.OutputFilePath == "" {
+		return NodeRunResult{}, &ValidationError{Message: "inputs.output_file is required for file.write"}
+	}
+
+	writtenBytes, err := writeWorkspaceFile(req.WorkspaceRoot, req.WorkspaceID, req.OutputFilePath, req.UpstreamArtifact.Text)
+	if err != nil {
+		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("file.write failed: %v", err)}
+	}
+
+	artifactID := uuid.NewString()
+	artifactVerID := uuid.NewString()
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	artifactDoc := map[string]any{
+		"doc_type":     "artifact",
+		"doc_id":       artifactID,
+		"ver_id":       artifactVerID,
+		"workspace_id": req.WorkspaceID,
+		"created_at":   createdAt,
+		"body": map[string]any{
+			"schema": "artifact/output_file",
+			"payload": map[string]any{
+				"path":  req.OutputFilePath,
+				"bytes": writtenBytes,
+			},
+			"provenance": map[string]any{
+				"run_ref": map[string]any{
+					"doc_id":   req.RunID,
+					"ver_id":   req.RunVerID,
+					"selector": "pinned",
+				},
+				"node_id": req.Node.ID,
+				"derived_from": []map[string]any{
+					{
+						"doc_id":   req.UpstreamArtifact.Ref.DocID,
+						"ver_id":   req.UpstreamArtifact.Ref.VerID,
+						"selector": "pinned",
+					},
+				},
+			},
+		},
+	}
+	artifactBytes, err := json.Marshal(artifactDoc)
+	if err != nil {
+		return NodeRunResult{}, fmt.Errorf("marshal file.write artifact: %w", err)
+	}
+
+	return NodeRunResult{
+		Invocation: InvocationRecord{
+			InvocationID: uuid.NewString(),
+			NodeID:       req.Node.ID,
+			Status:       "succeeded",
+			StartedAt:    now,
+			EndedAt:      time.Now().UTC().Format(time.RFC3339),
+			Inputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   req.UpstreamArtifact.Ref.DocID,
+						"ver_id":   req.UpstreamArtifact.Ref.VerID,
+						"selector": "pinned",
+					},
+				},
+			},
+			Outputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   artifactID,
+						"ver_id":   artifactVerID,
+						"selector": "pinned",
+					},
+				},
+			},
+		},
+		Artifacts: []ArtifactDocument{
+			{
+				DocID:     artifactID,
+				VerID:     artifactVerID,
+				CreatedAt: createdAt,
+				JSON:      string(artifactBytes),
+			},
+		},
+		NextArtifact: &ResolvedArtifact{
+			Ref: ArtifactRef{
+				DocID: artifactID,
+				VerID: artifactVerID,
+			},
+			Schema: "artifact/output_file",
+		},
+	}, nil
+}
+
 type VLLMChatClient struct {
 	baseURL    string
 	apiKey     string
@@ -406,37 +508,11 @@ func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string
 }
 
 func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, error) {
-	if strings.TrimSpace(workspaceRoot) == "" {
-		workspaceRoot = defaultWorkspaceRoot
-	}
-	if strings.TrimSpace(relPath) == "" {
-		return "", fmt.Errorf("input file path is required")
-	}
-	if filepath.IsAbs(relPath) {
-		return "", fmt.Errorf("input file path must be relative")
-	}
-
-	clean := filepath.Clean(relPath)
-	if clean == "." || clean == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path traversal is not allowed")
-	}
-
-	rootReal, err := filepath.EvalSymlinks(workspaceRoot)
+	rootReal, workspaceDirReal, clean, err := resolveWorkspacePath(workspaceRoot, workspaceID, relPath, false)
 	if err != nil {
-		return "", fmt.Errorf("workspace root is not accessible: %w", err)
+		return "", err
 	}
-	rootReal = filepath.Clean(rootReal)
-
-	workspaceDir := filepath.Join(rootReal, workspaceID)
-	workspaceDirReal, err := filepath.EvalSymlinks(workspaceDir)
-	if err != nil {
-		return "", fmt.Errorf("workspace directory is not accessible: %w", err)
-	}
-	workspaceDirReal = filepath.Clean(workspaceDirReal)
-	if !isWithinRoot(rootReal, workspaceDirReal) {
-		return "", fmt.Errorf("workspace directory escapes workspace root")
-	}
-
+	_ = rootReal
 	targetPath := filepath.Join(workspaceDirReal, clean)
 	targetReal, err := filepath.EvalSymlinks(targetPath)
 	if err != nil {
@@ -453,6 +529,78 @@ func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, erro
 		return "", fmt.Errorf("read input file: %w", err)
 	}
 	return string(data), nil
+}
+
+func writeWorkspaceFile(workspaceRoot, workspaceID, relPath, text string) (int, error) {
+	_, workspaceDirReal, clean, err := resolveWorkspacePath(workspaceRoot, workspaceID, relPath, true)
+	if err != nil {
+		return 0, err
+	}
+
+	targetPath := filepath.Join(workspaceDirReal, clean)
+	parentDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return 0, fmt.Errorf("create output directory: %w", err)
+	}
+
+	parentReal, err := filepath.EvalSymlinks(parentDir)
+	if err != nil {
+		return 0, fmt.Errorf("output directory is not accessible: %w", err)
+	}
+	parentReal = filepath.Clean(parentReal)
+	if !isWithinRoot(workspaceDirReal, parentReal) {
+		return 0, fmt.Errorf("output path escapes workspace root")
+	}
+
+	bytes := []byte(text)
+	if err := os.WriteFile(targetPath, bytes, 0o644); err != nil {
+		return 0, fmt.Errorf("write output file: %w", err)
+	}
+	return len(bytes), nil
+}
+
+func resolveWorkspacePath(workspaceRoot, workspaceID, relPath string, allowCreateWorkspaceDir bool) (rootReal, workspaceDirReal, clean string, err error) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		workspaceRoot = defaultWorkspaceRoot
+	}
+	if strings.TrimSpace(relPath) == "" {
+		return "", "", "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(relPath) {
+		return "", "", "", fmt.Errorf("path must be relative")
+	}
+
+	clean = filepath.Clean(relPath)
+	if clean == "." || clean == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", "", "", fmt.Errorf("path traversal is not allowed")
+	}
+
+	if allowCreateWorkspaceDir {
+		if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+			return "", "", "", fmt.Errorf("workspace root is not writable: %w", err)
+		}
+	}
+	rootReal, err = filepath.EvalSymlinks(workspaceRoot)
+	if err != nil {
+		return "", "", "", fmt.Errorf("workspace root is not accessible: %w", err)
+	}
+	rootReal = filepath.Clean(rootReal)
+
+	workspaceDir := filepath.Join(rootReal, workspaceID)
+	if allowCreateWorkspaceDir {
+		if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
+			return "", "", "", fmt.Errorf("workspace directory is not writable: %w", err)
+		}
+	}
+	workspaceDirReal, err = filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		return "", "", "", fmt.Errorf("workspace directory is not accessible: %w", err)
+	}
+	workspaceDirReal = filepath.Clean(workspaceDirReal)
+	if !isWithinRoot(rootReal, workspaceDirReal) {
+		return "", "", "", fmt.Errorf("workspace directory escapes workspace root")
+	}
+	return rootReal, workspaceDirReal, clean, nil
 }
 
 func isWithinRoot(root, path string) bool {

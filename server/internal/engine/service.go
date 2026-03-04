@@ -131,6 +131,7 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	if inputPath == "" {
 		return CreateRunResponse{}, &ValidationError{Message: "inputs.input_file is required"}
 	}
+	outputPath := req.Inputs["output_file"]
 
 	runID := uuid.NewString()
 	runVerID := uuid.NewString()
@@ -192,6 +193,7 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			RunID:                runID,
 			RunVerID:             runVerID,
 			InputFilePath:        inputPath,
+			OutputFilePath:       outputPath,
 			InputPathArtifactRef: ArtifactRef{DocID: artifactID, VerID: artifactVerID},
 			UpstreamArtifact:     latestArtifact,
 		})
@@ -235,6 +237,16 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	}
 
 	endedAt := time.Now().UTC().Format(time.RFC3339)
+	runOutputs := []map[string]any{}
+	if latestArtifact != nil && (latestArtifact.Ref.DocID != artifactID || latestArtifact.Ref.VerID != artifactVerID) {
+		runOutputs = append(runOutputs, map[string]any{
+			"artifact_ref": map[string]any{
+				"doc_id":   latestArtifact.Ref.DocID,
+				"ver_id":   latestArtifact.Ref.VerID,
+				"selector": "pinned",
+			},
+		})
+	}
 	runDocMap := map[string]any{
 		"doc_type":     "run",
 		"doc_id":       runID,
@@ -260,7 +272,7 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 					},
 				},
 			},
-			"outputs":     []map[string]any{},
+			"outputs":     runOutputs,
 			"invocations": invocations,
 		},
 	}

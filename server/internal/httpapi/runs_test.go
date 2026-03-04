@@ -287,7 +287,7 @@ func TestRunsInvalidFlowReturnsBadRequest(t *testing.T) {
 	}
 }
 
-func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
+func TestRunsValidFlowFileReadToLLMChatToFileWriteCreatesFinalOutput(t *testing.T) {
 	mockResp := `{"choices":[{"message":{"content":"mocked assistant response"}}]}`
 	mockServer, captured := newMockVLLMServer(t, http.StatusOK, mockResp)
 	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
@@ -298,10 +298,12 @@ func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
 	flowBody := `{
 	  "nodes": [
 	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
-	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"model":"node-model"}}
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"model":"node-model"}},
+	    {"id":"n3","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{}}
 	  ],
 	  "edges": [
-	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}},
+	    {"from":{"node":"n2","port":"out"},"to":{"node":"n3","port":"in"}}
 	  ]
 	}`
 	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
@@ -348,6 +350,12 @@ func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
 
 	var runDoc struct {
 		Body struct {
+			Outputs []struct {
+				ArtifactRef struct {
+					DocID string `json:"doc_id"`
+					VerID string `json:"ver_id"`
+				} `json:"artifact_ref"`
+			} `json:"outputs"`
 			Invocations []struct {
 				NodeID string `json:"node_id"`
 				Inputs []struct {
@@ -372,6 +380,8 @@ func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
 	var fileReadOutDocID, fileReadOutVerID string
 	var llmOutDocID, llmOutVerID string
 	var llmInputDocID, llmInputVerID string
+	var writeOutDocID, writeOutVerID string
+	var writeInputDocID, writeInputVerID string
 	for _, inv := range runDoc.Body.Invocations {
 		if inv.NodeID == "n1" && len(inv.Outputs) == 1 {
 			fileReadOutDocID = inv.Outputs[0].ArtifactRef.DocID
@@ -387,12 +397,31 @@ func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
 				llmOutVerID = inv.Outputs[0].ArtifactRef.VerID
 			}
 		}
+		if inv.NodeID == "n3" {
+			if len(inv.Inputs) == 1 {
+				writeInputDocID = inv.Inputs[0].ArtifactRef.DocID
+				writeInputVerID = inv.Inputs[0].ArtifactRef.VerID
+			}
+			if len(inv.Outputs) == 1 {
+				writeOutDocID = inv.Outputs[0].ArtifactRef.DocID
+				writeOutVerID = inv.Outputs[0].ArtifactRef.VerID
+			}
+		}
 	}
-	if fileReadOutDocID == "" || llmOutDocID == "" {
-		t.Fatalf("expected file.read and llm.chat output artifacts")
+	if fileReadOutDocID == "" || llmOutDocID == "" || writeOutDocID == "" {
+		t.Fatalf("expected file.read, llm.chat and file.write output artifacts")
 	}
 	if llmInputDocID != fileReadOutDocID || llmInputVerID != fileReadOutVerID {
 		t.Fatalf("expected llm.chat input to reference file.read output artifact")
+	}
+	if writeInputDocID != llmOutDocID || writeInputVerID != llmOutVerID {
+		t.Fatalf("expected file.write input to reference llm.chat output artifact")
+	}
+	if len(runDoc.Body.Outputs) != 1 {
+		t.Fatalf("expected run.body.outputs to have one artifact")
+	}
+	if runDoc.Body.Outputs[0].ArtifactRef.DocID != writeOutDocID || runDoc.Body.Outputs[0].ArtifactRef.VerID != writeOutVerID {
+		t.Fatalf("expected run.body.outputs to reference file.write artifact")
 	}
 
 	llmArtifactReq := httptest.NewRequest(http.MethodGet, "/v1/docs/artifact/"+llmOutDocID+"/"+llmOutVerID, nil)
@@ -423,6 +452,44 @@ func TestRunsValidFlowFileReadToLLMChatCreatesOutputArtifact(t *testing.T) {
 	if llmArtifact.Body.Payload.Model != "node-model" {
 		t.Fatalf("expected llm output model %q, got %q", "node-model", llmArtifact.Body.Payload.Model)
 	}
+
+	writeArtifactReq := httptest.NewRequest(http.MethodGet, "/v1/docs/artifact/"+writeOutDocID+"/"+writeOutVerID, nil)
+	writeArtifactRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(writeArtifactRR, writeArtifactReq)
+	if writeArtifactRR.Code != http.StatusOK {
+		t.Fatalf("expected file.write artifact status %d, got %d body=%s", http.StatusOK, writeArtifactRR.Code, writeArtifactRR.Body.String())
+	}
+
+	var writeArtifact struct {
+		Body struct {
+			Schema  string `json:"schema"`
+			Payload struct {
+				Path  string `json:"path"`
+				Bytes int    `json:"bytes"`
+			} `json:"payload"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(writeArtifactRR.Body.Bytes(), &writeArtifact); err != nil {
+		t.Fatalf("decode file.write artifact: %v", err)
+	}
+	if writeArtifact.Body.Schema != "artifact/output_file" {
+		t.Fatalf("expected file.write schema artifact/output_file, got %q", writeArtifact.Body.Schema)
+	}
+	if writeArtifact.Body.Payload.Path != "output.txt" {
+		t.Fatalf("expected output path output.txt, got %q", writeArtifact.Body.Payload.Path)
+	}
+	if writeArtifact.Body.Payload.Bytes != len("mocked assistant response") {
+		t.Fatalf("expected bytes=%d got %d", len("mocked assistant response"), writeArtifact.Body.Payload.Bytes)
+	}
+
+	outputPath := filepath.Join(h.workspaceRoot, workspace.WorkspaceID, "output.txt")
+	outputBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	if string(outputBytes) != "mocked assistant response" {
+		t.Fatalf("expected output file content %q, got %q", "mocked assistant response", string(outputBytes))
+	}
 }
 
 func TestRunsRejectsPathTraversal(t *testing.T) {
@@ -447,6 +514,43 @@ func TestRunsRejectsPathTraversal(t *testing.T) {
 	  "workspace_id":"` + workspace.WorkspaceID + `",
 	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
 	  "inputs":{"input_file":"../secrets.txt","output_file":"output.txt"}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rr.Body.String()), "path traversal") {
+		t.Fatalf("expected traversal message, got %q", rr.Body.String())
+	}
+}
+
+func TestRunsRejectsOutputPathTraversal(t *testing.T) {
+	mockResp := `{"choices":[{"message":{"content":"mocked assistant response"}}]}`
+	mockServer, _ := newMockVLLMServer(t, http.StatusOK, mockResp)
+	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	workspace := createWorkspaceViaAPI(t, h, "Runs Output Traversal")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n3","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}},
+	    {"from":{"node":"n2","port":"out"},"to":{"node":"n3","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "hello")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{"input_file":"input.txt","output_file":"../evil.txt"}
 	}`
 	rr := postRunViaAPI(t, h, runReq)
 	if rr.Code != http.StatusBadRequest {

@@ -26,7 +26,7 @@ func FromEnv() Config {
 		LogLevel:      envOrDefault("CYAI_LOG_LEVEL", defaultLogLevel),
 		DBPath:        envOrDefault("CYAI_DB_PATH", defaultDBPath),
 		WorkspaceRoot: envOrDefault("CYAI_WORKSPACE_ROOT", defaultWorkspaceRoot),
-		VLLMBaseURL:   envOrDefault("CYAI_VLLM_BASE_URL", ""),
+		VLLMBaseURL:   envOrDefault("CYAI_VLLM_BASE_URL", envOrDefault("VLLM_URL", "")),
 		VLLMKey:       envOrDefault("VLLM_KEY", ""),
 		LLMModel:      envOrDefault("CYAI_LLM_MODEL", defaultLLMModel),
 	}

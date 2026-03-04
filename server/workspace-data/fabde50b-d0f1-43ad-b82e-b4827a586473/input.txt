@@ -1,0 +1,2 @@
+Please summarize this text in one sentence.
+This MVP runs file.read -> llm.chat -> file.write.

@@ -160,6 +160,22 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 12. Open **Runs** tab to view run history and inspect invocation/output details.
 13. Open **Notes** tab to create a note and verify it appears in list.
 
+## MVP Stability Checklist
+
+- Select a workspace before Save/Run (buttons stay disabled otherwise).
+- Build at least one connected graph path before Run:
+  - no nodes or no edges blocks Run with guidance.
+  - validation **errors** block Run (warnings do not).
+- Set `file.write` primary output when multiple writes exist; Run prompts if missing.
+- Keep an eye on dirty state:
+  - app title shows `•` when flow has unsaved changes.
+  - leaving Flow tab prompts: **Discard / Cancel / Save new version**.
+- Run feedback:
+  - `Running...` state with client-side **Cancel** wait.
+  - completion summary includes status, duration, output path.
+  - output actions: **Copy output file path**, **Copy output**, optional **Open full**.
+  - failure shows trace error details and invocation statuses; transient failures expose **Retry**.
+
 ## Test
 
 ```bash

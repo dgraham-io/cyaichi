@@ -62,6 +62,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _selectedConnectionId;
   String? _primaryWriteNodeId;
   int _nodeCounter = 1;
+  bool _isFlowDirty = false;
 
   bool _isCreatingWorkspace = false;
   bool _isSavingToServer = false;
@@ -80,6 +81,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastOutputContentFull;
   String? _lastOutputArtifactSummary;
   List<String> _lastRunInvocations = const <String>[];
+  bool _lastRunRetryable = false;
+  Duration? _lastRunDuration;
+  int _runRequestToken = 0;
+  bool _runWaitCancelled = false;
 
   String? _currentFlowDocId;
   String? _currentFlowVerId;
@@ -208,11 +213,72 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     await _refreshWorkspaceData();
   }
 
+  Future<bool> _handleTabChange(int nextIndex) async {
+    if (nextIndex == _selectedTabIndex) {
+      return true;
+    }
+    if (_selectedTabIndex == 0 && _isFlowDirty) {
+      final decision = await _promptUnsavedFlowDecision();
+      switch (decision) {
+        case _UnsavedFlowDecision.cancel:
+          return false;
+        case _UnsavedFlowDecision.save:
+          final saved = await _saveNewFlowVersionToServer();
+          if (!saved) {
+            return false;
+          }
+          break;
+        case _UnsavedFlowDecision.discard:
+          break;
+      }
+    }
+    if (!mounted) {
+      return false;
+    }
+    setState(() {
+      _selectedTabIndex = nextIndex;
+    });
+    return true;
+  }
+
+  Future<_UnsavedFlowDecision> _promptUnsavedFlowDecision() async {
+    final result = await showDialog<_UnsavedFlowDecision>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Unsaved changes'),
+          content: const Text(
+            'You have unsaved flow changes. Save before leaving the Flow editor?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnsavedFlowDecision.discard),
+              child: const Text('Discard'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnsavedFlowDecision.cancel),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnsavedFlowDecision.save),
+              child: const Text('Save new version'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? _UnsavedFlowDecision.cancel;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final runGuard = _computeRunGuard();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('cyaichi flow client'),
+        title: Text('cyaichi flow client${_isFlowDirty ? ' •' : ''}'),
         actions: [
           IconButton(
             tooltip: 'Workspaces',
@@ -256,6 +322,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   onDuplicate: _duplicateCurrentFlow,
                   onValidateFlow: _validateFlow,
                   onRun: _runFlow,
+                  onCancelRun: _cancelRunWait,
+                  saveEnabled: _selectedWorkspaceId != null,
+                  runEnabled: runGuard.canRun && !_isRunning,
                 ),
               )
             : null,
@@ -272,9 +341,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedTabIndex,
         onDestinationSelected: (index) async {
-          setState(() {
-            _selectedTabIndex = index;
-          });
+          if (!await _handleTabChange(index)) {
+            return;
+          }
           if (index == 1) {
             await _loadFlows();
           }
@@ -306,6 +375,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Widget _buildFlowTab() {
+    final runGuard = _computeRunGuard();
     final selectedNode = _selectedNodeId == null
         ? null
         : _controller.getNode(_selectedNodeId!);
@@ -348,45 +418,66 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   ],
                 ),
               ),
-              child: NodeFlowEditor<Map<String, dynamic>, dynamic>(
-                controller: _controller,
-                theme: canvasTheme,
-                nodeBuilder: _buildNodeCard,
-                behavior: NodeFlowBehavior.design,
-                events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
-                  node: NodeEvents(
-                    onSelected: (node) {
-                      setState(() {
-                        _selectedNodeId = node?.id;
-                      });
-                    },
+              child: Stack(
+                children: [
+                  NodeFlowEditor<Map<String, dynamic>, dynamic>(
+                    controller: _controller,
+                    theme: canvasTheme,
+                    nodeBuilder: _buildNodeCard,
+                    behavior: NodeFlowBehavior.design,
+                    events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
+                      node: NodeEvents(
+                        onSelected: (node) {
+                          setState(() {
+                            _selectedNodeId = node?.id;
+                          });
+                        },
+                      ),
+                      connection:
+                          ConnectionEvents<Map<String, dynamic>, dynamic>(
+                            onBeforeComplete: _validateConnectionBeforeComplete,
+                            onCreated: (_) {
+                              _markFlowDirty();
+                            },
+                            onDeleted: (_) {
+                              _markFlowDirty();
+                            },
+                            onSelected: (connection) {
+                              setState(() {
+                                _selectedConnectionId = connection?.id;
+                              });
+                            },
+                            onConnectEnd: (_, __, ___) {
+                              final reason = _connectionRejectReason;
+                              if (reason != null && mounted) {
+                                _showSnack(reason);
+                                _connectionRejectReason = null;
+                              }
+                            },
+                          ),
+                      onSelectionChange: (selection) {
+                        setState(() {
+                          _selectedNodeId = selection.nodes.isEmpty
+                              ? null
+                              : selection.nodes.first.id;
+                          _selectedConnectionId = selection.connections.isEmpty
+                              ? null
+                              : selection.connections.first.id;
+                        });
+                      },
+                    ),
                   ),
-                  connection: ConnectionEvents<Map<String, dynamic>, dynamic>(
-                    onBeforeComplete: _validateConnectionBeforeComplete,
-                    onSelected: (connection) {
-                      setState(() {
-                        _selectedConnectionId = connection?.id;
-                      });
-                    },
-                    onConnectEnd: (_, __, ___) {
-                      final reason = _connectionRejectReason;
-                      if (reason != null && mounted) {
-                        _showSnack(reason);
-                        _connectionRejectReason = null;
-                      }
-                    },
+                  Positioned(
+                    left: 12,
+                    bottom: 12,
+                    child: _CanvasZoomControls(
+                      onZoomIn: () => _controller.zoomBy(0.1),
+                      onZoomOut: () => _controller.zoomBy(-0.1),
+                      onReset: () => _controller.zoomTo(1.0),
+                      onFit: _controller.fitToView,
+                    ),
                   ),
-                  onSelectionChange: (selection) {
-                    setState(() {
-                      _selectedNodeId = selection.nodes.isEmpty
-                          ? null
-                          : selection.nodes.first.id;
-                      _selectedConnectionId = selection.connections.isEmpty
-                          ? null
-                          : selection.connections.first.id;
-                    });
-                  },
-                ),
+                ],
               ),
             ),
           ),
@@ -426,6 +517,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     inputFileHint: _defaultRunInputFile,
                     outputFileHint: _defaultRunOutputFile,
                     status: _lastRunStatus,
+                    blockers: runGuard.blockers,
                     validationError: _runValidationError,
                     runId: _lastRunId,
                     runVerId: _lastRunVerId,
@@ -438,6 +530,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     outputContent: _lastOutputContent,
                     outputContentFull: _lastOutputContentFull,
                     isRunning: _isRunning,
+                    duration: _lastRunDuration,
+                    retryable: _lastRunRetryable,
+                    onRetry: _runFlow,
+                    onCancel: _cancelRunWait,
+                    onOpenRunDetails: _openLatestRunDetailsFromPanel,
                   ),
                 ],
               ),
@@ -895,6 +992,108 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
+  _RunGuardResult _computeRunGuard() {
+    final blockers = <String>[];
+    if (_selectedWorkspaceId == null) {
+      blockers.add('Select or create a workspace to save and run.');
+    }
+
+    final nodes = _controller.nodes.values.toList(growable: false);
+    final edges = _controller.connections.toList(growable: false);
+    if (nodes.isEmpty) {
+      blockers.add('Add at least one node before running.');
+    }
+    if (edges.isEmpty) {
+      blockers.add('Create at least one connection before running.');
+    }
+
+    if (nodes.isNotEmpty && edges.isNotEmpty) {
+      final validation = validateFlowGraph(
+        nodes: nodes
+            .map(
+              (node) => FlowValidationNode(
+                id: node.id,
+                type: node.type,
+                inputPorts: _readFlowPorts(
+                  node.data['inputs'],
+                ).map((port) => port.port).toList(growable: false),
+                outputPorts: _readFlowPorts(
+                  node.data['outputs'],
+                ).map((port) => port.port).toList(growable: false),
+                config: _readConfig(node.data),
+              ),
+            )
+            .toList(growable: false),
+        edges: edges
+            .map(
+              (edge) => FlowValidationEdge(
+                sourceNodeId: edge.sourceNodeId,
+                sourcePortId: edge.sourcePortId,
+                targetNodeId: edge.targetNodeId,
+                targetPortId: edge.targetPortId,
+              ),
+            )
+            .toList(growable: false),
+        nodeTypeLookup: _nodeTypeRegistry.byType,
+      );
+      if (validation.errors.isNotEmpty) {
+        blockers.addAll(validation.errors.map((issue) => issue.message));
+      }
+    }
+
+    final runDefaultsCheck = buildRunRequestParams(
+      enteredInputFile: _inputFileController.text,
+      enteredOutputFile: _outputFileController.text,
+      readNodeConfigInputFiles: _collectReadNodeInputDefaults(),
+      writeNodes: _collectWriteNodeOptions(),
+      preferredPrimaryWriteNodeId: _primaryWriteNodeId,
+    );
+    if (runDefaultsCheck.errorMessage != null &&
+        (runDefaultsCheck.errorMessage!.contains('input_file is required') ||
+            runDefaultsCheck.errorMessage!.contains(
+              'output_file is required',
+            ))) {
+      blockers.add(runDefaultsCheck.errorMessage!);
+    }
+
+    final writeNodes = _collectWriteNodeOptions();
+    if (_outputFileController.text.trim().isEmpty && writeNodes.isNotEmpty) {
+      final chosenOutput = chooseRunOutputFile(
+        writes: writeNodes,
+        primaryNodeId: _primaryWriteNodeId,
+      );
+      if (chosenOutput == null || chosenOutput.trim().isEmpty) {
+        blockers.add('output_file is required');
+      }
+    }
+
+    return _RunGuardResult(canRun: blockers.isEmpty, blockers: blockers);
+  }
+
+  void _markFlowDirty() {
+    if (_isFlowDirty) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isFlowDirty = true;
+    });
+  }
+
+  void _clearFlowDirty() {
+    if (!_isFlowDirty) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isFlowDirty = false;
+    });
+  }
+
   Future<void> _loadFlows() async {
     final workspaceId = _selectedWorkspaceId;
     if (workspaceId == null) {
@@ -1126,12 +1325,21 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _currentFlowParents = previousVerID == null
             ? const <String>[]
             : <String>[previousVerID];
+        _isFlowDirty = false;
       });
       await _loadFlows();
-      _showSnack(
-        _autoSetHeadOnSave
-            ? 'Saved new version and set head (${_shortId(flowDocId)} @ ${_shortId(flowVerId)})'
-            : 'Saved new version (${_shortId(flowDocId)} @ ${_shortId(flowVerId)})',
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Saved new version: $flowVerId'),
+          action: SnackBarAction(
+            label: 'Set Head',
+            onPressed: () {
+              _setCurrentFlowAsHead();
+            },
+          ),
+        ),
       );
       return true;
     } on ApiError catch (error) {
@@ -1194,6 +1402,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _currentFlowVerId = verId;
         _currentFlowWorkspaceId = workspaceId;
         _currentFlowParents = const <String>[];
+        _isFlowDirty = false;
       });
       await _loadFlows();
       _showSnack(
@@ -1246,6 +1455,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final workspaceId = _selectedWorkspaceId;
     if (workspaceId == null) {
       _showSnack('Select or create a workspace first.');
+      return;
+    }
+    final runGuard = _computeRunGuard();
+    if (!runGuard.canRun) {
+      setState(() {
+        _runValidationError = runGuard.blockers.join('\n');
+      });
       return;
     }
 
@@ -1301,6 +1517,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _primaryWriteNodeId = params.primaryWriteNodeId;
     }
 
+    final runToken = ++_runRequestToken;
+    final runStartedAt = DateTime.now();
+    _runWaitCancelled = false;
+
     setState(() {
       _isRunning = true;
       _lastRunStatus = 'running';
@@ -1315,6 +1535,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastOutputContentFull = null;
       _lastOutputArtifactSummary = null;
       _lastRunInvocations = const <String>[];
+      _lastRunRetryable = false;
+      _lastRunDuration = null;
     });
 
     final saved = await _saveNewFlowVersionToServer();
@@ -1337,18 +1559,27 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         docId: _currentFlowDocId!,
         verId: _currentFlowVerId!,
       );
+      if (!_isRunRequestActive(runToken)) {
+        return;
+      }
       final run = await _apiClient.createRun(
         workspaceId: workspaceId,
         flowDocId: _currentFlowDocId!,
         inputFile: params.inputFile,
         outputFile: params.outputFile,
       );
+      if (!_isRunRequestActive(runToken)) {
+        return;
+      }
 
       final runDoc = await _apiClient.getDocument(
         docType: 'run',
         docId: run.runId,
         verId: run.runVerId,
       );
+      if (!_isRunRequestActive(runToken)) {
+        return;
+      }
       final runBody = runDoc['body'] as Map<String, dynamic>?;
       final status = runBody?['status'] as String? ?? 'succeeded';
       final traceError = _traceErrorDetails(runBody);
@@ -1367,6 +1598,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             docId: outputArtifactRef.$1,
             verId: outputArtifactRef.$2,
           );
+          if (!_isRunRequestActive(runToken)) {
+            return;
+          }
           final artifactInfo = _outputArtifactInfo(artifact);
           outputArtifactSummary = artifactInfo?.summary;
           outputPath = artifactInfo?.path != null
@@ -1404,6 +1638,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastOutputContentFull = outputContentFull;
         _lastOutputArtifactSummary = outputArtifactSummary;
         _lastRunInvocations = invocations;
+        _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
     } on ApiError catch (error) {
       String status = 'failed';
@@ -1413,6 +1648,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       List<String> invocationSummaries = const <String>[];
 
       final body = error.responseBody;
+      final isRetryable = error.isNetwork || error.statusCode == 502;
       if (body != null) {
         final valueRunId = body['run_id'];
         final valueRunVerId = body['run_ver_id'];
@@ -1431,6 +1667,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             docId: runId,
             verId: runVerId,
           );
+          if (!_isRunRequestActive(runToken)) {
+            return;
+          }
           final runBody = runDoc['body'] as Map<String, dynamic>?;
           status = runBody?['status'] as String? ?? status;
           traceError = _traceErrorDetails(runBody);
@@ -1452,16 +1691,39 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunErrorKind = traceError?.kind;
         _lastRunErrorNodeId = traceError?.nodeId;
         _lastRunInvocations = invocationSummaries;
+        _lastRunRetryable = isRetryable;
+        _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
       _showSnack(_formatApiError(error));
     } finally {
-      if (mounted) {
+      if (mounted && _isRunRequestActive(runToken)) {
         setState(() {
           _isRunning = false;
+          if (_runWaitCancelled) {
+            _lastRunStatus = 'cancelled';
+            _lastRunError = 'Run wait cancelled by user.';
+          }
         });
       }
       await _loadRuns();
     }
+  }
+
+  bool _isRunRequestActive(int token) {
+    return token == _runRequestToken && !_runWaitCancelled;
+  }
+
+  void _cancelRunWait() {
+    if (!_isRunning) {
+      return;
+    }
+    setState(() {
+      _runWaitCancelled = true;
+      _isRunning = false;
+      _lastRunStatus = 'cancelled';
+      _lastRunError = 'Run wait cancelled by user.';
+    });
+    _showSnack('Run wait cancelled');
   }
 
   List<String> _collectReadNodeInputDefaults() {
@@ -1675,6 +1937,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       setState(() {
         _selectedConnectionId = null;
       });
+      _markFlowDirty();
       _showSnack('Connection deleted');
     } catch (error) {
       _showSnack('Failed to delete connection: $error');
@@ -1698,6 +1961,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _primaryWriteNodeId = null;
         }
       });
+      _markFlowDirty();
       _showSnack('Node deleted');
     } catch (error) {
       _showSnack('Failed to delete node: $error');
@@ -1732,6 +1996,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     setState(() {
       _primaryWriteNodeId = nodeId;
     });
+    _markFlowDirty();
     _showSnack('Primary output set');
   }
 
@@ -1810,6 +2075,23 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openLatestRunDetailsFromPanel() async {
+    final workspaceId = _selectedWorkspaceId;
+    final runId = _lastRunId;
+    final runVerId = _lastRunVerId;
+    if (workspaceId == null || runId == null || runVerId == null) {
+      return;
+    }
+    final runItem = RunListItem(
+      docId: runId,
+      verId: runVerId,
+      createdAt: DateTime.now().toIso8601String(),
+      status: _lastRunStatus,
+      mode: 'hybrid',
+    );
+    await _openRunDetails(runItem);
   }
 
   Future<void> _openFlowFromLibrary(FlowListItem flow) async {
@@ -2248,6 +2530,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _currentFlowWorkspaceId = parsed.workspaceId;
       _currentFlowParents = parsed.parents;
       _primaryWriteNodeId = importedPrimaryWriteNodeId;
+      _isFlowDirty = false;
     });
   }
 
@@ -2285,6 +2568,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _controller.selectNode(nodeId);
       _selectedNodeId = nodeId;
     });
+    _markFlowDirty();
   }
 
   List<Port> _buildPorts(List<FlowPort> defs, PortPosition side) {
@@ -2313,6 +2597,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     setState(() {
       node.data['title'] = value;
     });
+    _markFlowDirty();
   }
 
   void _updateNodeConfig(
@@ -2333,6 +2618,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
       node.data['config'] = config;
     });
+    _markFlowDirty();
   }
 
   (List<FlowNodeSnapshot>, List<FlowEdgeSnapshot>)
@@ -2487,6 +2773,15 @@ class _OutputArtifactInfo {
   final String summary;
 }
 
+class _RunGuardResult {
+  const _RunGuardResult({required this.canRun, required this.blockers});
+
+  final bool canRun;
+  final List<String> blockers;
+}
+
+enum _UnsavedFlowDecision { discard, cancel, save }
+
 class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
     required this.settingsLoaded,
@@ -2503,6 +2798,9 @@ class _TopControlsBar extends StatelessWidget {
     required this.onDuplicate,
     required this.onValidateFlow,
     required this.onRun,
+    required this.onCancelRun,
+    required this.saveEnabled,
+    required this.runEnabled,
   });
 
   final bool settingsLoaded;
@@ -2519,115 +2817,133 @@ class _TopControlsBar extends StatelessWidget {
   final Future<void> Function() onDuplicate;
   final Future<void> Function() onValidateFlow;
   final Future<void> Function() onRun;
+  final VoidCallback onCancelRun;
+  final bool saveEnabled;
+  final bool runEnabled;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            SizedBox(
-              width: 260,
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Workspace',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 260,
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Workspace',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                    child: settingsLoaded
+                        ? DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: selectedWorkspaceId,
+                              hint: const Text('Select workspace'),
+                              items: workspaceIds
+                                  .map(
+                                    (id) => DropdownMenuItem<String>(
+                                      value: id,
+                                      child: Text(id),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                onWorkspaceSelected(value);
+                              },
+                            ),
+                          )
+                        : const Text('Loading...'),
                   ),
                 ),
-                child: settingsLoaded
-                    ? DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          isExpanded: true,
-                          value: selectedWorkspaceId,
-                          hint: const Text('Select workspace'),
-                          items: workspaceIds
-                              .map(
-                                (id) => DropdownMenuItem<String>(
-                                  value: id,
-                                  child: Text(id),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (value) {
-                            onWorkspaceSelected(value);
-                          },
-                        ),
-                      )
-                    : const Text('Loading...'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: isCreatingWorkspace ? null : onCreateWorkspace,
-              icon: isCreatingWorkspace
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.add),
-              label: const Text('New Workspace'),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 240,
-              child: TextField(
-                controller: flowTitleController,
-                decoration: const InputDecoration(
-                  labelText: 'Flow title',
-                  border: OutlineInputBorder(),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: isCreatingWorkspace ? null : onCreateWorkspace,
+                  icon: isCreatingWorkspace
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add),
+                  label: const Text('New Workspace'),
                 ),
-              ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 240,
+                  child: TextField(
+                    controller: flowTitleController,
+                    decoration: const InputDecoration(
+                      labelText: 'Flow title',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: isSavingToServer || !saveEnabled
+                      ? null
+                      : onSaveToServer,
+                  icon: isSavingToServer
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_upload),
+                  label: const Text('Save New Version'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: isSavingToServer ? null : onDuplicate,
+                  icon: const Icon(Icons.copy_all),
+                  label: const Text('Duplicate'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: isSavingToServer ? null : onSetHead,
+                  icon: const Icon(Icons.push_pin),
+                  label: const Text('Set Head'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: isSavingToServer ? null : onValidateFlow,
+                  icon: const Icon(Icons.rule),
+                  label: const Text('Validate Flow'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: runEnabled ? onRun : null,
+                  icon: isRunning
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.play_arrow),
+                  label: const Text('Run'),
+                ),
+                if (isRunning) ...[
+                  const SizedBox(width: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: onCancelRun,
+                    icon: const Icon(Icons.cancel),
+                    label: const Text('Cancel'),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(width: 12),
-            FilledButton.icon(
-              onPressed: isSavingToServer ? null : onSaveToServer,
-              icon: isSavingToServer
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_upload),
-              label: const Text('Save New Version'),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: isSavingToServer ? null : onDuplicate,
-              icon: const Icon(Icons.copy_all),
-              label: const Text('Duplicate'),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: isSavingToServer ? null : onSetHead,
-              icon: const Icon(Icons.push_pin),
-              label: const Text('Set Head'),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: isSavingToServer ? null : onValidateFlow,
-              icon: const Icon(Icons.rule),
-              label: const Text('Validate Flow'),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: isRunning ? null : onRun,
-              icon: isRunning
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.play_arrow),
-              label: const Text('Run'),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -2847,6 +3163,7 @@ class _RunPanel extends StatelessWidget {
     required this.inputFileHint,
     required this.outputFileHint,
     required this.status,
+    required this.blockers,
     required this.validationError,
     required this.runId,
     required this.runVerId,
@@ -2859,6 +3176,11 @@ class _RunPanel extends StatelessWidget {
     required this.outputContent,
     required this.outputContentFull,
     required this.isRunning,
+    required this.duration,
+    required this.retryable,
+    required this.onRetry,
+    required this.onCancel,
+    required this.onOpenRunDetails,
   });
 
   final TextEditingController inputFileController;
@@ -2866,6 +3188,7 @@ class _RunPanel extends StatelessWidget {
   final String inputFileHint;
   final String outputFileHint;
   final String status;
+  final List<String> blockers;
   final String? validationError;
   final String? runId;
   final String? runVerId;
@@ -2878,6 +3201,11 @@ class _RunPanel extends StatelessWidget {
   final String? outputContent;
   final String? outputContentFull;
   final bool isRunning;
+  final Duration? duration;
+  final bool retryable;
+  final Future<void> Function() onRetry;
+  final VoidCallback onCancel;
+  final Future<void> Function() onOpenRunDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -2931,6 +3259,24 @@ class _RunPanel extends StatelessWidget {
                   ),
                 ),
               ),
+            if (blockers.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    blockers.map((item) => '• $item').join('\n'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             TextField(
               controller: inputFileController,
@@ -2952,6 +3298,8 @@ class _RunPanel extends StatelessWidget {
             const SizedBox(height: 12),
             if (runId != null) Text('run_id: $runId'),
             if (runVerId != null) Text('run_ver_id: $runVerId'),
+            if (duration != null)
+              Text('duration: ${duration!.inMilliseconds}ms'),
             if (outputArtifactSummary != null)
               Text('output_artifact: $outputArtifactSummary'),
             if (outputPath != null)
@@ -2993,6 +3341,33 @@ class _RunPanel extends StatelessWidget {
                   ],
                 ),
               ),
+            if (runId != null && runVerId != null && status == 'failed')
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: FilledButton.tonalIcon(
+                  onPressed: onOpenRunDetails,
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open run details'),
+                ),
+              ),
+            if ((retryable || isRunning) && !isRunning)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: FilledButton.tonalIcon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+              ),
+            if (isRunning)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: FilledButton.tonalIcon(
+                  onPressed: onCancel,
+                  icon: const Icon(Icons.cancel),
+                  label: const Text('Cancel wait'),
+                ),
+              ),
             if (outputContent != null)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
@@ -3031,6 +3406,23 @@ class _RunPanel extends StatelessWidget {
                       icon: const Icon(Icons.copy),
                       label: const Text('Copy output'),
                     ),
+                    if (outputPath != null)
+                      FilledButton.tonalIcon(
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: outputPath!),
+                          );
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Output path copied'),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.copy_all),
+                        label: const Text('Copy output file path'),
+                      ),
                     if (outputContentFull != null &&
                         outputContentFull!.length > outputContent!.length)
                       FilledButton.tonalIcon(
@@ -3164,6 +3556,59 @@ class _ErrorState extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             FilledButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CanvasZoomControls extends StatelessWidget {
+  const _CanvasZoomControls({
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onReset,
+    required this.onFit,
+  });
+
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  final VoidCallback onFit;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Wrap(
+          spacing: 6,
+          children: [
+            IconButton(
+              tooltip: 'Zoom in',
+              onPressed: onZoomIn,
+              icon: const Icon(Icons.add),
+            ),
+            IconButton(
+              tooltip: 'Zoom out',
+              onPressed: onZoomOut,
+              icon: const Icon(Icons.remove),
+            ),
+            IconButton(
+              tooltip: 'Reset zoom',
+              onPressed: onReset,
+              icon: const Icon(Icons.refresh),
+            ),
+            IconButton(
+              tooltip: 'Fit to content',
+              onPressed: onFit,
+              icon: const Icon(Icons.fit_screen),
+            ),
           ],
         ),
       ),

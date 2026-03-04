@@ -33,11 +33,6 @@ void main() {
     await tester.enterText(inputField, 'input.txt');
     await tester.pumpAndSettle();
 
-    final runButton = find.widgetWithText(FilledButton, 'Run');
-    await tester.ensureVisible(runButton);
-    await tester.tap(runButton, warnIfMissed: false);
-    await tester.pumpAndSettle();
-
-    expect(find.text('output_file is required'), findsOneWidget);
+    expect(find.textContaining('output_file is required'), findsOneWidget);
   });
 }

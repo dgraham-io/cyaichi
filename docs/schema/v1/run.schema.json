@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/run.schema.json",
+  "title": "cyaichi v1 Run Document",
+  "$defs": {
+    "artifact_ref_wrapper": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifact_ref": { "$ref": "common.schema.json#/$defs/doc_ref" }
+      },
+      "required": ["artifact_ref"]
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invocation_id": { "type": "string", "minLength": 1 },
+        "node_id": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["running", "succeeded", "failed", "canceled"] },
+        "started_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+        "ended_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/artifact_ref_wrapper" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/artifact_ref_wrapper" } },
+        "metrics": { "type": "object", "additionalProperties": true }
+      },
+      "required": ["invocation_id", "node_id", "status"]
+    }
+  },
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "doc_type": { "const": "run" },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "flow_ref": { "$ref": "common.schema.json#/$defs/doc_ref" },
+            "mode": { "type": "string", "enum": ["durable", "dataflow", "hybrid"] },
+            "status": { "type": "string", "enum": ["running", "succeeded", "failed", "canceled"] },
+            "started_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+            "ended_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+
+            "inputs": { "type": "array", "items": { "$ref": "#/$defs/artifact_ref_wrapper" } },
+            "outputs": { "type": "array", "items": { "$ref": "#/$defs/artifact_ref_wrapper" } },
+
+            "invocations": { "type": "array", "items": { "$ref": "#/$defs/invocation" } },
+            "trace_ref": { "type": "object", "additionalProperties": true }
+          },
+          "required": ["flow_ref", "mode", "status"],
+
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "mode": { "enum": ["durable", "hybrid"] }
+                },
+                "required": ["mode"]
+              },
+              "then": {
+                "properties": {
+                  "inputs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "artifact_ref": {
+                          "type": "object",
+                          "properties": {
+                            "selector": { "const": "pinned" },
+                            "ver_id": { "$ref": "common.schema.json#/$defs/uuid" }
+                          },
+                          "required": ["selector", "ver_id"]
+                        }
+                      },
+                      "required": ["artifact_ref"]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": ["doc_type", "body"]
+    }
+  ]
+}

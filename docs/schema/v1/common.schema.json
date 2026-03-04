@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/common.schema.json",
+  "title": "cyaichi v1 Common Types",
+  "type": "object",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "rfc3339": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      },
+      "required": ["namespace", "name"]
+    },
+    "doc_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "doc_id": { "$ref": "#/$defs/uuid" },
+        "ver_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/uuid" },
+            { "type": "null" }
+          ]
+        },
+        "selector": {
+          "type": "string",
+          "enum": ["pinned", "head"]
+        },
+        "ref": { "type": "string", "minLength": 1 },
+        "key": { "$ref": "#/$defs/key" }
+      },
+      "required": ["doc_id", "ver_id", "selector"],
+      "allOf": [
+        {
+          "if": { "properties": { "selector": { "const": "pinned" } }, "required": ["selector"] },
+          "then": {
+            "properties": { "ver_id": { "$ref": "#/$defs/uuid" } },
+            "required": ["ver_id"]
+          }
+        },
+        {
+          "if": { "properties": { "selector": { "const": "head" } }, "required": ["selector"] },
+          "then": {
+            "properties": { "ver_id": { "type": "null" } },
+            "required": ["ver_id"]
+          }
+        }
+      ]
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "comment": { "type": "string" }
+      }
+    }
+  }
+}

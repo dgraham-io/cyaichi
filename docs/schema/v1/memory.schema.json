@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/memory.schema.json",
+  "title": "cyaichi v1 Memory Document",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "doc_type": { "const": "memory" },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scope": { "type": "string", "enum": ["personal", "team", "org", "public_read"] },
+            "type": { "type": "string", "minLength": 1 },
+            "content": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "format": { "type": "string", "minLength": 1 },
+                "body": { "type": "string" }
+              },
+              "required": ["format", "body"]
+            },
+            "links": {
+              "type": "array",
+              "items": { "$ref": "common.schema.json#/$defs/doc_ref" }
+            },
+            "provenance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "created_by": { "type": "object", "additionalProperties": true },
+                "based_on": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/doc_ref" } }
+              },
+              "required": ["created_by"]
+            }
+          },
+          "required": ["scope", "type", "content", "provenance"]
+        }
+      },
+      "required": ["doc_type", "body"]
+    }
+  ]
+}

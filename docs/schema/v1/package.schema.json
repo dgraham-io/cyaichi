@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/package.schema.json",
+  "title": "cyaichi v1 Package Manifest",
+  "$defs": {
+    "include": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "doc_type": {
+          "type": "string",
+          "enum": ["workspace", "flow", "run", "artifact", "memory", "package"]
+        },
+        "doc_id": { "$ref": "common.schema.json#/$defs/uuid" },
+        "ver_id": { "$ref": "common.schema.json#/$defs/uuid" }
+      },
+      "required": ["doc_type", "doc_id", "ver_id"]
+    }
+  },
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "doc_type": { "const": "package" },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "type": "string", "const": "cyaichi-package/v1" },
+            "includes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/include" }
+            },
+            "recommended_heads": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "doc_id": { "$ref": "common.schema.json#/$defs/uuid" },
+                  "ver_id": { "$ref": "common.schema.json#/$defs/uuid" }
+                },
+                "required": ["doc_id", "ver_id"]
+              }
+            },
+            "blobs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "blob_id": { "type": "string", "minLength": 1 },
+                  "sha256": { "type": "string", "minLength": 16 },
+                  "size": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["blob_id", "sha256", "size"]
+              }
+            }
+          },
+          "required": ["format", "includes"]
+        }
+      },
+      "required": ["doc_type", "body"]
+    }
+  ]
+}

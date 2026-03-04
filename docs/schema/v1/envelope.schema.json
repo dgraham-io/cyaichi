@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/envelope.schema.json",
+  "title": "cyaichi v1 Document Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "doc_type": {
+      "type": "string",
+      "enum": ["workspace", "flow", "run", "artifact", "memory", "package"]
+    },
+    "subtype": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+
+    "doc_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "ver_id": { "$ref": "common.schema.json#/$defs/uuid" },
+
+    "ref": { "type": "string" },
+    "key": { "$ref": "common.schema.json#/$defs/key" },
+
+    "workspace_id": { "$ref": "common.schema.json#/$defs/uuid" },
+    "created_at": { "$ref": "common.schema.json#/$defs/rfc3339" },
+
+    "parents": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/uuid" },
+      "uniqueItems": true
+    },
+
+    "meta": { "$ref": "common.schema.json#/$defs/meta" },
+
+    "content_hash": { "type": "string", "minLength": 16 },
+
+    "body": { "type": "object" }
+  },
+  "required": ["doc_type", "doc_id", "ver_id", "workspace_id", "created_at", "body"]
+}

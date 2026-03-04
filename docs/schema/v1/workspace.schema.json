@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/workspace.schema.json",
+  "title": "cyaichi v1 Workspace Document",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "doc_type": { "const": "workspace" },
+        "subtype": { "type": ["string", "null"] },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+
+            "policy_refs": {
+              "type": "object",
+              "additionalProperties": { "$ref": "common.schema.json#/$defs/doc_ref" }
+            },
+
+            "heads": {
+              "type": "object",
+              "description": "Map of doc_id -> ver_id for latest versions in this workspace.",
+              "additionalProperties": { "$ref": "common.schema.json#/$defs/uuid" }
+            }
+          },
+          "required": ["name", "heads"]
+        }
+      },
+      "required": ["doc_type", "body"]
+    }
+  ]
+}

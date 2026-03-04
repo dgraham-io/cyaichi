@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/flow.schema.json",
+  "title": "cyaichi v1 Flow Document",
+  "$defs": {
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": { "type": "string", "minLength": 1 },
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "required": ["port", "schema"]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/port" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/port" } },
+        "config": {
+          "type": "object",
+          "description": "Node config is intentionally open-ended; node types may validate further."
+        }
+      },
+      "required": ["id", "type", "inputs", "outputs", "config"]
+    },
+    "edge_endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node": { "type": "string", "minLength": 1 },
+        "port": { "type": "string", "minLength": 1 }
+      },
+      "required": ["node", "port"]
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": { "$ref": "#/$defs/edge_endpoint" },
+        "to": { "$ref": "#/$defs/edge_endpoint" }
+      },
+      "required": ["from", "to"]
+    },
+    "subflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "flow_ref": { "$ref": "common.schema.json#/$defs/doc_ref" },
+        "bindings": {
+          "type": "object",
+          "description": "Optional mapping of subflow inputs/outputs to parent flow node ports.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["id", "flow_ref"]
+    }
+  },
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "doc_type": { "const": "flow" },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode_hint": { "type": "string", "enum": ["durable", "dataflow", "hybrid"] },
+            "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+            "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+            "subflows": { "type": "array", "items": { "$ref": "#/$defs/subflow" } }
+          },
+          "required": ["nodes", "edges"]
+        }
+      },
+      "required": ["doc_type", "body"]
+    }
+  ]
+}

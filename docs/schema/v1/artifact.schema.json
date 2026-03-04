@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyaichi.dev/schemas/v1/artifact.schema.json",
+  "title": "cyaichi v1 Artifact Document",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "doc_type": { "const": "artifact" },
+        "body": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema": { "type": "string", "minLength": 1 },
+            "payload": { "type": "object" },
+            "blob_ref": { "type": ["object", "null"], "additionalProperties": true },
+            "provenance": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "run_ref": { "$ref": "common.schema.json#/$defs/doc_ref" },
+                "node_id": { "type": "string", "minLength": 1 },
+                "derived_from": {
+                  "type": "array",
+                  "items": { "$ref": "common.schema.json#/$defs/doc_ref" }
+                }
+              },
+              "required": ["run_ref", "node_id"]
+            }
+          },
+          "required": ["schema", "provenance"]
+        }
+      },
+      "required": ["doc_type", "body"]
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -12,6 +13,7 @@ import (
 
 var (
 	ErrDocumentNotFound = errors.New("document not found")
+	ErrDocumentExists   = errors.New("document already exists")
 	ErrHeadNotFound     = errors.New("head not found")
 )
 
@@ -77,6 +79,9 @@ func (s *Store) PutDocument(ctx context.Context, doc Document) error {
 		doc.JSON,
 	)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return ErrDocumentExists
+		}
 		return fmt.Errorf("insert document: %w", err)
 	}
 	return nil

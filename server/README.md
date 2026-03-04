@@ -39,3 +39,39 @@ make test
 ```bash
 curl -i http://127.0.0.1:8080/v1/health
 ```
+
+## Documents API
+
+Store a memory document:
+
+```bash
+curl -i -X PUT http://127.0.0.1:8080/v1/docs/memory/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222 \
+  -H 'Content-Type: application/json' \
+  --data-binary '{
+    "doc_type": "memory",
+    "doc_id": "11111111-1111-1111-1111-111111111111",
+    "ver_id": "22222222-2222-2222-2222-222222222222",
+    "workspace_id": "33333333-3333-3333-3333-333333333333",
+    "created_at": "2026-03-03T00:00:00Z",
+    "body": {
+      "scope": "personal",
+      "type": "note",
+      "content": {
+        "format": "text/plain",
+        "body": "hello from curl"
+      },
+      "provenance": {
+        "created_by": {
+          "kind": "user",
+          "id": "demo"
+        }
+      }
+    }
+  }'
+```
+
+Fetch a document version:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/docs/memory/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222
+```

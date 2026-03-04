@@ -3,6 +3,7 @@ module github.com/dgraham-io/cyaichi/server
 go 1.22
 
 require modernc.org/sqlite v1.34.5
+require github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

@@ -12,6 +12,7 @@ import (
 
 	"github.com/dgraham-io/cyaichi/server/internal/config"
 	"github.com/dgraham-io/cyaichi/server/internal/httpapi"
+	"github.com/dgraham-io/cyaichi/server/internal/schema"
 	"github.com/dgraham-io/cyaichi/server/internal/store"
 )
 
@@ -29,9 +30,15 @@ func main() {
 	}()
 	log.Printf("db ready at %s", cfg.DBPath)
 
+	validator, err := schema.NewValidator()
+	if err != nil {
+		log.Fatalf("failed to initialize schema validator: %v", err)
+	}
+	log.Printf("schema validator ready")
+
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.NewMux(),
+		Handler: httpapi.NewMux(dbStore, validator),
 	}
 
 	serverErr := make(chan error, 1)

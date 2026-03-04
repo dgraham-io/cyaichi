@@ -16,6 +16,13 @@ func NewMux(docStore *store.Store, validator *schema.Validator) *http.ServeMux {
 			validator: validator,
 		}
 		mux.HandleFunc("/v1/docs/", h.Handle)
+
+		wh := &WorkspacesHandler{
+			store:     docStore,
+			validator: validator,
+		}
+		mux.HandleFunc("/v1/workspaces", wh.Handle)
+		mux.HandleFunc("/v1/workspaces/", wh.Handle)
 	}
 	return mux
 }

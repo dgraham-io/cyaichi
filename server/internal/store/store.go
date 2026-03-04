@@ -118,6 +118,35 @@ func (s *Store) GetDocument(ctx context.Context, docType, docID, verID string) (
 	return doc, nil
 }
 
+func (s *Store) GetLatestWorkspaceDoc(ctx context.Context, workspaceID string) (Document, error) {
+	var doc Document
+	err := s.db.QueryRowContext(ctx, `
+		SELECT doc_type, doc_id, ver_id, workspace_id, created_at,
+		       ref, key_namespace, key_name, json
+		FROM documents
+		WHERE doc_type = 'workspace' AND workspace_id = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, workspaceID).Scan(
+		&doc.DocType,
+		&doc.DocID,
+		&doc.VerID,
+		&doc.WorkspaceID,
+		&doc.CreatedAt,
+		&doc.Ref,
+		&doc.KeyNS,
+		&doc.KeyName,
+		&doc.JSON,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Document{}, ErrDocumentNotFound
+	}
+	if err != nil {
+		return Document{}, fmt.Errorf("get latest workspace doc: %w", err)
+	}
+	return doc, nil
+}
+
 func (s *Store) SetHead(ctx context.Context, workspaceID, docID, verID string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO heads (workspace_id, doc_id, ver_id)

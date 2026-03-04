@@ -75,3 +75,27 @@ Fetch a document version:
 ```bash
 curl -i http://127.0.0.1:8080/v1/docs/memory/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222
 ```
+
+## Workspaces + Heads API
+
+Create a workspace:
+
+```bash
+curl -i -X POST http://127.0.0.1:8080/v1/workspaces \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"name":"Demo Workspace"}'
+```
+
+Set a head:
+
+```bash
+curl -i -X PUT http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111/heads/44444444-4444-4444-4444-444444444444 \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"ver_id":"55555555-5555-5555-5555-555555555555"}'
+```
+
+Get a head:
+
+```bash
+curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111/heads/44444444-4444-4444-4444-444444444444
+```

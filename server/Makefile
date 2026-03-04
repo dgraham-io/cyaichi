@@ -1,7 +1,9 @@
-.PHONY: server test fmt
+.PHONY: run server test fmt
 
-server:
+run:
 	go run ./cmd/cyaichi-server
+
+server: run
 
 test:
 	go test ./...

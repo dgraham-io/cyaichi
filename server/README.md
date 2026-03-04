@@ -10,13 +10,19 @@ Minimal Go HTTP server for cyaichi.
 
 ```bash
 cd server
-make server
+make run
 ```
 
 Optional environment variables:
 
 - `CYAI_HTTP_ADDR` (default `:8080`)
 - `CYAI_LOG_LEVEL` (default `info`)
+
+Compatibility alias:
+
+```bash
+make server
+```
 
 ## Test
 

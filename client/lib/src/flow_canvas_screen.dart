@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:client/api/api_client.dart';
 import 'package:client/src/flow/connection_validation.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
+import 'package:client/src/flow/flow_validation.dart';
 import 'package:client/src/flow/node_registry.dart';
 import 'package:client/src/io/local_file_reader.dart';
 import 'package:client/src/models/server_models.dart';
@@ -49,6 +50,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _selectedWorkspaceId;
 
   String? _selectedNodeId;
+  String? _selectedConnectionId;
   int _nodeCounter = 1;
 
   bool _isCreatingWorkspace = false;
@@ -267,101 +269,127 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final selectedNode = _selectedNodeId == null
         ? null
         : _controller.getNode(_selectedNodeId!);
+    final selectedConnection = _selectedConnectionId == null
+        ? null
+        : _controller.getConnection(_selectedConnectionId!);
     final canvasTheme = NodeFlowTheme.dark;
 
-    return Row(
-      children: [
-        DecoratedBox(
-          decoration: const BoxDecoration(color: CyaichiTheme.surface),
-          child: _PalettePanel(
-            nodeTypes: NodeTypeRegistry.all,
-            onAddNode: _addNode,
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.delete ||
+                event.logicalKey == LogicalKeyboardKey.backspace)) {
+          _deleteSelected();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Row(
+        children: [
+          DecoratedBox(
+            decoration: const BoxDecoration(color: CyaichiTheme.surface),
+            child: _PalettePanel(
+              nodeTypes: NodeTypeRegistry.all,
+              onAddNode: _addNode,
+            ),
           ),
-        ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  CyaichiTheme.background,
-                  CyaichiTheme.surface,
-                  CyaichiTheme.outline.withValues(alpha: 0.45),
+          const VerticalDivider(width: 1),
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    CyaichiTheme.background,
+                    CyaichiTheme.surface,
+                    CyaichiTheme.outline.withValues(alpha: 0.45),
+                  ],
+                ),
+              ),
+              child: NodeFlowEditor<Map<String, dynamic>, dynamic>(
+                controller: _controller,
+                theme: canvasTheme,
+                nodeBuilder: _buildNodeCard,
+                behavior: NodeFlowBehavior.design,
+                events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
+                  node: NodeEvents(
+                    onSelected: (node) {
+                      setState(() {
+                        _selectedNodeId = node?.id;
+                      });
+                    },
+                  ),
+                  connection: ConnectionEvents<Map<String, dynamic>, dynamic>(
+                    onBeforeComplete: _validateConnectionBeforeComplete,
+                    onSelected: (connection) {
+                      setState(() {
+                        _selectedConnectionId = connection?.id;
+                      });
+                    },
+                    onConnectEnd: (_, __, ___) {
+                      final reason = _connectionRejectReason;
+                      if (reason != null && mounted) {
+                        _showSnack(reason);
+                        _connectionRejectReason = null;
+                      }
+                    },
+                  ),
+                  onSelectionChange: (selection) {
+                    setState(() {
+                      _selectedNodeId = selection.nodes.isEmpty
+                          ? null
+                          : selection.nodes.first.id;
+                      _selectedConnectionId = selection.connections.isEmpty
+                          ? null
+                          : selection.connections.first.id;
+                    });
+                  },
+                ),
+              ),
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          SizedBox(
+            width: 380,
+            child: DecoratedBox(
+              decoration: const BoxDecoration(color: CyaichiTheme.surface),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: _InspectorPanel(
+                      selectedNode: selectedNode,
+                      selectedConnection: selectedConnection,
+                      nodeType: selectedNode == null
+                          ? null
+                          : NodeTypeRegistry.byType(selectedNode.type),
+                      onTitleChanged: (value) =>
+                          _updateNodeTitle(selectedNode, value),
+                      onConfigChanged: (key, value) =>
+                          _updateNodeConfig(selectedNode, key, value),
+                      onDeleteNode: _deleteSelectedNode,
+                      onDeleteConnection: _deleteSelectedConnection,
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  _RunPanel(
+                    inputFileController: _inputFileController,
+                    outputFileController: _outputFileController,
+                    status: _lastRunStatus,
+                    runId: _lastRunId,
+                    runVerId: _lastRunVerId,
+                    error: _lastRunError,
+                    outputPath: _lastOutputPath,
+                    outputContent: _lastOutputContent,
+                    isRunning: _isRunning,
+                  ),
                 ],
               ),
             ),
-            child: NodeFlowEditor<Map<String, dynamic>, dynamic>(
-              controller: _controller,
-              theme: canvasTheme,
-              nodeBuilder: _buildNodeCard,
-              behavior: NodeFlowBehavior.design,
-              events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
-                node: NodeEvents(
-                  onSelected: (node) {
-                    setState(() {
-                      _selectedNodeId = node?.id;
-                    });
-                  },
-                ),
-                connection: ConnectionEvents<Map<String, dynamic>, dynamic>(
-                  onBeforeComplete: _validateConnectionBeforeComplete,
-                  onConnectEnd: (_, __, ___) {
-                    final reason = _connectionRejectReason;
-                    if (reason != null && mounted) {
-                      _showSnack(reason);
-                      _connectionRejectReason = null;
-                    }
-                  },
-                ),
-                onSelectionChange: (selection) {
-                  if (selection.nodes.isEmpty && _selectedNodeId != null) {
-                    setState(() {
-                      _selectedNodeId = null;
-                    });
-                  }
-                },
-              ),
-            ),
           ),
-        ),
-        const VerticalDivider(width: 1),
-        SizedBox(
-          width: 380,
-          child: DecoratedBox(
-            decoration: const BoxDecoration(color: CyaichiTheme.surface),
-            child: Column(
-              children: [
-                Expanded(
-                  child: _InspectorPanel(
-                    selectedNode: selectedNode,
-                    nodeType: selectedNode == null
-                        ? null
-                        : NodeTypeRegistry.byType(selectedNode.type),
-                    onTitleChanged: (value) =>
-                        _updateNodeTitle(selectedNode, value),
-                    onConfigChanged: (key, value) =>
-                        _updateNodeConfig(selectedNode, key, value),
-                  ),
-                ),
-                const Divider(height: 1),
-                _RunPanel(
-                  inputFileController: _inputFileController,
-                  outputFileController: _outputFileController,
-                  status: _lastRunStatus,
-                  runId: _lastRunId,
-                  runVerId: _lastRunVerId,
-                  error: _lastRunError,
-                  outputPath: _lastOutputPath,
-                  outputContent: _lastOutputContent,
-                  isRunning: _isRunning,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1278,78 +1306,43 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _validateFlow() async {
-    final issues = <String>[];
     final nodes = _controller.nodes.values.toList(growable: false);
     final edges = _controller.connections.toList(growable: false);
-    final readNodes = nodes.where((node) => node.type == 'file.read').toList();
-    final writeNodes = nodes
-        .where((node) => node.type == 'file.write')
-        .toList();
+    final result = validateFlowGraph(
+      nodes: nodes
+          .map(
+            (node) => FlowValidationNode(
+              id: node.id,
+              type: node.type,
+              inputPorts: _readFlowPorts(
+                node.data['inputs'],
+              ).map((port) => port.port).toList(growable: false),
+              outputPorts: _readFlowPorts(
+                node.data['outputs'],
+              ).map((port) => port.port).toList(growable: false),
+              config: _readConfig(node.data),
+            ),
+          )
+          .toList(growable: false),
+      edges: edges
+          .map(
+            (edge) => FlowValidationEdge(
+              sourceNodeId: edge.sourceNodeId,
+              sourcePortId: edge.sourcePortId,
+              targetNodeId: edge.targetNodeId,
+              targetPortId: edge.targetPortId,
+            ),
+          )
+          .toList(growable: false),
+    );
 
-    if (readNodes.length != 1) {
-      issues.add('Flow must contain exactly one file.read node.');
-    }
-    if (writeNodes.length != 1) {
-      issues.add('Flow must contain exactly one file.write node.');
-    }
-
-    for (final node in nodes) {
-      final def = NodeTypeRegistry.byType(node.type);
-      if (def == null) {
-        continue;
-      }
-      final config = _readConfig(node.data);
-      for (final field in def.inspectorFields.where(
-        (field) => field.required,
-      )) {
-        final value = (config[field.key] as String?)?.trim() ?? '';
-        if (value.isEmpty) {
-          issues.add(
-            '${def.displayName} (${node.id}) is missing ${field.key}.',
-          );
-        }
-      }
-    }
-
-    if (readNodes.length == 1 && writeNodes.length == 1) {
-      final adjacency = <String, Set<String>>{};
-      final reverseAdjacency = <String, Set<String>>{};
-      for (final node in nodes) {
-        adjacency[node.id] = <String>{};
-        reverseAdjacency[node.id] = <String>{};
-      }
-      for (final edge in edges) {
-        adjacency
-            .putIfAbsent(edge.sourceNodeId, () => <String>{})
-            .add(edge.targetNodeId);
-        reverseAdjacency
-            .putIfAbsent(edge.targetNodeId, () => <String>{})
-            .add(edge.sourceNodeId);
-      }
-
-      final start = readNodes.first.id;
-      final end = writeNodes.first.id;
-
-      final reachableFromStart = _traverse(adjacency, start);
-      final canReachEnd = _traverse(reverseAdjacency, end);
-
-      if (!reachableFromStart.contains(end)) {
-        issues.add('file.read is not connected to file.write.');
-      }
-
-      for (final node in nodes) {
-        if (!reachableFromStart.contains(node.id) ||
-            !canReachEnd.contains(node.id)) {
-          issues.add(
-            'Node ${node.id} is not connected end-to-end between file.read and file.write.',
-          );
-        }
-      }
-    }
-
-    final message = issues.isEmpty
-        ? 'Flow is valid for MVP.'
-        : issues.map((issue) => '• $issue').join('\n');
+    final message = <String>[
+      if (result.errors.isEmpty) 'Errors: none' else 'Errors:',
+      ...result.errors.map((issue) => '• ${issue.message}'),
+      '',
+      if (result.warnings.isEmpty) 'Warnings: none' else 'Warnings:',
+      ...result.warnings.map((issue) => '• ${issue.message}'),
+    ].join('\n');
 
     if (!mounted) {
       return;
@@ -1359,7 +1352,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       builder: (context) {
         return AlertDialog(
           title: Text(
-            issues.isEmpty ? 'Validation passed' : 'Validation issues',
+            result.hasErrors ? 'Validation errors' : 'Validation result',
           ),
           content: SizedBox(
             width: 700,
@@ -1376,19 +1369,53 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
-  Set<String> _traverse(Map<String, Set<String>> graph, String start) {
-    final visited = <String>{};
-    final stack = <String>[start];
-    while (stack.isNotEmpty) {
-      final node = stack.removeLast();
-      if (!visited.add(node)) {
-        continue;
-      }
-      for (final next in graph[node] ?? const <String>{}) {
-        stack.add(next);
-      }
+  Future<void> _deleteSelected() async {
+    if (_selectedConnectionId != null) {
+      await _deleteSelectedConnection();
+      return;
     }
-    return visited;
+    if (_selectedNodeId != null) {
+      await _deleteSelectedNode();
+    }
+  }
+
+  Future<void> _deleteSelectedConnection() async {
+    final connectionId = _selectedConnectionId;
+    if (connectionId == null) {
+      return;
+    }
+    try {
+      _controller.removeConnection(connectionId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedConnectionId = null;
+      });
+      _showSnack('Connection deleted');
+    } catch (error) {
+      _showSnack('Failed to delete connection: $error');
+    }
+  }
+
+  Future<void> _deleteSelectedNode() async {
+    final nodeId = _selectedNodeId;
+    if (nodeId == null) {
+      return;
+    }
+    try {
+      _controller.removeNode(nodeId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedNodeId = null;
+        _selectedConnectionId = null;
+      });
+      _showSnack('Node deleted');
+    } catch (error) {
+      _showSnack('Failed to delete node: $error');
+    }
   }
 
   Future<void> _openRunDetails(RunListItem item) async {
@@ -2246,24 +2273,53 @@ class _PalettePanel extends StatelessWidget {
 class _InspectorPanel extends StatelessWidget {
   const _InspectorPanel({
     required this.selectedNode,
+    required this.selectedConnection,
     required this.nodeType,
     required this.onTitleChanged,
     required this.onConfigChanged,
+    required this.onDeleteNode,
+    required this.onDeleteConnection,
   });
 
   final Node<Map<String, dynamic>>? selectedNode;
+  final Connection<dynamic>? selectedConnection;
   final NodeTypeDefinition? nodeType;
   final ValueChanged<String> onTitleChanged;
   final void Function(String key, String value) onConfigChanged;
+  final Future<void> Function() onDeleteNode;
+  final Future<void> Function() onDeleteConnection;
 
   @override
   Widget build(BuildContext context) {
-    if (selectedNode == null) {
+    if (selectedNode == null && selectedConnection == null) {
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
           'Inspector\n\nSelect a node on the canvas.',
           style: Theme.of(context).textTheme.bodyLarge,
+        ),
+      );
+    }
+
+    if (selectedNode == null && selectedConnection != null) {
+      final connection = selectedConnection!;
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Inspector', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Connection\n${connection.sourceNodeId}.${connection.sourcePortId} -> ${connection.targetNodeId}.${connection.targetPortId}',
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onDeleteConnection,
+              icon: const Icon(Icons.delete),
+              label: const Text('Delete connection'),
+            ),
+          ],
         ),
       );
     }
@@ -2314,6 +2370,12 @@ class _InspectorPanel extends StatelessWidget {
               ),
             );
           }),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            onPressed: onDeleteNode,
+            icon: const Icon(Icons.delete),
+            label: const Text('Delete node'),
+          ),
         ],
       ),
     );

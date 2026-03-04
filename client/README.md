@@ -89,6 +89,13 @@ Connection creation is also validated in-editor:
 - only output -> input connections are allowed
 - if both ports define schemas, schemas must match
 
+MVP structural constraints (for example exactly one `file.read`/`file.write`) are now reported as **warnings** rather than hard errors, so you can still design multi-read/multi-write flows.
+
+## Delete Shortcuts
+
+- Select a node in the canvas and use **Delete node** in Inspector or press `Delete` / `Backspace` (desktop).
+- Select a connection in the canvas and use **Delete connection** in Inspector or press `Delete` / `Backspace` (desktop).
+
 ## Required Server Endpoints
 
 - `POST /v1/workspaces`

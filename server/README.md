@@ -38,6 +38,19 @@ cd server
 make test
 ```
 
+## Demo Script
+
+End-to-end MVP demo script:
+
+```bash
+cd server
+export VLLM_KEY="your-real-vllm-key"
+./scripts/demo.sh
+```
+
+Script details and prerequisites:
+- [scripts/README.md](/Users/david/repos/cyaichi/server/scripts/README.md)
+
 ## Health check
 
 ```bash

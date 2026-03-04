@@ -1,7 +1,9 @@
 import 'dart:convert';
 
 import 'package:client/api/api_client.dart';
+import 'package:client/src/flow/connection_validation.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
+import 'package:client/src/flow/node_registry.dart';
 import 'package:client/src/io/local_file_reader.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/theme/cyaichi_theme.dart';
@@ -53,6 +55,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isCreatingWorkspace = false;
   bool _isSavingToServer = false;
   bool _isRunning = false;
+  String? _connectionRejectReason;
 
   String _lastRunStatus = 'idle';
   String? _lastRunError;
@@ -211,6 +214,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   onSaveToServer: _saveNewFlowVersionToServer,
                   onSetHead: _setCurrentFlowAsHead,
                   onDuplicate: _duplicateCurrentFlow,
+                  onValidateFlow: _validateFlow,
                   onRun: _runFlow,
                 ),
               )
@@ -272,9 +276,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         DecoratedBox(
           decoration: const BoxDecoration(color: CyaichiTheme.surface),
           child: _PalettePanel(
-            onAddFileRead: () => _addNode(NodeKind.fileRead),
-            onAddLlmChat: () => _addNode(NodeKind.llmChat),
-            onAddFileWrite: () => _addNode(NodeKind.fileWrite),
+            nodeTypes: NodeTypeRegistry.all,
+            onAddNode: _addNode,
           ),
         ),
         const VerticalDivider(width: 1),
@@ -304,6 +307,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     });
                   },
                 ),
+                connection: ConnectionEvents(
+                  onBeforeComplete: _validateConnectionBeforeComplete,
+                  onConnectEnd: (_, __, ___) {
+                    final reason = _connectionRejectReason;
+                    if (reason != null && mounted) {
+                      _showSnack(reason);
+                      _connectionRejectReason = null;
+                    }
+                  },
+                ),
                 onSelectionChange: (selection) {
                   if (selection.nodes.isEmpty && _selectedNodeId != null) {
                     setState(() {
@@ -325,6 +338,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 Expanded(
                   child: _InspectorPanel(
                     selectedNode: selectedNode,
+                    nodeType: selectedNode == null
+                        ? null
+                        : NodeTypeRegistry.byType(selectedNode.type),
                     onTitleChanged: (value) =>
                         _updateNodeTitle(selectedNode, value),
                     onConfigChanged: (key, value) =>
@@ -486,8 +502,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   Widget _buildNodeCard(BuildContext context, Node<Map<String, dynamic>> node) {
     final data = node.data;
+    final nodeType = NodeTypeRegistry.byType(node.type);
     final title = (data['title'] as String?)?.trim();
-    final visibleTitle = (title == null || title.isEmpty) ? node.type : title;
+    final visibleTitle = (title == null || title.isEmpty)
+        ? (nodeType?.displayName ?? node.type)
+        : title;
+    final config = _readConfig(data);
+    final configSummary = _nodeConfigSummary(node.type, config);
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -525,11 +546,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            node.type,
+            nodeType?.displayName ?? node.type,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
+          if (configSummary != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              configSummary,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
           const Spacer(),
           Wrap(
             spacing: 8,
@@ -1207,6 +1237,162 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
+  ConnectionValidationResult _validateConnectionBeforeComplete(
+    ConnectionCompleteContext<Map<String, dynamic>> context,
+  ) {
+    final sourceSchema = _schemaForPort(
+      context.sourceNode,
+      context.sourcePort.id,
+    );
+    final targetSchema = _schemaForPort(
+      context.targetNode,
+      context.targetPort.id,
+    );
+    final result = validateTypedConnection(
+      sourceIsOutput: context.sourcePort.isOutput,
+      targetIsInput: context.targetPort.isInput,
+      sourceSchema: sourceSchema,
+      targetSchema: targetSchema,
+    );
+    if (!result.allowed) {
+      _connectionRejectReason = result.reason ?? 'Connection rejected.';
+      return ConnectionValidationResult.deny(
+        reason: result.reason,
+        showMessage: true,
+      );
+    }
+    _connectionRejectReason = null;
+    return const ConnectionValidationResult.allow();
+  }
+
+  String? _schemaForPort(Node<Map<String, dynamic>> node, String portId) {
+    for (final port in _readFlowPorts(node.data['inputs'])) {
+      if (port.port == portId && port.schema.trim().isNotEmpty) {
+        return port.schema;
+      }
+    }
+    for (final port in _readFlowPorts(node.data['outputs'])) {
+      if (port.port == portId && port.schema.trim().isNotEmpty) {
+        return port.schema;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _validateFlow() async {
+    final issues = <String>[];
+    final nodes = _controller.nodes.values.toList(growable: false);
+    final edges = _controller.connections.toList(growable: false);
+    final readNodes = nodes.where((node) => node.type == 'file.read').toList();
+    final writeNodes = nodes
+        .where((node) => node.type == 'file.write')
+        .toList();
+
+    if (readNodes.length != 1) {
+      issues.add('Flow must contain exactly one file.read node.');
+    }
+    if (writeNodes.length != 1) {
+      issues.add('Flow must contain exactly one file.write node.');
+    }
+
+    for (final node in nodes) {
+      final def = NodeTypeRegistry.byType(node.type);
+      if (def == null) {
+        continue;
+      }
+      final config = _readConfig(node.data);
+      for (final field in def.inspectorFields.where(
+        (field) => field.required,
+      )) {
+        final value = (config[field.key] as String?)?.trim() ?? '';
+        if (value.isEmpty) {
+          issues.add(
+            '${def.displayName} (${node.id}) is missing ${field.key}.',
+          );
+        }
+      }
+    }
+
+    if (readNodes.length == 1 && writeNodes.length == 1) {
+      final adjacency = <String, Set<String>>{};
+      final reverseAdjacency = <String, Set<String>>{};
+      for (final node in nodes) {
+        adjacency[node.id] = <String>{};
+        reverseAdjacency[node.id] = <String>{};
+      }
+      for (final edge in edges) {
+        adjacency
+            .putIfAbsent(edge.sourceNodeId, () => <String>{})
+            .add(edge.targetNodeId);
+        reverseAdjacency
+            .putIfAbsent(edge.targetNodeId, () => <String>{})
+            .add(edge.sourceNodeId);
+      }
+
+      final start = readNodes.first.id;
+      final end = writeNodes.first.id;
+
+      final reachableFromStart = _traverse(adjacency, start);
+      final canReachEnd = _traverse(reverseAdjacency, end);
+
+      if (!reachableFromStart.contains(end)) {
+        issues.add('file.read is not connected to file.write.');
+      }
+
+      for (final node in nodes) {
+        if (!reachableFromStart.contains(node.id) ||
+            !canReachEnd.contains(node.id)) {
+          issues.add(
+            'Node ${node.id} is not connected end-to-end between file.read and file.write.',
+          );
+        }
+      }
+    }
+
+    final message = issues.isEmpty
+        ? 'Flow is valid for MVP.'
+        : issues.map((issue) => '• $issue').join('\n');
+
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(
+            issues.isEmpty ? 'Validation passed' : 'Validation issues',
+          ),
+          content: SizedBox(
+            width: 700,
+            child: SingleChildScrollView(child: Text(message)),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Set<String> _traverse(Map<String, Set<String>> graph, String start) {
+    final visited = <String>{};
+    final stack = <String>[start];
+    while (stack.isNotEmpty) {
+      final node = stack.removeLast();
+      if (!visited.add(node)) {
+        continue;
+      }
+      for (final next in graph[node] ?? const <String>{}) {
+        stack.add(next);
+      }
+    }
+    return visited;
+  }
+
   Future<void> _openRunDetails(RunListItem item) async {
     final workspaceId = _selectedWorkspaceId;
     if (workspaceId == null) {
@@ -1585,6 +1771,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final rawConfig = Map<String, dynamic>.from(item.config);
       final ui = rawConfig['_ui'];
       final uiMap = ui is Map<String, dynamic> ? ui : <String, dynamic>{};
+      final nodeType = NodeTypeRegistry.byType(item.type);
+      final inputs = item.inputs.isNotEmpty
+          ? item.inputs
+          : (nodeType?.inputs.map((port) => port.toFlowPort()).toList() ??
+                const <FlowPort>[]);
+      final outputs = item.outputs.isNotEmpty
+          ? item.outputs
+          : (nodeType?.outputs.map((port) => port.toFlowPort()).toList() ??
+                const <FlowPort>[]);
 
       final position = Offset(
         (uiMap['x'] as num?)?.toDouble() ?? 120,
@@ -1596,8 +1791,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       );
 
       final ports = <Port>[
-        ..._buildPorts(item.inputs, PortPosition.left),
-        ..._buildPorts(item.outputs, PortPosition.right),
+        ..._buildPorts(inputs, PortPosition.left),
+        ..._buildPorts(outputs, PortPosition.right),
       ];
 
       final node = Node<Map<String, dynamic>>(
@@ -1609,8 +1804,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         data: <String, dynamic>{
           'title': item.title,
           'config': rawConfig..remove('_ui'),
-          'inputs': item.inputs.map((port) => port.toJson()).toList(),
-          'outputs': item.outputs.map((port) => port.toJson()).toList(),
+          'inputs': inputs.map((port) => port.toJson()).toList(),
+          'outputs': outputs.map((port) => port.toJson()).toList(),
         },
       );
       _controller.addNode(node);
@@ -1643,10 +1838,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     });
   }
 
-  void _addNode(NodeKind kind) {
-    final spec = kind.spec;
+  void _addNode(String typeId) {
+    final template = NodeTypeRegistry.createTemplate(typeId);
     final nodeId = _uuid.v4();
-    final title = '${spec.label} $_nodeCounter';
+    final title = '${template.displayName} $_nodeCounter';
     final position = Offset(
       120 + ((_nodeCounter - 1) % 4) * 70,
       100 + ((_nodeCounter - 1) ~/ 4) * 70,
@@ -1654,21 +1849,21 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _nodeCounter += 1;
 
     final ports = <Port>[
-      ..._buildPorts(spec.inputs, PortPosition.left),
-      ..._buildPorts(spec.outputs, PortPosition.right),
+      ..._buildPorts(template.inputs, PortPosition.left),
+      ..._buildPorts(template.outputs, PortPosition.right),
     ];
 
     final node = Node<Map<String, dynamic>>(
       id: nodeId,
-      type: spec.type,
+      type: template.typeId,
       position: position,
       size: const Size(220, 132),
       ports: ports,
       data: <String, dynamic>{
         'title': title,
-        'config': Map<String, dynamic>.from(spec.defaultConfig),
-        'inputs': spec.inputs.map((port) => port.toJson()).toList(),
-        'outputs': spec.outputs.map((port) => port.toJson()).toList(),
+        'config': Map<String, dynamic>.from(template.config),
+        'inputs': template.inputs.map((port) => port.toJson()).toList(),
+        'outputs': template.outputs.map((port) => port.toJson()).toList(),
       },
     );
 
@@ -1731,6 +1926,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   _collectCanvasFlowSnapshot() {
     final nodes = _controller.nodes.values
         .map((node) {
+          final nodeType = NodeTypeRegistry.byType(node.type);
+          final fallbackInputs = _readFlowPorts(node.data['inputs']);
+          final fallbackOutputs = _readFlowPorts(node.data['outputs']);
+          final inputs = nodeType != null
+              ? nodeType.inputs.map((port) => port.toFlowPort()).toList()
+              : fallbackInputs;
+          final outputs = nodeType != null
+              ? nodeType.outputs.map((port) => port.toFlowPort()).toList()
+              : fallbackOutputs;
           final config = _readConfig(node.data)
             ..['_ui'] = <String, dynamic>{
               'x': node.position.value.dx,
@@ -1744,8 +1948,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             title: (node.data['title'] as String?)?.trim().isNotEmpty == true
                 ? node.data['title'] as String
                 : node.type,
-            inputs: _readFlowPorts(node.data['inputs']),
-            outputs: _readFlowPorts(node.data['outputs']),
+            inputs: inputs,
+            outputs: outputs,
             config: config,
           );
         })
@@ -1763,6 +1967,31 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         .toList(growable: false);
 
     return (nodes, edges);
+  }
+
+  String? _nodeConfigSummary(String type, Map<String, dynamic> config) {
+    switch (type) {
+      case 'file.read':
+        final inputFile = (config['input_file'] as String?)?.trim();
+        if (inputFile != null && inputFile.isNotEmpty) {
+          return 'input: $inputFile';
+        }
+        return null;
+      case 'file.write':
+        final outputFile = (config['output_file'] as String?)?.trim();
+        if (outputFile != null && outputFile.isNotEmpty) {
+          return 'output: $outputFile';
+        }
+        return null;
+      case 'llm.chat':
+        final model = (config['model'] as String?)?.trim();
+        if (model != null && model.isNotEmpty) {
+          return 'model: $model';
+        }
+        return null;
+      default:
+        return null;
+    }
   }
 
   String _shortId(String id) {
@@ -1844,6 +2073,7 @@ class _TopControlsBar extends StatelessWidget {
     required this.onSaveToServer,
     required this.onSetHead,
     required this.onDuplicate,
+    required this.onValidateFlow,
     required this.onRun,
   });
 
@@ -1859,6 +2089,7 @@ class _TopControlsBar extends StatelessWidget {
   final Future<bool> Function() onSaveToServer;
   final Future<void> Function() onSetHead;
   final Future<void> Function() onDuplicate;
+  final Future<void> Function() onValidateFlow;
   final Future<void> Function() onRun;
 
   @override
@@ -1951,6 +2182,12 @@ class _TopControlsBar extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             FilledButton.icon(
+              onPressed: isSavingToServer ? null : onValidateFlow,
+              icon: const Icon(Icons.rule),
+              label: const Text('Validate Flow'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
               onPressed: isRunning ? null : onRun,
               icon: isRunning
                   ? const SizedBox(
@@ -1969,15 +2206,10 @@ class _TopControlsBar extends StatelessWidget {
 }
 
 class _PalettePanel extends StatelessWidget {
-  const _PalettePanel({
-    required this.onAddFileRead,
-    required this.onAddLlmChat,
-    required this.onAddFileWrite,
-  });
+  const _PalettePanel({required this.nodeTypes, required this.onAddNode});
 
-  final VoidCallback onAddFileRead;
-  final VoidCallback onAddLlmChat;
-  final VoidCallback onAddFileWrite;
+  final List<NodeTypeDefinition> nodeTypes;
+  final ValueChanged<String> onAddNode;
 
   @override
   Widget build(BuildContext context) {
@@ -1990,26 +2222,17 @@ class _PalettePanel extends StatelessWidget {
           children: [
             Text('Nodes', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
-            FilledButton.icon(
-              key: const Key('add-file.read'),
-              onPressed: onAddFileRead,
-              icon: const Icon(Icons.file_open),
-              label: const Text('Add file.read'),
-            ),
-            const SizedBox(height: 10),
-            FilledButton.icon(
-              key: const Key('add-llm.chat'),
-              onPressed: onAddLlmChat,
-              icon: const Icon(Icons.auto_awesome),
-              label: const Text('Add llm.chat'),
-            ),
-            const SizedBox(height: 10),
-            FilledButton.icon(
-              key: const Key('add-file.write'),
-              onPressed: onAddFileWrite,
-              icon: const Icon(Icons.save),
-              label: const Text('Add file.write'),
-            ),
+            ...nodeTypes.map((nodeType) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: FilledButton.icon(
+                  key: Key('add-${nodeType.typeId}'),
+                  onPressed: () => onAddNode(nodeType.typeId),
+                  icon: Icon(nodeType.icon),
+                  label: Text('Add ${nodeType.typeId}'),
+                ),
+              );
+            }),
             const SizedBox(height: 24),
             Text(
               'Drag between ports to create edges. Click a node to edit fields.',
@@ -2025,11 +2248,13 @@ class _PalettePanel extends StatelessWidget {
 class _InspectorPanel extends StatelessWidget {
   const _InspectorPanel({
     required this.selectedNode,
+    required this.nodeType,
     required this.onTitleChanged,
     required this.onConfigChanged,
   });
 
   final Node<Map<String, dynamic>>? selectedNode;
+  final NodeTypeDefinition? nodeType;
   final ValueChanged<String> onTitleChanged;
   final void Function(String key, String value) onConfigChanged;
 
@@ -2048,6 +2273,7 @@ class _InspectorPanel extends StatelessWidget {
     final node = selectedNode!;
     final title = (node.data['title'] as String?) ?? '';
     final config = _readConfigStatic(node.data);
+    final definition = nodeType;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -2056,7 +2282,10 @@ class _InspectorPanel extends StatelessWidget {
         children: [
           Text('Inspector', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Text(node.type, style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            definition?.displayName ?? node.type,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 16),
           TextFormField(
             key: Key('title-field-${node.id}'),
@@ -2068,36 +2297,25 @@ class _InspectorPanel extends StatelessWidget {
             onChanged: onTitleChanged,
           ),
           const SizedBox(height: 12),
-          if (node.type == 'file.read')
-            TextFormField(
-              key: Key('input-file-field-${node.id}'),
-              initialValue: (config['input_file'] as String?) ?? '',
-              decoration: const InputDecoration(
-                labelText: 'input_file',
-                border: OutlineInputBorder(),
+          ...?definition?.inspectorFields.map((field) {
+            final label = field.optionalHint
+                ? '${field.label} (optional)'
+                : field.label;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextFormField(
+                key: Key('${field.key}-field-${node.id}'),
+                initialValue: (config[field.key] as String?) ?? '',
+                minLines: field.multiline ? 2 : 1,
+                maxLines: field.multiline ? 5 : 1,
+                decoration: InputDecoration(
+                  labelText: label,
+                  border: const OutlineInputBorder(),
+                ),
+                onChanged: (value) => onConfigChanged(field.key, value),
               ),
-              onChanged: (value) => onConfigChanged('input_file', value),
-            ),
-          if (node.type == 'file.write')
-            TextFormField(
-              key: Key('output-file-field-${node.id}'),
-              initialValue: (config['output_file'] as String?) ?? '',
-              decoration: const InputDecoration(
-                labelText: 'output_file',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) => onConfigChanged('output_file', value),
-            ),
-          if (node.type == 'llm.chat')
-            TextFormField(
-              key: Key('model-field-${node.id}'),
-              initialValue: (config['model'] as String?) ?? '',
-              decoration: const InputDecoration(
-                labelText: 'model override (optional)',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) => onConfigChanged('model', value),
-            ),
+            );
+          }),
         ],
       ),
     );
@@ -2581,55 +2799,4 @@ class _Pill extends StatelessWidget {
       child: Text(label, style: Theme.of(context).textTheme.labelSmall),
     );
   }
-}
-
-enum NodeKind { fileRead, llmChat, fileWrite }
-
-extension on NodeKind {
-  NodeSpec get spec {
-    switch (this) {
-      case NodeKind.fileRead:
-        return const NodeSpec(
-          type: 'file.read',
-          label: 'File Read',
-          inputs: <FlowPort>[],
-          outputs: <FlowPort>[FlowPort(port: 'out', schema: 'artifact/text')],
-          defaultConfig: <String, dynamic>{'input_file': 'input.txt'},
-        );
-      case NodeKind.llmChat:
-        return const NodeSpec(
-          type: 'llm.chat',
-          label: 'LLM Chat',
-          inputs: <FlowPort>[FlowPort(port: 'in', schema: 'artifact/text')],
-          outputs: <FlowPort>[FlowPort(port: 'out', schema: 'artifact/text')],
-          defaultConfig: <String, dynamic>{'model': ''},
-        );
-      case NodeKind.fileWrite:
-        return const NodeSpec(
-          type: 'file.write',
-          label: 'File Write',
-          inputs: <FlowPort>[FlowPort(port: 'in', schema: 'artifact/text')],
-          outputs: <FlowPort>[
-            FlowPort(port: 'out', schema: 'artifact/output_file'),
-          ],
-          defaultConfig: <String, dynamic>{'output_file': 'output.txt'},
-        );
-    }
-  }
-}
-
-class NodeSpec {
-  const NodeSpec({
-    required this.type,
-    required this.label,
-    required this.inputs,
-    required this.outputs,
-    required this.defaultConfig,
-  });
-
-  final String type;
-  final String label;
-  final List<FlowPort> inputs;
-  final List<FlowPort> outputs;
-  final Map<String, dynamic> defaultConfig;
 }

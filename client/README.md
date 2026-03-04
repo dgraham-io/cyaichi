@@ -61,6 +61,34 @@ flutter run
 - **Duplicate** creates a new `doc_id` + new `ver_id` with empty `parents`.
 - **Set Head** maps workspace head for a flow `doc_id` to a specific `ver_id`.
 
+## Node Types (MVP)
+
+- `file.read`
+  - output: `out` (`artifact/text`)
+  - config: `input_file`
+- `llm.chat`
+  - input: `in` (`artifact/text`)
+  - output: `out` (`artifact/text`)
+  - config: `model`, `system_prompt`
+- `file.write`
+  - input: `in` (`artifact/text`)
+  - output: `out` (`artifact/output_file`)
+  - config: `output_file`
+
+Node config values are always written into flow JSON for forward compatibility, even where current server execution still uses run-level inputs.
+
+## Flow Validation (Client-side)
+
+The **Validate Flow** action checks:
+- exactly one `file.read` node
+- exactly one `file.write` node
+- directed connectivity from `file.read` to `file.write` with all nodes on that end-to-end path
+- required node config fields present (`input_file` and `output_file`)
+
+Connection creation is also validated in-editor:
+- only output -> input connections are allowed
+- if both ports define schemas, schemas must match
+
 ## Required Server Endpoints
 
 - `POST /v1/workspaces`

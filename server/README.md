@@ -119,6 +119,15 @@ curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111
 
 ## Runs API
 
+`POST /v1/runs` input/output path precedence:
+- `inputs.input_file` overrides `file.read` `node.config.input_file`
+- `inputs.output_file` overrides `file.write` `node.config.output_file`
+- if `inputs.output_file` is omitted and multiple `file.write` nodes exist, mark exactly one with `node.config.primary=true`
+
+`llm.chat` node config:
+- `node.config.model` overrides `CYAI_LLM_MODEL` for that node
+- `node.config.system_prompt` (if non-empty) is sent as a system message before the user message
+
 Export environment variables:
 
 ```bash
@@ -162,9 +171,9 @@ curl -i -X PUT "http://127.0.0.1:8080/v1/docs/flow/$FLOW_ID/$FLOW_VER" \
     \"created_at\": \"2026-03-03T00:00:00Z\",
     \"body\": {
       \"nodes\": [
-        {\"id\":\"n1\",\"type\":\"file.read\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
-        {\"id\":\"n2\",\"type\":\"llm.chat\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
-        {\"id\":\"n3\",\"type\":\"file.write\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/output_file\"}],\"config\":{}}
+        {\"id\":\"n1\",\"type\":\"file.read\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{\"input_file\":\"input.txt\"}},
+        {\"id\":\"n2\",\"type\":\"llm.chat\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{\"system_prompt\":\"You are concise.\"}},
+        {\"id\":\"n3\",\"type\":\"file.write\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/output_file\"}],\"config\":{\"output_file\":\"output.txt\",\"primary\":true}}
       ],
       \"edges\": [
         {\"from\":{\"node\":\"n1\",\"port\":\"out\"},\"to\":{\"node\":\"n2\",\"port\":\"in\"}},
@@ -197,7 +206,7 @@ RUN_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/runs \
   --data-binary "{
     \"workspace_id\": \"$WS_ID\",
     \"flow_ref\": {\"doc_id\": \"$FLOW_ID\", \"ver_id\": null, \"selector\": \"head\"},
-    \"inputs\": {\"input_file\": \"input.txt\", \"output_file\": \"output.txt\"}
+    \"inputs\": {}
   }")
 echo "$RUN_RESP"
 RUN_ID=$(echo "$RUN_RESP" | jq -r '.run_id')

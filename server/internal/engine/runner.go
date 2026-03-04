@@ -75,7 +75,7 @@ type ArtifactDocument struct {
 }
 
 type LLMChatClient interface {
-	Chat(ctx context.Context, model string, userText string) (string, error)
+	Chat(ctx context.Context, model string, userText string, systemPrompt string) (string, error)
 }
 
 type DefaultNodeRunner struct {
@@ -226,15 +226,20 @@ func (r *DefaultNodeRunner) runLLMChat(ctx context.Context, req NodeRunRequest) 
 	}
 
 	model := r.defaultModel
-	if req.Node.Config != nil {
-		if raw, ok := req.Node.Config["model"]; ok {
-			if configModel, ok := raw.(string); ok && strings.TrimSpace(configModel) != "" {
-				model = configModel
-			}
-		}
+	configModel, ok, err := getNodeConfigString(req.Node.Config, "model")
+	if err != nil {
+		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("invalid llm.chat config.model: %v", err)}
+	}
+	if ok && strings.TrimSpace(configModel) != "" {
+		model = configModel
 	}
 
-	outputText, err := r.llmClient.Chat(ctx, model, req.UpstreamArtifact.Text)
+	systemPrompt, _, err := getNodeConfigString(req.Node.Config, "system_prompt")
+	if err != nil {
+		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("invalid llm.chat config.system_prompt: %v", err)}
+	}
+
+	outputText, err := r.llmClient.Chat(ctx, model, req.UpstreamArtifact.Text, systemPrompt)
 	if err != nil {
 		return NodeRunResult{}, &UpstreamError{Message: fmt.Sprintf("llm.chat failed: %v", err)}
 	}
@@ -429,7 +434,7 @@ type VLLMChatClient struct {
 	httpClient *http.Client
 }
 
-func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string) (string, error) {
+func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string, systemPrompt string) (string, error) {
 	if strings.TrimSpace(c.baseURL) == "" {
 		return "", fmt.Errorf("CYAI_VLLM_BASE_URL is required for llm.chat")
 	}
@@ -440,14 +445,21 @@ func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string
 		model = defaultLLMModel
 	}
 
+	messages := []map[string]string{}
+	if strings.TrimSpace(systemPrompt) != "" {
+		messages = append(messages, map[string]string{
+			"role":    "system",
+			"content": systemPrompt,
+		})
+	}
+	messages = append(messages, map[string]string{
+		"role":    "user",
+		"content": userText,
+	})
+
 	body := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"content": userText,
-			},
-		},
+		"model":       model,
+		"messages":    messages,
 		"temperature": 0.2,
 	}
 	bodyBytes, err := json.Marshal(body)
@@ -505,6 +517,36 @@ func (c *VLLMChatClient) Chat(ctx context.Context, model string, userText string
 	default:
 		return "", fmt.Errorf("chat response content is not a string")
 	}
+}
+
+func getNodeConfigString(config map[string]any, key string) (string, bool, error) {
+	if config == nil {
+		return "", false, nil
+	}
+	raw, ok := config[key]
+	if !ok || raw == nil {
+		return "", false, nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", true, fmt.Errorf("must be a string")
+	}
+	return value, true, nil
+}
+
+func getNodeConfigBool(config map[string]any, key string) (bool, bool, error) {
+	if config == nil {
+		return false, false, nil
+	}
+	raw, ok := config[key]
+	if !ok || raw == nil {
+		return false, false, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, true, fmt.Errorf("must be a boolean")
+	}
+	return value, true, nil
 }
 
 func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, error) {

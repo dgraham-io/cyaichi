@@ -83,6 +83,11 @@ type RunService struct {
 	workspaceRoot string
 }
 
+type filePathResolution struct {
+	InputPath  string
+	OutputPath string
+}
+
 func NewRunService(store *store.Store, validator *schema.Validator, runner NodeRunner, workspaceRoot string) *RunService {
 	if runner == nil {
 		runner = NewDefaultNodeRunner("", "", defaultLLMModel, nil)
@@ -173,14 +178,15 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 		})
 	}
 
-	inputPath := req.Inputs["input_file"]
-	if inputPath == "" {
+	paths, err := resolveRunFilePaths(req, executionOrder)
+	if err != nil {
 		return failAndReturn(http.StatusBadRequest, runFailure{
-			Message: "inputs.input_file is required",
+			Message: err.Error(),
 			Kind:    "validation",
 		})
 	}
-	outputPath := req.Inputs["output_file"]
+	inputPath := paths.InputPath
+	outputPath := paths.OutputPath
 
 	artifactID := uuid.NewString()
 	artifactVerID := uuid.NewString()
@@ -236,7 +242,17 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 		Schema: "artifact/input_file",
 	}
 
+	incomingEdgesByNode := make(map[string]int, len(parsedFlow.Body.Nodes))
+	for _, edge := range parsedFlow.Body.Edges {
+		incomingEdgesByNode[edge.To.Node]++
+	}
+
 	for _, node := range executionOrder {
+		// Skip disconnected nodes that require upstream input.
+		if len(node.Inputs) > 0 && incomingEdgesByNode[node.ID] == 0 {
+			continue
+		}
+
 		result, err := s.runner.RunNode(ctx, NodeRunRequest{
 			Node:                 node,
 			WorkspaceID:          req.WorkspaceID,
@@ -402,6 +418,74 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			DocID: req.FlowRef.DocID,
 			VerID: flowVerID,
 		},
+	}, nil
+}
+
+func resolveRunFilePaths(req CreateRunRequest, nodes []FlowNode) (filePathResolution, error) {
+	inputPath := strings.TrimSpace(req.Inputs["input_file"])
+	outputPath := strings.TrimSpace(req.Inputs["output_file"])
+
+	fileReadNodes := make([]FlowNode, 0)
+	fileWriteNodes := make([]FlowNode, 0)
+	for _, node := range nodes {
+		switch node.Type {
+		case "file.read":
+			fileReadNodes = append(fileReadNodes, node)
+		case "file.write":
+			fileWriteNodes = append(fileWriteNodes, node)
+		}
+	}
+
+	if inputPath == "" && len(fileReadNodes) > 0 {
+		configInput, _, err := getNodeConfigString(fileReadNodes[0].Config, "input_file")
+		if err != nil {
+			return filePathResolution{}, fmt.Errorf("invalid file.read config.input_file: %v", err)
+		}
+		inputPath = strings.TrimSpace(configInput)
+	}
+	if inputPath == "" {
+		return filePathResolution{}, fmt.Errorf("missing input file: provide inputs.input_file or file.read node.config.input_file")
+	}
+
+	if outputPath == "" && len(fileWriteNodes) > 0 {
+		switch len(fileWriteNodes) {
+		case 1:
+			configOutput, _, err := getNodeConfigString(fileWriteNodes[0].Config, "output_file")
+			if err != nil {
+				return filePathResolution{}, fmt.Errorf("invalid file.write config.output_file: %v", err)
+			}
+			outputPath = strings.TrimSpace(configOutput)
+		default:
+			var primaryNode *FlowNode
+			for i := range fileWriteNodes {
+				primary, hasPrimary, err := getNodeConfigBool(fileWriteNodes[i].Config, "primary")
+				if err != nil {
+					return filePathResolution{}, fmt.Errorf("invalid file.write config.primary on node %q: %v", fileWriteNodes[i].ID, err)
+				}
+				if hasPrimary && primary {
+					if primaryNode != nil {
+						return filePathResolution{}, fmt.Errorf("multiple file.write nodes marked primary=true")
+					}
+					primaryNode = &fileWriteNodes[i]
+				}
+			}
+			if primaryNode == nil {
+				return filePathResolution{}, fmt.Errorf("Multiple file.write nodes found; set one node.config.primary=true or provide inputs.output_file")
+			}
+			configOutput, _, err := getNodeConfigString(primaryNode.Config, "output_file")
+			if err != nil {
+				return filePathResolution{}, fmt.Errorf("invalid file.write config.output_file on primary node %q: %v", primaryNode.ID, err)
+			}
+			outputPath = strings.TrimSpace(configOutput)
+		}
+	}
+	if len(fileWriteNodes) > 0 && outputPath == "" {
+		return filePathResolution{}, fmt.Errorf("missing output file: provide inputs.output_file or file.write node.config.output_file")
+	}
+
+	return filePathResolution{
+		InputPath:  inputPath,
+		OutputPath: outputPath,
 	}, nil
 }
 

@@ -89,9 +89,13 @@ func writeWorkspaceInputFile(t *testing.T, h *apiTestHarness, workspaceID, relPa
 type mockChatRequest struct {
 	Authorization string
 	Model         string
-	Role          string
-	Content       string
+	Messages      []mockChatMessage
 	Temperature   float64
+}
+
+type mockChatMessage struct {
+	Role    string
+	Content string
 }
 
 func newMockVLLMServer(t *testing.T, responseStatus int, responseBody string) (*httptest.Server, *mockChatRequest) {
@@ -112,12 +116,9 @@ func newMockVLLMServer(t *testing.T, responseStatus int, responseBody string) (*
 		}
 
 		var payload struct {
-			Model    string `json:"model"`
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-			Temperature float64 `json:"temperature"`
+			Model       string            `json:"model"`
+			Messages    []mockChatMessage `json:"messages"`
+			Temperature float64           `json:"temperature"`
 		}
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -128,10 +129,7 @@ func newMockVLLMServer(t *testing.T, responseStatus int, responseBody string) (*
 		captured.Authorization = r.Header.Get("Authorization")
 		captured.Model = payload.Model
 		captured.Temperature = payload.Temperature
-		if len(payload.Messages) > 0 {
-			captured.Role = payload.Messages[0].Role
-			captured.Content = payload.Messages[0].Content
-		}
+		captured.Messages = append([]mockChatMessage{}, payload.Messages...)
 		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
@@ -326,11 +324,14 @@ func TestRunsValidFlowFileReadToLLMChatToFileWriteCreatesFinalOutput(t *testing.
 	if captured.Model != "node-model" {
 		t.Fatalf("expected model node-model from node config, got %q", captured.Model)
 	}
-	if captured.Role != "user" {
-		t.Fatalf("expected role user, got %q", captured.Role)
+	if len(captured.Messages) != 1 {
+		t.Fatalf("expected one llm message, got %d", len(captured.Messages))
 	}
-	if captured.Content != "file content from test" {
-		t.Fatalf("expected llm input text %q, got %q", "file content from test", captured.Content)
+	if captured.Messages[0].Role != "user" {
+		t.Fatalf("expected role user, got %q", captured.Messages[0].Role)
+	}
+	if captured.Messages[0].Content != "file content from test" {
+		t.Fatalf("expected llm input text %q, got %q", "file content from test", captured.Messages[0].Content)
 	}
 
 	var runResp struct {
@@ -667,5 +668,195 @@ func TestRunsMissingInputFilePersistsFailedRun(t *testing.T) {
 	}
 	if runDoc.Body.TraceRef.Error.Message == "" || runDoc.Body.TraceRef.Error.Kind == "" {
 		t.Fatalf("expected trace_ref.error fields in failed run: %+v", runDoc.Body.TraceRef.Error)
+	}
+}
+
+func TestRunsUsesFileReadConfigInputDefault(t *testing.T) {
+	h := newAPITestHarness(t)
+	workspace := createWorkspaceViaAPI(t, h, "Runs file.read config default")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"input_file":"input.txt"}},
+	    {"id":"n2","type":"node.out","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[],"config":{}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "input from config")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+}
+
+func TestRunsUsesFileWriteConfigOutputDefault(t *testing.T) {
+	mockResp := `{"choices":[{"message":{"content":"default output from config"}}]}`
+	mockServer, _ := newMockVLLMServer(t, http.StatusOK, mockResp)
+	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	workspace := createWorkspaceViaAPI(t, h, "Runs file.write config default")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"input_file":"input.txt"}},
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n3","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{"output_file":"out.txt"}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}},
+	    {"from":{"node":"n2","port":"out"},"to":{"node":"n3","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "hello")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	outputPath := filepath.Join(h.workspaceRoot, workspace.WorkspaceID, "out.txt")
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	if string(got) != "default output from config" {
+		t.Fatalf("expected output file content %q, got %q", "default output from config", string(got))
+	}
+}
+
+func TestRunsSelectsPrimaryFileWriteWhenMultipleWrites(t *testing.T) {
+	h := newAPITestHarness(t)
+	workspace := createWorkspaceViaAPI(t, h, "Runs primary write")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"input_file":"input.txt"}},
+	    {"id":"n2","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{"primary":true,"output_file":"a.txt"}},
+	    {"id":"n3","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{"output_file":"b.txt"}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "primary output body")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	primaryPath := filepath.Join(h.workspaceRoot, workspace.WorkspaceID, "a.txt")
+	if _, err := os.Stat(primaryPath); err != nil {
+		t.Fatalf("expected primary output file to exist at %q: %v", primaryPath, err)
+	}
+}
+
+func TestRunsMultipleWritesWithoutPrimaryReturnsBadRequest(t *testing.T) {
+	h := newAPITestHarness(t)
+	workspace := createWorkspaceViaAPI(t, h, "Runs multiple writes no primary")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"input_file":"input.txt"}},
+	    {"id":"n2","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{"output_file":"a.txt"}},
+	    {"id":"n3","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{"output_file":"b.txt"}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "hello")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Multiple file.write nodes found; set one node.config.primary=true or provide inputs.output_file") {
+		t.Fatalf("expected multiple write guidance, got %q", rr.Body.String())
+	}
+}
+
+func TestRunsLLMChatUsesSystemPromptAndModelOverride(t *testing.T) {
+	mockResp := `{"choices":[{"message":{"content":"mocked response"}}]}`
+	mockServer, captured := newMockVLLMServer(t, http.StatusOK, mockResp)
+	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	workspace := createWorkspaceViaAPI(t, h, "Runs llm system prompt")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"input_file":"input.txt"}},
+	    {"id":"n2","type":"llm.chat","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{"model":"override-model","system_prompt":"You are concise."}},
+	    {"id":"n3","type":"file.write","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/output_file"}],"config":{"output_file":"output.txt"}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}},
+	    {"from":{"node":"n2","port":"out"},"to":{"node":"n3","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "input for llm")
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, rr.Code, rr.Body.String())
+	}
+
+	if captured.Model != "override-model" {
+		t.Fatalf("expected model override-model, got %q", captured.Model)
+	}
+	if len(captured.Messages) != 2 {
+		t.Fatalf("expected two messages (system,user), got %d", len(captured.Messages))
+	}
+	if captured.Messages[0].Role != "system" || captured.Messages[0].Content != "You are concise." {
+		t.Fatalf("expected first message system prompt, got %+v", captured.Messages[0])
+	}
+	if captured.Messages[1].Role != "user" || captured.Messages[1].Content != "input for llm" {
+		t.Fatalf("expected second message user input, got %+v", captured.Messages[1])
 	}
 }

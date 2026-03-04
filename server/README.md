@@ -304,3 +304,83 @@ FAIL_RUN_ID=$(echo "$FAIL_RESP" | jq -r '.run_id')
 FAIL_RUN_VER=$(echo "$FAIL_RESP" | jq -r '.run_ver_id')
 curl -s "http://127.0.0.1:8080/v1/docs/run/$FAIL_RUN_ID/$FAIL_RUN_VER" | jq
 ```
+
+## Package Export API
+
+Create a workspace:
+
+```bash
+WS_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/workspaces \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"name":"Package Demo"}')
+WS_ID=$(echo "$WS_RESP" | jq -r '.workspace_id')
+```
+
+Create a subflow and root flow with a subflow reference:
+
+```bash
+SUBFLOW_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+SUBFLOW_VER=$(python3 -c 'import uuid; print(uuid.uuid4())')
+ROOT_FLOW_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+ROOT_FLOW_VER=$(python3 -c 'import uuid; print(uuid.uuid4())')
+
+curl -s -X PUT "http://127.0.0.1:8080/v1/docs/flow/$SUBFLOW_ID/$SUBFLOW_VER" \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"doc_type\":\"flow\",
+    \"doc_id\":\"$SUBFLOW_ID\",
+    \"ver_id\":\"$SUBFLOW_VER\",
+    \"workspace_id\":\"$WS_ID\",
+    \"created_at\":\"2026-03-03T00:00:00Z\",
+    \"body\":{\"nodes\":[],\"edges\":[]}
+  }"
+
+curl -s -X PUT "http://127.0.0.1:8080/v1/docs/flow/$ROOT_FLOW_ID/$ROOT_FLOW_VER" \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"doc_type\":\"flow\",
+    \"doc_id\":\"$ROOT_FLOW_ID\",
+    \"ver_id\":\"$ROOT_FLOW_VER\",
+    \"workspace_id\":\"$WS_ID\",
+    \"created_at\":\"2026-03-03T00:00:00Z\",
+    \"body\":{
+      \"nodes\":[],
+      \"edges\":[],
+      \"subflows\":[
+        {
+          \"id\":\"subflow-1\",
+          \"flow_ref\":{\"doc_id\":\"$SUBFLOW_ID\",\"ver_id\":null,\"selector\":\"head\"}
+        }
+      ]
+    }
+  }"
+```
+
+Set flow heads:
+
+```bash
+curl -s -X PUT "http://127.0.0.1:8080/v1/workspaces/$WS_ID/heads/$SUBFLOW_ID" \
+  -H 'Content-Type: application/json' \
+  --data-binary "{\"ver_id\":\"$SUBFLOW_VER\"}"
+
+curl -s -X PUT "http://127.0.0.1:8080/v1/workspaces/$WS_ID/heads/$ROOT_FLOW_ID" \
+  -H 'Content-Type: application/json' \
+  --data-binary "{\"ver_id\":\"$ROOT_FLOW_VER\"}"
+```
+
+Export a package and fetch it:
+
+```bash
+PKG_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/packages/export \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"workspace_id\":\"$WS_ID\",
+    \"flow_ref\":{\"doc_id\":\"$ROOT_FLOW_ID\",\"ver_id\":null,\"selector\":\"head\"},
+    \"recommended_head\":true
+  }")
+echo "$PKG_RESP" | jq
+PKG_ID=$(echo "$PKG_RESP" | jq -r '.package_id')
+PKG_VER=$(echo "$PKG_RESP" | jq -r '.package_ver_id')
+
+curl -s "http://127.0.0.1:8080/v1/packages/$PKG_ID/$PKG_VER" | jq
+```

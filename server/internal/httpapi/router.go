@@ -49,6 +49,12 @@ func NewMux(
 			),
 		}
 		mux.HandleFunc("/v1/runs", rh.Handle)
+
+		ph := &PackagesHandler{
+			service: engine.NewPackageService(docStore, validator),
+			store:   docStore,
+		}
+		mux.HandleFunc("/v1/packages/", ph.Handle)
 	}
 	return mux
 }

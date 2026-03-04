@@ -44,4 +44,28 @@ void main() {
 
     expect(output, 'b.txt');
   });
+
+  test('primary write node selection resolves chosen node id', () {
+    final writes = <WriteNodeOption>[
+      const WriteNodeOption(
+        nodeId: 'w1',
+        title: 'Write 1',
+        outputFile: 'a.txt',
+        isPrimary: false,
+      ),
+      const WriteNodeOption(
+        nodeId: 'w2',
+        title: 'Write 2',
+        outputFile: 'b.txt',
+        isPrimary: true,
+      ),
+    ];
+
+    final primary = choosePrimaryWriteNodeId(
+      writes: writes,
+      preferredPrimaryNodeId: null,
+    );
+
+    expect(primary, 'w2');
+  });
 }

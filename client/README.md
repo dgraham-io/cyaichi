@@ -103,6 +103,24 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
   - else Run prompts you to pick a primary write node before continuing
 - Run input selection uses `file.read` `config.input_file` by default, with run-panel input field as override.
 
+## Run Workflow
+
+- Configure node defaults in Inspector:
+  - `file.read` -> `input_file`
+  - `file.write` -> `output_file`
+  - for multiple writes, mark one as `primary`
+- Run parameter precedence in client:
+  - Run Panel value (if provided) overrides node config
+  - otherwise, defaults come from node config (`file.read.input_file`, chosen `file.write.output_file`)
+- If required run values are missing, the Run Panel shows inline validation and run is blocked.
+- During run, the panel shows `Running...` progress.
+- After run:
+  - status + ids
+  - output artifact summary (`path`/`bytes` when available)
+  - output file path and preview (first 4k chars)
+  - `Copy output` and `Open full` actions
+  - on failure, trace error (`message`, `kind`, `node_id`) and invocation statuses
+
 ## Required Server Endpoints
 
 - `POST /v1/workspaces`

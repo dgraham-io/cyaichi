@@ -65,3 +65,31 @@ String? chooseRunOutputFile({
 
   return null;
 }
+
+String? choosePrimaryWriteNodeId({
+  required List<WriteNodeOption> writes,
+  String? preferredPrimaryNodeId,
+}) {
+  if (writes.isEmpty) {
+    return null;
+  }
+
+  if (preferredPrimaryNodeId != null) {
+    for (final write in writes) {
+      if (write.nodeId == preferredPrimaryNodeId) {
+        return write.nodeId;
+      }
+    }
+  }
+
+  final primaryFromConfig = writes.where((write) => write.isPrimary).toList();
+  if (primaryFromConfig.length == 1) {
+    return primaryFromConfig.first.nodeId;
+  }
+
+  if (writes.length == 1) {
+    return writes.first.nodeId;
+  }
+
+  return null;
+}

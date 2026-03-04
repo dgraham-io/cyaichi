@@ -7,6 +7,7 @@ import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/flow/flow_validation.dart';
 import 'package:client/src/flow/node_registry.dart';
 import 'package:client/src/flow/primary_output.dart';
+import 'package:client/src/flow/run_request_builder.dart';
 import 'package:client/src/io/local_file_reader.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/theme/cyaichi_theme.dart';
@@ -30,6 +31,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _defaultWorkspaceDataRoot = './workspace-data';
   static const _defaultRunInputFile = 'input.txt';
   static const _defaultRunOutputFile = 'output.txt';
+  static const _outputPreviewLimit = 4000;
 
   static const _prefServerBaseUrl = 'client.server_base_url';
   static const _prefWorkspaceDataRoot = 'client.workspace_data_root';
@@ -65,13 +67,19 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isSavingToServer = false;
   bool _isRunning = false;
   String? _connectionRejectReason;
+  String? _runValidationError;
 
   String _lastRunStatus = 'idle';
   String? _lastRunError;
+  String? _lastRunErrorKind;
+  String? _lastRunErrorNodeId;
   String? _lastRunId;
   String? _lastRunVerId;
   String? _lastOutputPath;
   String? _lastOutputContent;
+  String? _lastOutputContentFull;
+  String? _lastOutputArtifactSummary;
+  List<String> _lastRunInvocations = const <String>[];
 
   String? _currentFlowDocId;
   String? _currentFlowVerId;
@@ -103,8 +111,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       config: NodeFlowConfig(scrollToZoom: false),
     );
     _flowTitleController = TextEditingController(text: 'My Flow');
-    _inputFileController = TextEditingController(text: _defaultRunInputFile);
-    _outputFileController = TextEditingController(text: _defaultRunOutputFile);
+    _inputFileController = TextEditingController();
+    _outputFileController = TextEditingController();
     _apiClient = ApiClient(baseUrl: _serverBaseUrl);
 
     _loadSettings();
@@ -415,12 +423,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   _RunPanel(
                     inputFileController: _inputFileController,
                     outputFileController: _outputFileController,
+                    inputFileHint: _defaultRunInputFile,
+                    outputFileHint: _defaultRunOutputFile,
                     status: _lastRunStatus,
+                    validationError: _runValidationError,
                     runId: _lastRunId,
                     runVerId: _lastRunVerId,
                     error: _lastRunError,
+                    errorKind: _lastRunErrorKind,
+                    errorNodeId: _lastRunErrorNodeId,
+                    invocations: _lastRunInvocations,
+                    outputArtifactSummary: _lastOutputArtifactSummary,
                     outputPath: _lastOutputPath,
                     outputContent: _lastOutputContent,
+                    outputContentFull: _lastOutputContentFull,
                     isRunning: _isRunning,
                   ),
                 ],
@@ -1233,31 +1249,72 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return;
     }
 
-    final inputFile = _resolveInputFile();
-    if (inputFile == null || inputFile.trim().isEmpty) {
-      _showSnack('No input file selected');
+    setState(() {
+      _runValidationError = null;
+    });
+
+    final initialWrites = _collectWriteNodeOptions();
+    final requiresPrimaryDialog =
+        initialWrites.length > 1 &&
+        choosePrimaryWriteNodeId(
+              writes: initialWrites,
+              preferredPrimaryNodeId: _primaryWriteNodeId,
+            ) ==
+            null &&
+        _outputFileController.text.trim().isEmpty;
+    if (requiresPrimaryDialog) {
+      final selectedNodeId = await _promptPrimaryOutputSelection(initialWrites);
+      if (selectedNodeId == null) {
+        setState(() {
+          _runValidationError =
+              'Select a primary output node or enter output_file to run.';
+        });
+        return;
+      }
+      _setPrimaryOutputNode(selectedNodeId);
+    }
+
+    final writes = _collectWriteNodeOptions();
+    final validation = buildRunRequestParams(
+      enteredInputFile: _inputFileController.text,
+      enteredOutputFile: _outputFileController.text,
+      readNodeConfigInputFiles: _collectReadNodeInputDefaults(),
+      writeNodes: writes,
+      preferredPrimaryWriteNodeId: _primaryWriteNodeId,
+    );
+    if (!validation.isValid || validation.params == null) {
+      setState(() {
+        _runValidationError =
+            validation.errorMessage ?? 'Run validation failed';
+      });
       return;
     }
-    final outputSelection = await _resolveOutputSelection();
-    if (outputSelection == null || outputSelection.$1.trim().isEmpty) {
-      _showSnack(
-        'Select a primary output node with output_file before running.',
-      );
-      return;
+    final params = validation.params!;
+
+    if (_inputFileController.text.trim().isEmpty) {
+      _inputFileController.text = params.inputFile;
     }
-    final outputFile = outputSelection.$1;
-    if (outputSelection.$2.isNotEmpty) {
-      _primaryWriteNodeId = outputSelection.$2;
+    if (_outputFileController.text.trim().isEmpty) {
+      _outputFileController.text = params.outputFile;
+    }
+    if (params.primaryWriteNodeId.isNotEmpty) {
+      _primaryWriteNodeId = params.primaryWriteNodeId;
     }
 
     setState(() {
       _isRunning = true;
       _lastRunStatus = 'running';
+      _runValidationError = null;
       _lastRunError = null;
+      _lastRunErrorKind = null;
+      _lastRunErrorNodeId = null;
       _lastRunId = null;
       _lastRunVerId = null;
       _lastOutputPath = null;
       _lastOutputContent = null;
+      _lastOutputContentFull = null;
+      _lastOutputArtifactSummary = null;
+      _lastRunInvocations = const <String>[];
     });
 
     final saved = await _saveNewFlowVersionToServer();
@@ -1267,6 +1324,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _isRunning = false;
           _lastRunStatus = 'failed';
           _lastRunError = 'Flow save failed; run aborted.';
+          _lastRunErrorKind = 'client';
+          _lastRunErrorNodeId = null;
         });
       }
       return;
@@ -1281,8 +1340,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final run = await _apiClient.createRun(
         workspaceId: workspaceId,
         flowDocId: _currentFlowDocId!,
-        inputFile: inputFile,
-        outputFile: outputFile,
+        inputFile: params.inputFile,
+        outputFile: params.outputFile,
       );
 
       final runDoc = await _apiClient.getDocument(
@@ -1292,15 +1351,38 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       );
       final runBody = runDoc['body'] as Map<String, dynamic>?;
       final status = runBody?['status'] as String? ?? 'succeeded';
-      final traceError = _traceErrorMessage(runBody);
+      final traceError = _traceErrorDetails(runBody);
+      final outputArtifactRef = _extractOutputArtifactRef(runBody);
+      final invocations = _invocationSummaries(runBody);
 
-      final outputPath = _joinPath(_workspaceDataRoot, workspaceId, outputFile);
-
+      String? outputPath;
       String? outputContent;
-      String? runError = traceError;
+      String? outputContentFull;
+      String? outputArtifactSummary;
+      String? runError = traceError?.message;
       if (status == 'succeeded') {
+        if (outputArtifactRef != null) {
+          final artifact = await _apiClient.getDocument(
+            docType: 'artifact',
+            docId: outputArtifactRef.$1,
+            verId: outputArtifactRef.$2,
+          );
+          final artifactInfo = _outputArtifactInfo(artifact);
+          outputArtifactSummary = artifactInfo?.summary;
+          outputPath = artifactInfo?.path != null
+              ? _joinPath(_workspaceDataRoot, workspaceId, artifactInfo!.path!)
+              : null;
+        }
+        outputPath ??= _joinPath(
+          _workspaceDataRoot,
+          workspaceId,
+          params.outputFile,
+        );
         try {
-          outputContent = await _localFileReader.readText(outputPath);
+          outputContentFull = await _localFileReader.readText(outputPath);
+          outputContent = outputContentFull.length > _outputPreviewLimit
+              ? '${outputContentFull.substring(0, _outputPreviewLimit)}...'
+              : outputContentFull;
         } catch (error) {
           runError = 'Run succeeded, but failed to read output file: $error';
         }
@@ -1315,14 +1397,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunId = run.runId;
         _lastRunVerId = run.runVerId;
         _lastRunError = runError;
+        _lastRunErrorKind = traceError?.kind;
+        _lastRunErrorNodeId = traceError?.nodeId;
         _lastOutputPath = outputPath;
         _lastOutputContent = outputContent;
+        _lastOutputContentFull = outputContentFull;
+        _lastOutputArtifactSummary = outputArtifactSummary;
+        _lastRunInvocations = invocations;
       });
     } on ApiError catch (error) {
       String status = 'failed';
       String? runId;
       String? runVerId;
-      String? traceError;
+      _TraceErrorDetails? traceError;
+      List<String> invocationSummaries = const <String>[];
 
       final body = error.responseBody;
       if (body != null) {
@@ -1345,7 +1433,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           );
           final runBody = runDoc['body'] as Map<String, dynamic>?;
           status = runBody?['status'] as String? ?? status;
-          traceError = _traceErrorMessage(runBody);
+          traceError = _traceErrorDetails(runBody);
+          invocationSummaries = _invocationSummaries(runBody);
         } on ApiError {
           traceError = null;
         }
@@ -1359,7 +1448,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunStatus = status;
         _lastRunId = runId;
         _lastRunVerId = runVerId;
-        _lastRunError = traceError ?? _formatApiError(error);
+        _lastRunError = traceError?.message ?? _formatApiError(error);
+        _lastRunErrorKind = traceError?.kind;
+        _lastRunErrorNodeId = traceError?.nodeId;
+        _lastRunInvocations = invocationSummaries;
       });
       _showSnack(_formatApiError(error));
     } finally {
@@ -1370,6 +1462,87 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
       await _loadRuns();
     }
+  }
+
+  List<String> _collectReadNodeInputDefaults() {
+    return _controller.nodes.values
+        .where((node) => node.type == 'file.read')
+        .map((node) => (_readConfig(node.data)['input_file'] as String?) ?? '')
+        .toList(growable: false);
+  }
+
+  (String docId, String verId)? _extractOutputArtifactRef(
+    Map<String, dynamic>? runBody,
+  ) {
+    if (runBody == null) {
+      return null;
+    }
+    final outputs = runBody['outputs'];
+    if (outputs is! List<dynamic> || outputs.isEmpty) {
+      return null;
+    }
+    final first = outputs.first;
+    if (first is! Map<String, dynamic>) {
+      return null;
+    }
+    final artifactRefRaw = first['artifact_ref'];
+    final artifactRef = artifactRefRaw is Map<String, dynamic>
+        ? artifactRefRaw
+        : first;
+    final docId = artifactRef['doc_id'];
+    final verId = artifactRef['ver_id'];
+    if (docId is String &&
+        docId.isNotEmpty &&
+        verId is String &&
+        verId.isNotEmpty) {
+      return (docId, verId);
+    }
+    return null;
+  }
+
+  _OutputArtifactInfo? _outputArtifactInfo(Map<String, dynamic> artifactDoc) {
+    final body = artifactDoc['body'];
+    if (body is! Map<String, dynamic>) {
+      return null;
+    }
+    final schema = body['schema'] as String? ?? '';
+    final payload = body['payload'];
+    if (payload is! Map<String, dynamic>) {
+      return null;
+    }
+    final path = payload['path'] as String?;
+    final bytes = payload['bytes'];
+    final bytesInt = bytes is int
+        ? bytes
+        : (bytes is num ? bytes.toInt() : null);
+
+    final summaryBuffer = StringBuffer(schema.isEmpty ? 'artifact' : schema);
+    if (path != null && path.isNotEmpty) {
+      summaryBuffer.write(' • path=$path');
+    }
+    if (bytesInt != null) {
+      summaryBuffer.write(' • bytes=$bytesInt');
+    }
+
+    return _OutputArtifactInfo(path: path, summary: summaryBuffer.toString());
+  }
+
+  List<String> _invocationSummaries(Map<String, dynamic>? runBody) {
+    if (runBody == null) {
+      return const <String>[];
+    }
+    final invocations = runBody['invocations'];
+    if (invocations is! List<dynamic>) {
+      return const <String>[];
+    }
+    return invocations
+        .whereType<Map<String, dynamic>>()
+        .map((entry) {
+          final nodeId = entry['node_id'] as String? ?? '(unknown)';
+          final status = entry['status'] as String? ?? 'unknown';
+          return '$nodeId: $status';
+        })
+        .toList(growable: false);
   }
 
   ConnectionValidationResult _validateConnectionBeforeComplete(
@@ -1580,85 +1753,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           );
         })
         .toList(growable: false);
-  }
-
-  String? _resolveInputFile() {
-    final entered = _inputFileController.text.trim();
-    if (entered.isNotEmpty && entered != _defaultRunInputFile) {
-      return entered;
-    }
-    for (final node in _controller.nodes.values) {
-      if (node.type != 'file.read') {
-        continue;
-      }
-      final config = _readConfig(node.data);
-      final configured = (config['input_file'] as String?)?.trim() ?? '';
-      if (configured.isNotEmpty) {
-        return configured;
-      }
-    }
-    return entered.isNotEmpty ? entered : _defaultRunInputFile;
-  }
-
-  Future<(String outputFile, String primaryNodeId)?>
-  _resolveOutputSelection() async {
-    final writes = _collectWriteNodeOptions();
-    if (writes.isEmpty) {
-      final entered = _outputFileController.text.trim();
-      if (entered.isEmpty) {
-        return null;
-      }
-      return (entered, '');
-    }
-
-    final primaryId = _primaryWriteNodeId;
-    if (primaryId != null) {
-      for (final write in writes) {
-        if (write.nodeId == primaryId) {
-          final output = write.outputFile.trim();
-          if (output.isEmpty) {
-            _showSnack('Primary output node is missing output_file');
-            return null;
-          }
-          return (output, primaryId);
-        }
-      }
-    }
-
-    final chosenDirect = chooseRunOutputFile(
-      writes: writes,
-      primaryNodeId: null,
-    );
-    if (chosenDirect != null) {
-      final nodeId =
-          primaryId ??
-          writes
-              .firstWhere(
-                (write) => write.isPrimary,
-                orElse: () => writes.first,
-              )
-              .nodeId;
-      return (chosenDirect, nodeId);
-    }
-
-    if (writes.length > 1) {
-      final selectedNodeId = await _promptPrimaryOutputSelection(writes);
-      if (selectedNodeId == null) {
-        return null;
-      }
-      _setPrimaryOutputNode(selectedNodeId);
-      final selected = writes.firstWhere(
-        (write) => write.nodeId == selectedNodeId,
-      );
-      final outputFile = selected.outputFile.trim();
-      if (outputFile.isEmpty) {
-        _showSnack('Selected primary output node is missing output_file');
-        return null;
-      }
-      return (outputFile, selectedNodeId);
-    }
-
-    return null;
   }
 
   Future<String?> _promptPrimaryOutputSelection(
@@ -1909,7 +2003,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     return '$year-$month-$day $hour:$minute';
   }
 
-  String? _traceErrorMessage(Map<String, dynamic>? runBody) {
+  _TraceErrorDetails? _traceErrorDetails(Map<String, dynamic>? runBody) {
     if (runBody == null) {
       return null;
     }
@@ -1922,7 +2016,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return null;
     }
     final message = error['message'];
-    return message is String && message.trim().isNotEmpty ? message : null;
+    if (message is! String || message.trim().isEmpty) {
+      return null;
+    }
+    final kind = error['kind'];
+    final nodeID = error['node_id'];
+    return _TraceErrorDetails(
+      message: message,
+      kind: kind is String && kind.trim().isNotEmpty ? kind : null,
+      nodeId: nodeID is String && nodeID.trim().isNotEmpty ? nodeID : null,
+    );
   }
 
   String _formatApiError(ApiError error) {
@@ -2369,6 +2472,21 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 }
 
+class _TraceErrorDetails {
+  const _TraceErrorDetails({required this.message, this.kind, this.nodeId});
+
+  final String message;
+  final String? kind;
+  final String? nodeId;
+}
+
+class _OutputArtifactInfo {
+  const _OutputArtifactInfo({this.path, required this.summary});
+
+  final String? path;
+  final String summary;
+}
+
 class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
     required this.settingsLoaded,
@@ -2726,23 +2844,39 @@ class _RunPanel extends StatelessWidget {
   const _RunPanel({
     required this.inputFileController,
     required this.outputFileController,
+    required this.inputFileHint,
+    required this.outputFileHint,
     required this.status,
+    required this.validationError,
     required this.runId,
     required this.runVerId,
     required this.error,
+    required this.errorKind,
+    required this.errorNodeId,
+    required this.invocations,
+    required this.outputArtifactSummary,
     required this.outputPath,
     required this.outputContent,
+    required this.outputContentFull,
     required this.isRunning,
   });
 
   final TextEditingController inputFileController;
   final TextEditingController outputFileController;
+  final String inputFileHint;
+  final String outputFileHint;
   final String status;
+  final String? validationError;
   final String? runId;
   final String? runVerId;
   final String? error;
+  final String? errorKind;
+  final String? errorNodeId;
+  final List<String> invocations;
+  final String? outputArtifactSummary;
   final String? outputPath;
   final String? outputContent;
+  final String? outputContentFull;
   final bool isRunning;
 
   @override
@@ -2764,32 +2898,99 @@ class _RunPanel extends StatelessWidget {
                 _RunStatusChip(status: status, isRunning: isRunning),
               ],
             ),
+            if (isRunning)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: const [
+                    SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text('Running...'),
+                  ],
+                ),
+              ),
+            if (validationError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    validationError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             TextField(
               controller: inputFileController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'input_file',
+                hintText: inputFileHint,
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: outputFileController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'output_file',
+                hintText: outputFileHint,
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
             if (runId != null) Text('run_id: $runId'),
             if (runVerId != null) Text('run_ver_id: $runVerId'),
-            if (outputPath != null) Text('output_path: $outputPath'),
+            if (outputArtifactSummary != null)
+              Text('output_artifact: $outputArtifactSummary'),
+            if (outputPath != null)
+              SelectionArea(child: Text('output_path: $outputPath')),
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    [
+                      if (errorKind != null) 'kind: $errorKind',
+                      if (errorNodeId != null) 'node_id: $errorNodeId',
+                      error!,
+                    ].join('\n'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                  ),
+                ),
+              ),
+            if (invocations.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Invocations',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    ...invocations.map((line) => Text('• $line')),
+                  ],
                 ),
               ),
             if (outputContent != null)
@@ -2805,6 +3006,61 @@ class _RunPanel extends StatelessWidget {
                     ),
                   ),
                   child: SelectableText(outputContent!),
+                ),
+              ),
+            if (outputContent != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.tonalIcon(
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: outputContent!),
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Output copied to clipboard'),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy output'),
+                    ),
+                    if (outputContentFull != null &&
+                        outputContentFull!.length > outputContent!.length)
+                      FilledButton.tonalIcon(
+                        onPressed: () {
+                          showDialog<void>(
+                            context: context,
+                            builder: (dialogContext) {
+                              return AlertDialog(
+                                title: const Text('Full output'),
+                                content: SizedBox(
+                                  width: 760,
+                                  child: SingleChildScrollView(
+                                    child: SelectableText(outputContentFull!),
+                                  ),
+                                ),
+                                actions: [
+                                  FilledButton(
+                                    onPressed: () =>
+                                        Navigator.of(dialogContext).pop(),
+                                    child: const Text('Close'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                        icon: const Icon(Icons.open_in_full),
+                        label: const Text('Open full'),
+                      ),
+                  ],
                 ),
               ),
           ],

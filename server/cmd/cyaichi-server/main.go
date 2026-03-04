@@ -12,10 +12,22 @@ import (
 
 	"github.com/dgraham-io/cyaichi/server/internal/config"
 	"github.com/dgraham-io/cyaichi/server/internal/httpapi"
+	"github.com/dgraham-io/cyaichi/server/internal/store"
 )
 
 func main() {
 	cfg := config.FromEnv()
+
+	dbStore, err := store.Open(context.Background(), cfg.DBPath)
+	if err != nil {
+		log.Fatalf("failed to initialize db at %s: %v", cfg.DBPath, err)
+	}
+	defer func() {
+		if closeErr := dbStore.Close(); closeErr != nil {
+			log.Printf("db close error: %v", closeErr)
+		}
+	}()
+	log.Printf("db ready at %s", cfg.DBPath)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -37,7 +49,7 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Printf("shutdown signal received")
-	case err := <-serverErr:
+	case err = <-serverErr:
 		log.Fatalf("server failed: %v", err)
 	}
 

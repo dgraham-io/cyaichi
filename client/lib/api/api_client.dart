@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:client/src/models/server_models.dart';
 import 'package:http/http.dart' as http;
 
 class ApiError implements Exception {
@@ -227,5 +228,51 @@ class ApiClient {
     required String verId,
   }) async {
     return _requestJson('GET', '/v1/docs/$docType/$docId/$verId');
+  }
+
+  Future<List<RunListItem>> getRuns({required String workspaceId}) async {
+    final json = await _requestJson('GET', '/v1/workspaces/$workspaceId/runs');
+    return parseRunListResponse(json);
+  }
+
+  Future<Map<String, dynamic>> getRun({
+    required String docId,
+    required String verId,
+  }) async {
+    return getDocument(docType: 'run', docId: docId, verId: verId);
+  }
+
+  Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
+    final json = await _requestJson('GET', '/v1/workspaces/$workspaceId/notes');
+    return parseNoteListResponse(json);
+  }
+
+  Future<NoteCreated> createNote({
+    required String workspaceId,
+    required String scope,
+    required String title,
+    required String body,
+  }) async {
+    final json = await _requestJson(
+      'POST',
+      '/v1/notes',
+      body: <String, dynamic>{
+        'workspace_id': workspaceId,
+        'scope': scope,
+        'title': title,
+        'body': body,
+      },
+    );
+    return NoteCreated(
+      docId: json['doc_id'] as String? ?? '',
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
+  Future<Map<String, dynamic>> getNote({
+    required String docId,
+    required String verId,
+  }) async {
+    return _requestJson('GET', '/v1/notes/$docId/$verId');
   }
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:client/api/api_client.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/io/local_file_reader.dart';
+import 'package:client/src/models/server_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -61,6 +62,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastSavedFlowDocId;
   String? _lastSavedFlowVerId;
 
+  int _selectedTabIndex = 0;
+
+  bool _runsLoading = false;
+  String? _runsError;
+  List<RunListItem> _runs = const <RunListItem>[];
+
+  bool _notesLoading = false;
+  String? _notesError;
+  List<NoteListItem> _notes = const <NoteListItem>[];
+
   String _lastExportJson = '';
 
   @override
@@ -118,6 +129,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           : null;
       _settingsLoaded = true;
     });
+
+    await _refreshWorkspaceData();
   }
 
   Future<void> _persistSettings() async {
@@ -132,28 +145,37 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
+  Future<void> _onWorkspaceSelected(String? workspaceId) async {
+    setState(() {
+      _selectedWorkspaceId = workspaceId;
+    });
+    await _persistSettings();
+    await _refreshWorkspaceData();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final selectedNode = _selectedNodeId == null
-        ? null
-        : _controller.getNode(_selectedNodeId!);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final canvasTheme = isDark ? NodeFlowTheme.dark : NodeFlowTheme.light;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('cyaichi flow client'),
         actions: [
           IconButton(
-            tooltip: 'Export JSON',
-            onPressed: _onExportJson,
-            icon: const Icon(Icons.upload_file),
+            tooltip: 'Workspaces',
+            onPressed: _showWorkspaceDialog,
+            icon: const Icon(Icons.workspaces),
           ),
-          IconButton(
-            tooltip: 'Import JSON',
-            onPressed: _onImportJson,
-            icon: const Icon(Icons.download),
-          ),
+          if (_selectedTabIndex == 0) ...[
+            IconButton(
+              tooltip: 'Export JSON',
+              onPressed: _onExportJson,
+              icon: const Icon(Icons.upload_file),
+            ),
+            IconButton(
+              tooltip: 'Import JSON',
+              onPressed: _onImportJson,
+              icon: const Icon(Icons.download),
+            ),
+          ],
           IconButton(
             tooltip: 'Settings',
             onPressed: _showSettingsDialog,
@@ -161,94 +183,214 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ),
           const SizedBox(width: 8),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(74),
-          child: _TopControlsBar(
-            settingsLoaded: _settingsLoaded,
-            workspaceIds: _workspaceIds,
-            selectedWorkspaceId: _selectedWorkspaceId,
-            flowTitleController: _flowTitleController,
-            isCreatingWorkspace: _isCreatingWorkspace,
-            isSavingToServer: _isSavingToServer,
-            isRunning: _isRunning,
-            onWorkspaceSelected: (value) {
-              setState(() {
-                _selectedWorkspaceId = value;
-              });
-              _persistSettings();
-            },
-            onCreateWorkspace: _createWorkspace,
-            onSaveToServer: _saveFlowToServer,
-            onRun: _runFlow,
-          ),
-        ),
+        bottom: _selectedTabIndex == 0
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(74),
+                child: _TopControlsBar(
+                  settingsLoaded: _settingsLoaded,
+                  workspaceIds: _workspaceIds,
+                  selectedWorkspaceId: _selectedWorkspaceId,
+                  flowTitleController: _flowTitleController,
+                  isCreatingWorkspace: _isCreatingWorkspace,
+                  isSavingToServer: _isSavingToServer,
+                  isRunning: _isRunning,
+                  onWorkspaceSelected: _onWorkspaceSelected,
+                  onCreateWorkspace: _createWorkspace,
+                  onSaveToServer: _saveFlowToServer,
+                  onRun: _runFlow,
+                ),
+              )
+            : null,
       ),
-      body: Row(
-        children: [
-          _PalettePanel(
-            onAddFileRead: () => _addNode(NodeKind.fileRead),
-            onAddLlmChat: () => _addNode(NodeKind.llmChat),
-            onAddFileWrite: () => _addNode(NodeKind.fileWrite),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: canvasTheme.backgroundColor),
-              child: NodeFlowEditor<Map<String, dynamic>, Map<String, dynamic>>(
-                controller: _controller,
-                theme: canvasTheme,
-                nodeBuilder: _buildNodeCard,
-                behavior: NodeFlowBehavior.design,
-                events: NodeFlowEvents(
-                  node: NodeEvents(
-                    onSelected: (node) {
-                      setState(() {
-                        _selectedNodeId = node?.id;
-                      });
-                    },
-                  ),
-                  onSelectionChange: (selection) {
-                    if (selection.nodes.isEmpty && _selectedNodeId != null) {
-                      setState(() {
-                        _selectedNodeId = null;
-                      });
-                    }
+      body: IndexedStack(
+        index: _selectedTabIndex,
+        children: [_buildFlowTab(), _buildRunsTab(), _buildNotesTab()],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedTabIndex,
+        onDestinationSelected: (index) async {
+          setState(() {
+            _selectedTabIndex = index;
+          });
+          if (index == 1) {
+            await _loadRuns();
+          }
+          if (index == 2) {
+            await _loadNotes();
+          }
+        },
+        destinations: const <NavigationDestination>[
+          NavigationDestination(icon: Icon(Icons.account_tree), label: 'Flow'),
+          NavigationDestination(icon: Icon(Icons.play_circle), label: 'Runs'),
+          NavigationDestination(icon: Icon(Icons.note_alt), label: 'Notes'),
+        ],
+      ),
+      floatingActionButton: _selectedTabIndex == 2
+          ? FloatingActionButton.extended(
+              onPressed: _showCreateNoteDialog,
+              icon: const Icon(Icons.add),
+              label: const Text('New Note'),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildFlowTab() {
+    final selectedNode = _selectedNodeId == null
+        ? null
+        : _controller.getNode(_selectedNodeId!);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final canvasTheme = isDark ? NodeFlowTheme.dark : NodeFlowTheme.light;
+
+    return Row(
+      children: [
+        _PalettePanel(
+          onAddFileRead: () => _addNode(NodeKind.fileRead),
+          onAddLlmChat: () => _addNode(NodeKind.llmChat),
+          onAddFileWrite: () => _addNode(NodeKind.fileWrite),
+        ),
+        const VerticalDivider(width: 1),
+        Expanded(
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: canvasTheme.backgroundColor),
+            child: NodeFlowEditor<Map<String, dynamic>, Map<String, dynamic>>(
+              controller: _controller,
+              theme: canvasTheme,
+              nodeBuilder: _buildNodeCard,
+              behavior: NodeFlowBehavior.design,
+              events: NodeFlowEvents(
+                node: NodeEvents(
+                  onSelected: (node) {
+                    setState(() {
+                      _selectedNodeId = node?.id;
+                    });
                   },
                 ),
+                onSelectionChange: (selection) {
+                  if (selection.nodes.isEmpty && _selectedNodeId != null) {
+                    setState(() {
+                      _selectedNodeId = null;
+                    });
+                  }
+                },
               ),
             ),
           ),
-          const VerticalDivider(width: 1),
-          SizedBox(
-            width: 380,
-            child: Column(
-              children: [
-                Expanded(
-                  child: _InspectorPanel(
-                    selectedNode: selectedNode,
-                    onTitleChanged: (value) =>
-                        _updateNodeTitle(selectedNode, value),
-                    onConfigChanged: (key, value) =>
-                        _updateNodeConfig(selectedNode, key, value),
-                  ),
+        ),
+        const VerticalDivider(width: 1),
+        SizedBox(
+          width: 380,
+          child: Column(
+            children: [
+              Expanded(
+                child: _InspectorPanel(
+                  selectedNode: selectedNode,
+                  onTitleChanged: (value) =>
+                      _updateNodeTitle(selectedNode, value),
+                  onConfigChanged: (key, value) =>
+                      _updateNodeConfig(selectedNode, key, value),
                 ),
-                const Divider(height: 1),
-                _RunPanel(
-                  inputFileController: _inputFileController,
-                  outputFileController: _outputFileController,
-                  status: _lastRunStatus,
-                  runId: _lastRunId,
-                  runVerId: _lastRunVerId,
-                  error: _lastRunError,
-                  outputPath: _lastOutputPath,
-                  outputContent: _lastOutputContent,
-                  isRunning: _isRunning,
-                ),
-              ],
-            ),
+              ),
+              const Divider(height: 1),
+              _RunPanel(
+                inputFileController: _inputFileController,
+                outputFileController: _outputFileController,
+                status: _lastRunStatus,
+                runId: _lastRunId,
+                runVerId: _lastRunVerId,
+                error: _lastRunError,
+                outputPath: _lastOutputPath,
+                outputContent: _lastOutputContent,
+                isRunning: _isRunning,
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRunsTab() {
+    if (_selectedWorkspaceId == null) {
+      return const Center(
+        child: Text('Select or create a workspace to view runs.'),
+      );
+    }
+    if (_runsLoading && _runs.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_runsError != null && _runs.isEmpty) {
+      return _ErrorState(message: _runsError!, onRetry: _loadRuns);
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadRuns,
+      child: _runs.isEmpty
+          ? ListView(
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('No runs found for this workspace.')),
+              ],
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: _runs.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final item = _runs[index];
+                return ListTile(
+                  title: Text(_friendlyDate(item.createdAt)),
+                  subtitle: Text(
+                    'mode: ${item.mode.isEmpty ? 'n/a' : item.mode}',
+                  ),
+                  trailing: _StatusBadge(status: item.status),
+                  onTap: () => _openRunDetails(item),
+                );
+              },
+            ),
+    );
+  }
+
+  Widget _buildNotesTab() {
+    if (_selectedWorkspaceId == null) {
+      return const Center(
+        child: Text('Select or create a workspace to view notes.'),
+      );
+    }
+    if (_notesLoading && _notes.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_notesError != null && _notes.isEmpty) {
+      return _ErrorState(message: _notesError!, onRetry: _loadNotes);
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadNotes,
+      child: _notes.isEmpty
+          ? ListView(
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('No notes found for this workspace.')),
+              ],
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: _notes.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final item = _notes[index];
+                return ListTile(
+                  title: Text(item.title.isEmpty ? '(untitled)' : item.title),
+                  subtitle: Text(
+                    '${item.scope} • ${_friendlyDate(item.createdAt)}\n${item.bodyPreview}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  isThreeLine: true,
+                  onTap: () => _openNote(item),
+                );
+              },
+            ),
     );
   }
 
@@ -384,7 +526,175 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _apiClient.close();
     _apiClient = ApiClient(baseUrl: _serverBaseUrl);
     await _persistSettings();
+    await _refreshWorkspaceData();
     _showSnack('Settings saved');
+  }
+
+  Future<void> _showWorkspaceDialog() async {
+    String? selected = _selectedWorkspaceId;
+    final result = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Workspaces'),
+              content: SizedBox(
+                width: 560,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_workspaceIds.isEmpty)
+                      const Text('No workspaces saved in client settings yet.'),
+                    if (_workspaceIds.isNotEmpty)
+                      Flexible(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _workspaceIds.length,
+                          itemBuilder: (context, index) {
+                            final workspaceId = _workspaceIds[index];
+                            return RadioListTile<String>(
+                              dense: true,
+                              title: Text(workspaceId),
+                              value: workspaceId,
+                              groupValue: selected,
+                              onChanged: (value) {
+                                setDialogState(() {
+                                  selected = value;
+                                });
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton.icon(
+                  onPressed: () async {
+                    Navigator.of(dialogContext).pop();
+                    await _createWorkspace();
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('New Workspace'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(selected),
+                  child: const Text('Select'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result != null) {
+      await _onWorkspaceSelected(result);
+    }
+  }
+
+  Future<void> _refreshWorkspaceData() async {
+    await _loadRuns();
+    await _loadNotes();
+  }
+
+  Future<void> _loadRuns() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _runs = const <RunListItem>[];
+        _runsError = null;
+        _runsLoading = false;
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _runsLoading = true;
+        _runsError = null;
+      });
+    }
+
+    try {
+      final runs = await _apiClient.getRuns(workspaceId: workspaceId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _runs = runs;
+      });
+    } on ApiError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _runsError = _formatApiError(error);
+      });
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _runsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadNotes() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notes = const <NoteListItem>[];
+        _notesError = null;
+        _notesLoading = false;
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _notesLoading = true;
+        _notesError = null;
+      });
+    }
+
+    try {
+      final notes = await _apiClient.getNotes(workspaceId: workspaceId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notes = notes;
+      });
+    } on ApiError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notesError = _formatApiError(error);
+      });
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _notesLoading = false;
+      });
+    }
   }
 
   Future<void> _createWorkspace() async {
@@ -407,6 +717,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _selectedWorkspaceId = created.workspaceId;
       });
       await _persistSettings();
+      await _refreshWorkspaceData();
       _showSnack('Workspace created: ${_shortId(created.workspaceId)}');
     } on ApiError catch (error) {
       _showSnack(_formatApiError(error));
@@ -636,7 +947,195 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _isRunning = false;
         });
       }
+      await _loadRuns();
     }
+  }
+
+  Future<void> _openRunDetails(RunListItem item) async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _RunDetailsScreen(
+          apiClient: _apiClient,
+          localFileReader: _localFileReader,
+          workspaceId: workspaceId,
+          workspaceDataRoot: _workspaceDataRoot,
+          runItem: item,
+          pathJoin: _joinPath,
+          friendlyDate: _friendlyDate,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openNote(NoteListItem item) async {
+    try {
+      final doc = await _apiClient.getNote(
+        docId: item.docId,
+        verId: item.verId,
+      );
+      if (!mounted) {
+        return;
+      }
+      final meta = doc['meta'] as Map<String, dynamic>?;
+      final body = doc['body'] as Map<String, dynamic>?;
+      final content = body?['content'] as Map<String, dynamic>?;
+      final fullBody = content?['body'] as String? ?? '';
+      final title = meta?['title'] as String? ?? '(untitled)';
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 720,
+              child: SingleChildScrollView(child: SelectableText(fullBody)),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      );
+    } on ApiError catch (error) {
+      _showSnack(_formatApiError(error));
+    }
+  }
+
+  Future<void> _showCreateNoteDialog() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      _showSnack('Select or create a workspace first.');
+      return;
+    }
+    final titleController = TextEditingController();
+    final bodyController = TextEditingController();
+    String scope = 'personal';
+
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('New Note'),
+              content: SizedBox(
+                width: 700,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: scope,
+                      decoration: const InputDecoration(
+                        labelText: 'Scope',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'personal',
+                          child: Text('personal'),
+                        ),
+                        DropdownMenuItem(value: 'team', child: Text('team')),
+                        DropdownMenuItem(value: 'org', child: Text('org')),
+                        DropdownMenuItem(
+                          value: 'public_read',
+                          child: Text('public_read'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setDialogState(() {
+                          scope = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: titleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Title (optional)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: bodyController,
+                      minLines: 6,
+                      maxLines: 12,
+                      decoration: const InputDecoration(
+                        labelText: 'Body',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Create'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (submitted != true) {
+      titleController.dispose();
+      bodyController.dispose();
+      return;
+    }
+
+    final title = titleController.text.trim();
+    final body = bodyController.text.trim();
+    titleController.dispose();
+    bodyController.dispose();
+
+    if (body.isEmpty) {
+      _showSnack('Note body cannot be empty');
+      return;
+    }
+
+    try {
+      await _apiClient.createNote(
+        workspaceId: workspaceId,
+        scope: scope,
+        title: title,
+        body: body,
+      );
+      await _loadNotes();
+      _showSnack('Note created');
+    } on ApiError catch (error) {
+      _showSnack(_formatApiError(error));
+    }
+  }
+
+  String _friendlyDate(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) {
+      return raw;
+    }
+    final local = parsed.toLocal();
+    final year = local.year.toString().padLeft(4, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
   }
 
   String? _traceErrorMessage(Map<String, dynamic>? runBody) {
@@ -832,6 +1331,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
       _selectedWorkspaceId = importedWorkspaceId;
       _persistSettings();
+      _refreshWorkspaceData();
     }
 
     final meta = decoded['meta'];
@@ -1110,7 +1610,7 @@ class _TopControlsBar extends StatelessWidget {
   final bool isCreatingWorkspace;
   final bool isSavingToServer;
   final bool isRunning;
-  final ValueChanged<String?> onWorkspaceSelected;
+  final Future<void> Function(String?) onWorkspaceSelected;
   final Future<void> Function() onCreateWorkspace;
   final Future<bool> Function() onSaveToServer;
   final Future<void> Function() onRun;
@@ -1146,7 +1646,9 @@ class _TopControlsBar extends StatelessWidget {
                               ),
                             )
                             .toList(),
-                        onChanged: onWorkspaceSelected,
+                        onChanged: (value) {
+                          onWorkspaceSelected(value);
+                        },
                       ),
                     )
                   : const Text('Loading...'),
@@ -1476,6 +1978,327 @@ class _RunStatusChip extends StatelessWidget {
         normalized,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color),
       ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    late final Color color;
+    switch (status) {
+      case 'succeeded':
+        color = Colors.green;
+        break;
+      case 'failed':
+        color = Theme.of(context).colorScheme.error;
+        break;
+      default:
+        color = Theme.of(context).colorScheme.outline;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        status,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  const _ErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              message,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RunDetailsScreen extends StatefulWidget {
+  const _RunDetailsScreen({
+    required this.apiClient,
+    required this.localFileReader,
+    required this.workspaceId,
+    required this.workspaceDataRoot,
+    required this.runItem,
+    required this.pathJoin,
+    required this.friendlyDate,
+  });
+
+  final ApiClient apiClient;
+  final LocalFileReader localFileReader;
+  final String workspaceId;
+  final String workspaceDataRoot;
+  final RunListItem runItem;
+  final String Function(String first, String second, String third) pathJoin;
+  final String Function(String raw) friendlyDate;
+
+  @override
+  State<_RunDetailsScreen> createState() => _RunDetailsScreenState();
+}
+
+class _RunDetailsScreenState extends State<_RunDetailsScreen> {
+  bool _loading = true;
+  String? _error;
+  Map<String, dynamic>? _runDoc;
+  String? _outputPreview;
+  String? _outputPreviewError;
+  String? _outputPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final runDoc = await widget.apiClient.getRun(
+        docId: widget.runItem.docId,
+        verId: widget.runItem.verId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _runDoc = runDoc;
+      });
+    } on ApiError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error.toString();
+      });
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _openOutputFile(
+    String outputDocId,
+    String outputVerId,
+    BuildContext context,
+  ) async {
+    setState(() {
+      _outputPreview = null;
+      _outputPreviewError = null;
+      _outputPath = null;
+    });
+
+    try {
+      final artifact = await widget.apiClient.getDocument(
+        docType: 'artifact',
+        docId: outputDocId,
+        verId: outputVerId,
+      );
+      final body = artifact['body'];
+      if (body is! Map<String, dynamic>) {
+        throw const FormatException('artifact body missing');
+      }
+      final payload = body['payload'];
+      if (payload is! Map<String, dynamic>) {
+        throw const FormatException('artifact payload missing');
+      }
+      final path = payload['path'];
+      if (path is! String || path.trim().isEmpty) {
+        throw const FormatException('artifact payload.path missing');
+      }
+
+      final fullPath = widget.pathJoin(
+        widget.workspaceDataRoot,
+        widget.workspaceId,
+        path,
+      );
+      final contents = await widget.localFileReader.readText(fullPath);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _outputPath = fullPath;
+        _outputPreview = contents.length > 2000
+            ? '${contents.substring(0, 2000)}...'
+            : contents;
+      });
+    } on ApiError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _outputPreviewError = error.message;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _outputPreviewError = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runBody = _runDoc?['body'];
+    final body = runBody is Map<String, dynamic>
+        ? runBody
+        : const <String, dynamic>{};
+    final flowRef = body['flow_ref'];
+    final flowRefMap = flowRef is Map<String, dynamic>
+        ? flowRef
+        : const <String, dynamic>{};
+    final invocations = body['invocations'];
+    final invocationList = invocations is List
+        ? invocations.whereType<Map<String, dynamic>>().toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final outputs = body['outputs'];
+    final outputList = outputs is List
+        ? outputs.whereType<Map<String, dynamic>>().toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final traceRef = body['trace_ref'];
+    final traceRefMap = traceRef is Map<String, dynamic>
+        ? traceRef
+        : const <String, dynamic>{};
+    final traceError = traceRefMap['error'];
+    final traceErrorMap = traceError is Map<String, dynamic>
+        ? traceError
+        : const <String, dynamic>{};
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Run Details')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? _ErrorState(message: _error!, onRetry: _load)
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text(
+                  'created_at: ${widget.friendlyDate(widget.runItem.createdAt)}',
+                ),
+                const SizedBox(height: 8),
+                Text('status: ${widget.runItem.status}'),
+                Text('mode: ${widget.runItem.mode}'),
+                const SizedBox(height: 12),
+                Text(
+                  'flow_ref: ${flowRefMap['doc_id'] ?? ''} @ ${flowRefMap['ver_id'] ?? ''}',
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Invocations',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (invocationList.isEmpty) const Text('(none)'),
+                ...invocationList.map((invocation) {
+                  return ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(invocation['node_id'] as String? ?? ''),
+                    trailing: _StatusBadge(
+                      status: invocation['status'] as String? ?? 'unknown',
+                    ),
+                  );
+                }),
+                const SizedBox(height: 16),
+                Text('Error', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                if (traceErrorMap.isEmpty) const Text('(none)'),
+                if (traceErrorMap.isNotEmpty)
+                  Text(
+                    'message: ${traceErrorMap['message'] ?? ''}\nkind: ${traceErrorMap['kind'] ?? ''}\nnode_id: ${traceErrorMap['node_id'] ?? ''}',
+                  ),
+                const SizedBox(height: 16),
+                Text('Outputs', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                if (outputList.isEmpty) const Text('(none)'),
+                ...outputList.map((outputRef) {
+                  final docId = outputRef['doc_id'] as String? ?? '';
+                  final verId = outputRef['ver_id'] as String? ?? '';
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('artifact: $docId @ $verId'),
+                          const SizedBox(height: 8),
+                          FilledButton.tonal(
+                            onPressed: docId.isEmpty || verId.isEmpty
+                                ? null
+                                : () => _openOutputFile(docId, verId, context),
+                            child: const Text('Open output file'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                if (_outputPath != null) Text('output_path: $_outputPath'),
+                if (_outputPreviewError != null)
+                  Text(
+                    _outputPreviewError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                if (_outputPreview != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                      child: SelectableText(_outputPreview!),
+                    ),
+                  ),
+              ],
+            ),
     );
   }
 }

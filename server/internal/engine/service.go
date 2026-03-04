@@ -50,19 +50,24 @@ type PinnedFlowRefID struct {
 }
 
 type RunService struct {
-	store     *store.Store
-	validator *schema.Validator
-	runner    NodeRunner
+	store         *store.Store
+	validator     *schema.Validator
+	runner        NodeRunner
+	workspaceRoot string
 }
 
-func NewRunService(store *store.Store, validator *schema.Validator, runner NodeRunner) *RunService {
+func NewRunService(store *store.Store, validator *schema.Validator, runner NodeRunner, workspaceRoot string) *RunService {
 	if runner == nil {
 		runner = StubNodeRunner{}
 	}
+	if workspaceRoot == "" {
+		workspaceRoot = defaultWorkspaceRoot
+	}
 	return &RunService{
-		store:     store,
-		validator: validator,
-		runner:    runner,
+		store:         store,
+		validator:     validator,
+		runner:        runner,
+		workspaceRoot: workspaceRoot,
 	}
 }
 
@@ -154,31 +159,51 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	if err := s.validator.Validate(artifactBytes); err != nil {
 		return CreateRunResponse{}, &ValidationError{Message: err.Error()}
 	}
-	if err := s.store.PutDocument(ctx, store.Document{
+	pendingArtifacts := []store.Document{{
 		DocType:     "artifact",
 		DocID:       artifactID,
 		VerID:       artifactVerID,
 		WorkspaceID: req.WorkspaceID,
 		CreatedAt:   startedAt,
 		JSON:        string(artifactBytes),
-	}); err != nil {
-		return CreateRunResponse{}, fmt.Errorf("store input artifact: %w", err)
-	}
+	}}
 
 	invocations := make([]map[string]any, 0, len(executionOrder))
 	for _, node := range executionOrder {
-		invocation, err := s.runner.RunNode(ctx, node)
+		result, err := s.runner.RunNode(ctx, NodeRunRequest{
+			Node:                 node,
+			WorkspaceID:          req.WorkspaceID,
+			WorkspaceRoot:        s.workspaceRoot,
+			RunID:                runID,
+			RunVerID:             runVerID,
+			InputFilePath:        inputPath,
+			InputPathArtifactRef: ArtifactRef{DocID: artifactID, VerID: artifactVerID},
+		})
 		if err != nil {
-			return CreateRunResponse{}, fmt.Errorf("run node %s: %w", node.ID, err)
+			return CreateRunResponse{}, &ValidationError{Message: err.Error()}
+		}
+
+		for _, artifact := range result.Artifacts {
+			if err := s.validator.Validate([]byte(artifact.JSON)); err != nil {
+				return CreateRunResponse{}, &ValidationError{Message: fmt.Sprintf("artifact schema validation failed: %v", err)}
+			}
+			pendingArtifacts = append(pendingArtifacts, store.Document{
+				DocType:     "artifact",
+				DocID:       artifact.DocID,
+				VerID:       artifact.VerID,
+				WorkspaceID: req.WorkspaceID,
+				CreatedAt:   artifact.CreatedAt,
+				JSON:        artifact.JSON,
+			})
 		}
 		invocations = append(invocations, map[string]any{
-			"invocation_id": invocation.InvocationID,
-			"node_id":       invocation.NodeID,
-			"status":        invocation.Status,
-			"started_at":    invocation.StartedAt,
-			"ended_at":      invocation.EndedAt,
-			"inputs":        invocation.Inputs,
-			"outputs":       invocation.Outputs,
+			"invocation_id": result.Invocation.InvocationID,
+			"node_id":       result.Invocation.NodeID,
+			"status":        result.Invocation.Status,
+			"started_at":    result.Invocation.StartedAt,
+			"ended_at":      result.Invocation.EndedAt,
+			"inputs":        result.Invocation.Inputs,
+			"outputs":       result.Invocation.Outputs,
 		})
 	}
 
@@ -218,6 +243,11 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	}
 	if err := s.validator.Validate(runBytes); err != nil {
 		return CreateRunResponse{}, &ValidationError{Message: err.Error()}
+	}
+	for _, artifactDoc := range pendingArtifacts {
+		if err := s.store.PutDocument(ctx, artifactDoc); err != nil {
+			return CreateRunResponse{}, fmt.Errorf("store artifact document: %w", err)
+		}
 	}
 	if err := s.store.PutDocument(ctx, store.Document{
 		DocType:     "run",

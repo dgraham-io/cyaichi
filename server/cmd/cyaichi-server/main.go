@@ -38,7 +38,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.NewMux(dbStore, validator),
+		Handler: httpapi.NewMux(dbStore, validator, cfg.WorkspaceRoot),
 	}
 
 	serverErr := make(chan error, 1)

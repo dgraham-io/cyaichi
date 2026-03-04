@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -71,6 +73,17 @@ func postRunViaAPI(t *testing.T, h *apiTestHarness, body string) *httptest.Respo
 	return rr
 }
 
+func writeWorkspaceInputFile(t *testing.T, h *apiTestHarness, workspaceID, relPath, contents string) {
+	t.Helper()
+	fullPath := filepath.Join(h.workspaceRoot, workspaceID, relPath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir workspace input dir: %v", err)
+	}
+	if err := os.WriteFile(fullPath, []byte(contents), 0o644); err != nil {
+		t.Fatalf("write workspace input file: %v", err)
+	}
+}
+
 func TestRunsSelectorHeadResolvesThroughHeadsTable(t *testing.T) {
 	h := newAPITestHarness(t)
 	workspace := createWorkspaceViaAPI(t, h, "Runs Head Workspace")
@@ -88,6 +101,7 @@ func TestRunsSelectorHeadResolvesThroughHeadsTable(t *testing.T) {
 	}`
 	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
 	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "hello run")
 
 	runReq := `{
 	  "workspace_id":"` + workspace.WorkspaceID + `",
@@ -222,7 +236,7 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	flowVerID := uuid.NewString()
 	flowBody := `{
 	  "nodes": [
-	    {"id":"n1","type":"node.in","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
 	    {"id":"n2","type":"node.mid","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
 	    {"id":"n3","type":"node.out","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[],"config":{}}
 	  ],
@@ -233,6 +247,7 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	}`
 	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
 	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+	writeWorkspaceInputFile(t, h, workspace.WorkspaceID, "input.txt", "file content from test")
 
 	runReq := `{
 	  "workspace_id":"` + workspace.WorkspaceID + `",
@@ -277,6 +292,16 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 					Selector string `json:"selector"`
 				} `json:"artifact_ref"`
 			} `json:"inputs"`
+			Invocations []struct {
+				NodeID  string `json:"node_id"`
+				Outputs []struct {
+					ArtifactRef struct {
+						DocID    string `json:"doc_id"`
+						VerID    string `json:"ver_id"`
+						Selector string `json:"selector"`
+					} `json:"artifact_ref"`
+				} `json:"outputs"`
+			} `json:"invocations"`
 		} `json:"body"`
 	}
 	if err := json.Unmarshal(runDocRR.Body.Bytes(), &runDoc); err != nil {
@@ -290,6 +315,20 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	}
 	if len(runDoc.Body.Inputs) != 1 {
 		t.Fatalf("expected one run input artifact ref, got %d", len(runDoc.Body.Inputs))
+	}
+	if len(runDoc.Body.Invocations) < 1 {
+		t.Fatalf("expected at least one invocation")
+	}
+
+	var fileReadOutputArtifactID, fileReadOutputArtifactVerID string
+	for _, inv := range runDoc.Body.Invocations {
+		if inv.NodeID == "n1" && len(inv.Outputs) == 1 {
+			fileReadOutputArtifactID = inv.Outputs[0].ArtifactRef.DocID
+			fileReadOutputArtifactVerID = inv.Outputs[0].ArtifactRef.VerID
+		}
+	}
+	if fileReadOutputArtifactID == "" || fileReadOutputArtifactVerID == "" {
+		t.Fatalf("expected file.read invocation output artifact_ref")
 	}
 
 	artifactDocID := runDoc.Body.Inputs[0].ArtifactRef.DocID
@@ -333,5 +372,67 @@ func TestRunsValidFlowCreatesRunAndInputArtifactDocs(t *testing.T) {
 	}
 	if artifactDoc.Body.Provenance.NodeID != "__run_input__" {
 		t.Fatalf("expected provenance node_id __run_input__, got %q", artifactDoc.Body.Provenance.NodeID)
+	}
+
+	fileReadArtifactReq := httptest.NewRequest(http.MethodGet, "/v1/docs/artifact/"+fileReadOutputArtifactID+"/"+fileReadOutputArtifactVerID, nil)
+	fileReadArtifactRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(fileReadArtifactRR, fileReadArtifactReq)
+	if fileReadArtifactRR.Code != http.StatusOK {
+		t.Fatalf("expected file.read artifact status %d, got %d body=%s", http.StatusOK, fileReadArtifactRR.Code, fileReadArtifactRR.Body.String())
+	}
+
+	var fileReadArtifact struct {
+		DocType string `json:"doc_type"`
+		Body    struct {
+			Schema  string `json:"schema"`
+			Payload struct {
+				Path string `json:"path"`
+				Text string `json:"text"`
+			} `json:"payload"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(fileReadArtifactRR.Body.Bytes(), &fileReadArtifact); err != nil {
+		t.Fatalf("decode file.read artifact: %v", err)
+	}
+	if fileReadArtifact.DocType != "artifact" || fileReadArtifact.Body.Schema != "artifact/text" {
+		t.Fatalf("unexpected file.read artifact type/schema: %+v", fileReadArtifact)
+	}
+	if fileReadArtifact.Body.Payload.Path != "input.txt" {
+		t.Fatalf("expected file.read artifact path input.txt, got %q", fileReadArtifact.Body.Payload.Path)
+	}
+	if fileReadArtifact.Body.Payload.Text != "file content from test" {
+		t.Fatalf("unexpected file.read artifact text: %q", fileReadArtifact.Body.Payload.Text)
+	}
+}
+
+func TestRunsRejectsPathTraversal(t *testing.T) {
+	h := newAPITestHarness(t)
+	workspace := createWorkspaceViaAPI(t, h, "Runs Traversal")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n2","type":"node.out","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[],"config":{}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{"input_file":"../secrets.txt","output_file":"output.txt"}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rr.Body.String()), "path traversal") {
+		t.Fatalf("expected traversal message, got %q", rr.Body.String())
 	}
 }

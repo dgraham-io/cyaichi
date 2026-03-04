@@ -3,22 +3,25 @@ package config
 import "os"
 
 const (
-	defaultHTTPAddr = ":8080"
-	defaultLogLevel = "info"
-	defaultDBPath   = "/tmp/cyaichi.db"
+	defaultHTTPAddr      = ":8080"
+	defaultLogLevel      = "info"
+	defaultDBPath        = "/tmp/cyaichi.db"
+	defaultWorkspaceRoot = "./workspace-data"
 )
 
 type Config struct {
-	HTTPAddr string
-	LogLevel string
-	DBPath   string
+	HTTPAddr      string
+	LogLevel      string
+	DBPath        string
+	WorkspaceRoot string
 }
 
 func FromEnv() Config {
 	return Config{
-		HTTPAddr: envOrDefault("CYAI_HTTP_ADDR", defaultHTTPAddr),
-		LogLevel: envOrDefault("CYAI_LOG_LEVEL", defaultLogLevel),
-		DBPath:   envOrDefault("CYAI_DB_PATH", defaultDBPath),
+		HTTPAddr:      envOrDefault("CYAI_HTTP_ADDR", defaultHTTPAddr),
+		LogLevel:      envOrDefault("CYAI_LOG_LEVEL", defaultLogLevel),
+		DBPath:        envOrDefault("CYAI_DB_PATH", defaultDBPath),
+		WorkspaceRoot: envOrDefault("CYAI_WORKSPACE_ROOT", defaultWorkspaceRoot),
 	}
 }
 

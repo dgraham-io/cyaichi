@@ -18,6 +18,7 @@ Optional environment variables:
 - `CYAI_HTTP_ADDR` (default `:8080`)
 - `CYAI_LOG_LEVEL` (default `info`)
 - `CYAI_DB_PATH` (default `/tmp/cyaichi.db`)
+- `CYAI_WORKSPACE_ROOT` (default `./workspace-data`)
 
 By default, SQLite data is created at `/tmp/cyaichi.db`.
 
@@ -128,7 +129,7 @@ curl -i -X PUT "http://127.0.0.1:8080/v1/docs/flow/$FLOW_ID/$FLOW_VER" \
     \"created_at\": \"2026-03-03T00:00:00Z\",
     \"body\": {
       \"nodes\": [
-        {\"id\":\"n1\",\"type\":\"node.in\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
+        {\"id\":\"n1\",\"type\":\"file.read\",\"inputs\":[],\"outputs\":[{\"port\":\"out\",\"schema\":\"artifact/text\"}],\"config\":{}},
         {\"id\":\"n2\",\"type\":\"node.out\",\"inputs\":[{\"port\":\"in\",\"schema\":\"artifact/text\"}],\"outputs\":[],\"config\":{}}
       ],
       \"edges\": [
@@ -144,6 +145,13 @@ Set the flow head in the workspace:
 curl -i -X PUT "http://127.0.0.1:8080/v1/workspaces/$WS_ID/heads/$FLOW_ID" \
   -H 'Content-Type: application/json' \
   --data-binary "{\"ver_id\":\"$FLOW_VER\"}"
+```
+
+Write input file under the workspace root:
+
+```bash
+mkdir -p "workspace-data/$WS_ID"
+printf 'hello from file.read\n' > "workspace-data/$WS_ID/input.txt"
 ```
 
 Create a run:
@@ -165,4 +173,13 @@ Fetch the run document:
 
 ```bash
 curl -i "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER"
+```
+
+Fetch the file.read output artifact text:
+
+```bash
+RUN_DOC=$(curl -s "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER")
+OUT_ART_ID=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n1") | .outputs[0].artifact_ref.doc_id')
+OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.invocations[] | select(.node_id=="n1") | .outputs[0].artifact_ref.ver_id')
+curl -s "http://127.0.0.1:8080/v1/docs/artifact/$OUT_ART_ID/$OUT_ART_VER" | jq '.body.payload'
 ```

@@ -15,8 +15,9 @@ import (
 )
 
 type apiTestHarness struct {
-	mux   *http.ServeMux
-	store *store.Store
+	mux           *http.ServeMux
+	store         *store.Store
+	workspaceRoot string
 }
 
 func newAPITestHarness(t *testing.T) *apiTestHarness {
@@ -37,10 +38,12 @@ func newAPITestHarness(t *testing.T) *apiTestHarness {
 	if err != nil {
 		t.Fatalf("create validator: %v", err)
 	}
+	workspaceRoot := t.TempDir()
 
 	return &apiTestHarness{
-		mux:   NewMux(s, v),
-		store: s,
+		mux:           NewMux(s, v, workspaceRoot),
+		store:         s,
+		workspaceRoot: workspaceRoot,
 	}
 }
 

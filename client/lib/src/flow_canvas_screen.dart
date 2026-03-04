@@ -32,8 +32,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
 
-  late final NodeFlowController<Map<String, dynamic>, Map<String, dynamic>>
-  _controller;
+  late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   final LocalFileReader _localFileReader = createLocalFileReader();
 
   late final TextEditingController _flowTitleController;
@@ -90,10 +89,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   void initState() {
     super.initState();
 
-    _controller =
-        NodeFlowController<Map<String, dynamic>, Map<String, dynamic>>(
-          config: NodeFlowConfig(scrollToZoom: false),
-        );
+    _controller = NodeFlowController<Map<String, dynamic>, dynamic>(
+      config: NodeFlowConfig(scrollToZoom: false),
+    );
     _flowTitleController = TextEditingController(text: 'My Flow');
     _inputFileController = TextEditingController(text: 'input.txt');
     _outputFileController = TextEditingController(text: 'output.txt');
@@ -294,12 +292,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 ],
               ),
             ),
-            child: NodeFlowEditor<Map<String, dynamic>, Map<String, dynamic>>(
+            child: NodeFlowEditor<Map<String, dynamic>, dynamic>(
               controller: _controller,
               theme: canvasTheme,
               nodeBuilder: _buildNodeCard,
               behavior: NodeFlowBehavior.design,
-              events: NodeFlowEvents(
+              events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
                 node: NodeEvents(
                   onSelected: (node) {
                     setState(() {
@@ -307,7 +305,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     });
                   },
                 ),
-                connection: ConnectionEvents(
+                connection: ConnectionEvents<Map<String, dynamic>, dynamic>(
                   onBeforeComplete: _validateConnectionBeforeComplete,
                   onConnectEnd: (_, __, ___) {
                     final reason = _connectionRejectReason;
@@ -1818,7 +1816,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         continue;
       }
       _controller.addConnection(
-        Connection<Map<String, dynamic>>(
+        Connection<dynamic>(
           id: _uuid.v4(),
           sourceNodeId: edge.sourceNode,
           sourcePortId: edge.sourcePort,

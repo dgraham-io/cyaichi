@@ -105,3 +105,14 @@ flutter run
 cd client
 flutter test
 ```
+
+## Branding
+
+- Launcher/app icon source: `client/assets/images/cyaichi_icon_blue.png`
+- Theme colors and ThemeData: `client/lib/theme/cyaichi_theme.dart`
+- Regenerate launcher icons:
+
+```bash
+cd client
+flutter pub run flutter_launcher_icons
+```

@@ -1,4 +1,5 @@
 import 'package:client/src/flow_canvas_screen.dart';
+import 'package:client/theme/cyaichi_theme.dart';
 import 'package:flutter/material.dart';
 
 class CyaichiApp extends StatelessWidget {
@@ -6,23 +7,12 @@ class CyaichiApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final lightTheme = ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F766E)),
-      useMaterial3: true,
-    );
-    final darkTheme = ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF2DD4BF),
-        brightness: Brightness.dark,
-      ),
-      useMaterial3: true,
-    );
-
     return MaterialApp(
       title: 'cyaichi client',
       debugShowCheckedModeBanner: false,
-      theme: lightTheme,
-      darkTheme: darkTheme,
+      theme: CyaichiTheme.dark,
+      darkTheme: CyaichiTheme.dark,
+      themeMode: ThemeMode.dark,
       home: const FlowCanvasScreen(),
     );
   }

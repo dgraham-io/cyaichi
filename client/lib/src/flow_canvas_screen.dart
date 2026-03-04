@@ -4,6 +4,7 @@ import 'package:client/api/api_client.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/io/local_file_reader.dart';
 import 'package:client/src/models/server_models.dart';
+import 'package:client/theme/cyaichi_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -264,20 +265,32 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final selectedNode = _selectedNodeId == null
         ? null
         : _controller.getNode(_selectedNodeId!);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final canvasTheme = isDark ? NodeFlowTheme.dark : NodeFlowTheme.light;
+    final canvasTheme = NodeFlowTheme.dark;
 
     return Row(
       children: [
-        _PalettePanel(
-          onAddFileRead: () => _addNode(NodeKind.fileRead),
-          onAddLlmChat: () => _addNode(NodeKind.llmChat),
-          onAddFileWrite: () => _addNode(NodeKind.fileWrite),
+        DecoratedBox(
+          decoration: const BoxDecoration(color: CyaichiTheme.surface),
+          child: _PalettePanel(
+            onAddFileRead: () => _addNode(NodeKind.fileRead),
+            onAddLlmChat: () => _addNode(NodeKind.llmChat),
+            onAddFileWrite: () => _addNode(NodeKind.fileWrite),
+          ),
         ),
         const VerticalDivider(width: 1),
         Expanded(
           child: DecoratedBox(
-            decoration: BoxDecoration(color: canvasTheme.backgroundColor),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  CyaichiTheme.background,
+                  CyaichiTheme.surface,
+                  CyaichiTheme.outline.withValues(alpha: 0.45),
+                ],
+              ),
+            ),
             child: NodeFlowEditor<Map<String, dynamic>, Map<String, dynamic>>(
               controller: _controller,
               theme: canvasTheme,
@@ -305,30 +318,33 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         const VerticalDivider(width: 1),
         SizedBox(
           width: 380,
-          child: Column(
-            children: [
-              Expanded(
-                child: _InspectorPanel(
-                  selectedNode: selectedNode,
-                  onTitleChanged: (value) =>
-                      _updateNodeTitle(selectedNode, value),
-                  onConfigChanged: (key, value) =>
-                      _updateNodeConfig(selectedNode, key, value),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(color: CyaichiTheme.surface),
+            child: Column(
+              children: [
+                Expanded(
+                  child: _InspectorPanel(
+                    selectedNode: selectedNode,
+                    onTitleChanged: (value) =>
+                        _updateNodeTitle(selectedNode, value),
+                    onConfigChanged: (key, value) =>
+                        _updateNodeConfig(selectedNode, key, value),
+                  ),
                 ),
-              ),
-              const Divider(height: 1),
-              _RunPanel(
-                inputFileController: _inputFileController,
-                outputFileController: _outputFileController,
-                status: _lastRunStatus,
-                runId: _lastRunId,
-                runVerId: _lastRunVerId,
-                error: _lastRunError,
-                outputPath: _lastOutputPath,
-                outputContent: _lastOutputContent,
-                isRunning: _isRunning,
-              ),
-            ],
+                const Divider(height: 1),
+                _RunPanel(
+                  inputFileController: _inputFileController,
+                  outputFileController: _outputFileController,
+                  status: _lastRunStatus,
+                  runId: _lastRunId,
+                  runVerId: _lastRunVerId,
+                  error: _lastRunError,
+                  outputPath: _lastOutputPath,
+                  outputContent: _lastOutputContent,
+                  isRunning: _isRunning,
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -476,7 +492,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: CyaichiTheme.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: node.isSelected
@@ -484,6 +500,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               : Theme.of(context).colorScheme.outlineVariant,
           width: node.isSelected ? 2 : 1,
         ),
+        boxShadow: node.isSelected
+            ? [
+                BoxShadow(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.25),
+                  blurRadius: 18,
+                  spreadRadius: 1.5,
+                ),
+              ]
+            : const [],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

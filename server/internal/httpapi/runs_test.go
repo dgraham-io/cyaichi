@@ -594,3 +594,78 @@ func TestRunsLLMFailureReturnsBadGateway(t *testing.T) {
 		t.Fatalf("expected llm failure message, got %q", rr.Body.String())
 	}
 }
+
+func TestRunsMissingInputFilePersistsFailedRun(t *testing.T) {
+	h := newAPITestHarness(t)
+	workspace := createWorkspaceViaAPI(t, h, "Runs Persist Failure")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	flowBody := `{
+	  "nodes": [
+	    {"id":"n1","type":"file.read","inputs":[],"outputs":[{"port":"out","schema":"artifact/text"}],"config":{}},
+	    {"id":"n2","type":"node.out","inputs":[{"port":"in","schema":"artifact/text"}],"outputs":[],"config":{}}
+	  ],
+	  "edges": [
+	    {"from":{"node":"n1","port":"out"},"to":{"node":"n2","port":"in"}}
+	  ]
+	}`
+	putFlowDocViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID, flowBody)
+	setWorkspaceHeadViaAPI(t, h, workspace.WorkspaceID, flowDocID, flowVerID)
+
+	runReq := `{
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":null,"selector":"head"},
+	  "inputs":{"input_file":"missing.txt","output_file":"output.txt"}
+	}`
+	rr := postRunViaAPI(t, h, runReq)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+
+	var errResp struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		RunID    string `json:"run_id"`
+		RunVerID string `json:"run_ver_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if errResp.RunID == "" || errResp.RunVerID == "" {
+		t.Fatalf("expected run_id and run_ver_id in error response, got %+v", errResp)
+	}
+	if !strings.Contains(strings.ToLower(errResp.Error.Message), "file.read failed") {
+		t.Fatalf("expected file.read failure message, got %q", errResp.Error.Message)
+	}
+
+	runDocReq := httptest.NewRequest(http.MethodGet, "/v1/docs/run/"+errResp.RunID+"/"+errResp.RunVerID, nil)
+	runDocRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(runDocRR, runDocReq)
+	if runDocRR.Code != http.StatusOK {
+		t.Fatalf("expected persisted failed run doc status %d, got %d body=%s", http.StatusOK, runDocRR.Code, runDocRR.Body.String())
+	}
+
+	var runDoc struct {
+		Body struct {
+			Status   string `json:"status"`
+			TraceRef struct {
+				Error struct {
+					Message string `json:"message"`
+					Kind    string `json:"kind"`
+					NodeID  string `json:"node_id"`
+				} `json:"error"`
+			} `json:"trace_ref"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(runDocRR.Body.Bytes(), &runDoc); err != nil {
+		t.Fatalf("decode failed run doc: %v", err)
+	}
+	if runDoc.Body.Status != "failed" {
+		t.Fatalf("expected run status failed, got %q", runDoc.Body.Status)
+	}
+	if runDoc.Body.TraceRef.Error.Message == "" || runDoc.Body.TraceRef.Error.Kind == "" {
+		t.Fatalf("expected trace_ref.error fields in failed run: %+v", runDoc.Body.TraceRef.Error)
+	}
+}

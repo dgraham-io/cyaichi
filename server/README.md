@@ -264,3 +264,43 @@ Fetch note by `doc_id` + `ver_id`:
 ```bash
 curl -i "http://127.0.0.1:8080/v1/notes/$NOTE_ID/$NOTE_VER"
 ```
+
+## Workspace List Endpoints
+
+List flows for a workspace:
+
+```bash
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/flows" | jq
+```
+
+List runs for a workspace:
+
+```bash
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/runs" | jq
+```
+
+List notes for a workspace:
+
+```bash
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/notes" | jq
+```
+
+## Failed Run Persistence
+
+When a run fails during execution, the server now persists a failed `run` document and returns `run_id` / `run_ver_id` in the error response.
+
+Example (missing input file):
+
+```bash
+FAIL_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/runs \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"workspace_id\": \"$WS_ID\",
+    \"flow_ref\": {\"doc_id\": \"$FLOW_ID\", \"ver_id\": null, \"selector\": \"head\"},
+    \"inputs\": {\"input_file\": \"missing.txt\", \"output_file\": \"output.txt\"}
+  }")
+echo "$FAIL_RESP" | jq
+FAIL_RUN_ID=$(echo "$FAIL_RESP" | jq -r '.run_id')
+FAIL_RUN_VER=$(echo "$FAIL_RESP" | jq -r '.run_ver_id')
+curl -s "http://127.0.0.1:8080/v1/docs/run/$FAIL_RUN_ID/$FAIL_RUN_VER" | jq
+```

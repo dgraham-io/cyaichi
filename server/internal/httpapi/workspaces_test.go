@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dgraham-io/cyaichi/server/internal/schema"
 	"github.com/dgraham-io/cyaichi/server/internal/store"
@@ -242,5 +243,114 @@ func TestGetWorkspaceHeadReturnsExpectedVersion(t *testing.T) {
 	}
 	if got.VerID != targetVerID {
 		t.Fatalf("unexpected ver_id: got %q want %q", got.VerID, targetVerID)
+	}
+}
+
+func TestWorkspaceListFlowsAndRuns(t *testing.T) {
+	h := newAPITestHarness(t)
+	workspace := createWorkspaceViaAPI(t, h, "List Workspace")
+
+	flowDocID := uuid.NewString()
+	flowVerID := uuid.NewString()
+	runDocID := uuid.NewString()
+	runVerID := uuid.NewString()
+
+	flowDoc := `{
+	  "doc_type":"flow",
+	  "doc_id":"` + flowDocID + `",
+	  "ver_id":"` + flowVerID + `",
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "created_at":"2026-03-03T00:00:00Z",
+	  "ref":"refs/heads/main",
+	  "meta":{"title":"Demo Flow"},
+	  "body":{"nodes":[],"edges":[]}
+	}`
+	runDoc := `{
+	  "doc_type":"run",
+	  "doc_id":"` + runDocID + `",
+	  "ver_id":"` + runVerID + `",
+	  "workspace_id":"` + workspace.WorkspaceID + `",
+	  "created_at":"` + time.Now().UTC().Format(time.RFC3339) + `",
+	  "body":{
+	    "flow_ref":{"doc_id":"` + flowDocID + `","ver_id":"` + flowVerID + `","selector":"pinned"},
+	    "mode":"hybrid",
+	    "status":"succeeded",
+	    "invocations":[]
+	  }
+	}`
+
+	putFlowReq := httptest.NewRequest(http.MethodPut, "/v1/docs/flow/"+flowDocID+"/"+flowVerID, strings.NewReader(flowDoc))
+	putFlowReq.Header.Set("Content-Type", "application/json")
+	putFlowRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(putFlowRR, putFlowReq)
+	if putFlowRR.Code != http.StatusCreated {
+		t.Fatalf("put flow failed: %d body=%s", putFlowRR.Code, putFlowRR.Body.String())
+	}
+
+	putRunReq := httptest.NewRequest(http.MethodPut, "/v1/docs/run/"+runDocID+"/"+runVerID, strings.NewReader(runDoc))
+	putRunReq.Header.Set("Content-Type", "application/json")
+	putRunRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(putRunRR, putRunReq)
+	if putRunRR.Code != http.StatusCreated {
+		t.Fatalf("put run failed: %d body=%s", putRunRR.Code, putRunRR.Body.String())
+	}
+
+	listFlowsReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces/"+workspace.WorkspaceID+"/flows", nil)
+	listFlowsRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(listFlowsRR, listFlowsReq)
+	if listFlowsRR.Code != http.StatusOK {
+		t.Fatalf("list flows failed: %d body=%s", listFlowsRR.Code, listFlowsRR.Body.String())
+	}
+
+	var flowsResp struct {
+		Items []struct {
+			DocID string `json:"doc_id"`
+			VerID string `json:"ver_id"`
+			Ref   string `json:"ref"`
+			Title string `json:"title"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listFlowsRR.Body.Bytes(), &flowsResp); err != nil {
+		t.Fatalf("decode flows response: %v", err)
+	}
+	if len(flowsResp.Items) != 1 {
+		t.Fatalf("expected 1 flow, got %d", len(flowsResp.Items))
+	}
+	if flowsResp.Items[0].DocID != flowDocID || flowsResp.Items[0].VerID != flowVerID {
+		t.Fatalf("unexpected flow ids: %+v", flowsResp.Items[0])
+	}
+	if flowsResp.Items[0].Ref != "refs/heads/main" {
+		t.Fatalf("expected flow ref refs/heads/main, got %q", flowsResp.Items[0].Ref)
+	}
+	if flowsResp.Items[0].Title != "Demo Flow" {
+		t.Fatalf("expected title Demo Flow, got %q", flowsResp.Items[0].Title)
+	}
+
+	listRunsReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces/"+workspace.WorkspaceID+"/runs", nil)
+	listRunsRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(listRunsRR, listRunsReq)
+	if listRunsRR.Code != http.StatusOK {
+		t.Fatalf("list runs failed: %d body=%s", listRunsRR.Code, listRunsRR.Body.String())
+	}
+
+	var runsResp struct {
+		Items []struct {
+			DocID  string `json:"doc_id"`
+			VerID  string `json:"ver_id"`
+			Status string `json:"status"`
+			Mode   string `json:"mode"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listRunsRR.Body.Bytes(), &runsResp); err != nil {
+		t.Fatalf("decode runs response: %v", err)
+	}
+	if len(runsResp.Items) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runsResp.Items))
+	}
+	if runsResp.Items[0].DocID != runDocID || runsResp.Items[0].VerID != runVerID {
+		t.Fatalf("unexpected run ids: %+v", runsResp.Items[0])
+	}
+	if runsResp.Items[0].Status != "succeeded" || runsResp.Items[0].Mode != "hybrid" {
+		t.Fatalf("unexpected run status/mode: %+v", runsResp.Items[0])
 	}
 }

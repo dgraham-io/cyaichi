@@ -84,7 +84,7 @@ func (h *NotesHandler) HandleWorkspaceList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.store.ListMemoryByWorkspace(r.Context(), workspaceID, 50, 0)
+	rows, err := h.store.ListDocumentsByType(r.Context(), workspaceID, "memory", 50, 0)
 	if err != nil {
 		http.Error(w, "failed to list notes", http.StatusInternalServerError)
 		return

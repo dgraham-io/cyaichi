@@ -113,3 +113,62 @@ func TestGetHeadNotFound(t *testing.T) {
 		t.Fatalf("expected ErrHeadNotFound, got %v", err)
 	}
 }
+
+func TestListDocumentsByType(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	flowA := Document{
+		DocType:     "flow",
+		DocID:       "flow-a",
+		VerID:       "v1",
+		WorkspaceID: "ws-1",
+		CreatedAt:   "2026-03-03T00:00:02Z",
+		JSON:        `{"doc_type":"flow","doc_id":"flow-a","ver_id":"v1"}`,
+	}
+	flowB := Document{
+		DocType:     "flow",
+		DocID:       "flow-b",
+		VerID:       "v1",
+		WorkspaceID: "ws-1",
+		CreatedAt:   "2026-03-03T00:00:01Z",
+		Ref:         sql.NullString{String: "refs/heads/main", Valid: true},
+		JSON:        `{"doc_type":"flow","doc_id":"flow-b","ver_id":"v1"}`,
+	}
+	memory := Document{
+		DocType:     "memory",
+		DocID:       "mem-a",
+		VerID:       "v1",
+		WorkspaceID: "ws-1",
+		CreatedAt:   "2026-03-03T00:00:03Z",
+		JSON:        `{"doc_type":"memory","doc_id":"mem-a","ver_id":"v1"}`,
+	}
+	otherWorkspaceFlow := Document{
+		DocType:     "flow",
+		DocID:       "flow-c",
+		VerID:       "v1",
+		WorkspaceID: "ws-2",
+		CreatedAt:   "2026-03-03T00:00:04Z",
+		JSON:        `{"doc_type":"flow","doc_id":"flow-c","ver_id":"v1"}`,
+	}
+
+	for _, doc := range []Document{flowA, flowB, memory, otherWorkspaceFlow} {
+		if err := s.PutDocument(ctx, doc); err != nil {
+			t.Fatalf("put document %s: %v", doc.DocID, err)
+		}
+	}
+
+	rows, err := s.ListDocumentsByType(ctx, "ws-1", "flow", 50, 0)
+	if err != nil {
+		t.Fatalf("list documents by type: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 flow rows, got %d", len(rows))
+	}
+	if rows[0].DocID != "flow-a" || rows[1].DocID != "flow-b" {
+		t.Fatalf("unexpected order/doc ids: %+v", rows)
+	}
+	if rows[1].Ref.String != "refs/heads/main" || !rows[1].Ref.Valid {
+		t.Fatalf("expected ref on second row, got %+v", rows[1].Ref)
+	}
+}

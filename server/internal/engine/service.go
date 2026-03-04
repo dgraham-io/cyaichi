@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dgraham-io/cyaichi/server/internal/schema"
@@ -34,6 +36,17 @@ func (e *UpstreamError) Error() string {
 	return e.Message
 }
 
+type RunCreateError struct {
+	StatusCode int
+	Message    string
+	RunID      string
+	RunVerID   string
+}
+
+func (e *RunCreateError) Error() string {
+	return e.Message
+}
+
 type CreateRunRequest struct {
 	WorkspaceID string            `json:"workspace_id"`
 	FlowRef     DocRefRequest     `json:"flow_ref"`
@@ -55,6 +68,12 @@ type CreateRunResponse struct {
 type PinnedFlowRefID struct {
 	DocID string `json:"doc_id"`
 	VerID string `json:"ver_id"`
+}
+
+type runFailure struct {
+	Message string
+	Kind    string
+	NodeID  string
 }
 
 type RunService struct {
@@ -113,33 +132,58 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	if flowDoc.WorkspaceID != req.WorkspaceID {
 		return CreateRunResponse{}, &ValidationError{Message: "flow does not belong to workspace"}
 	}
+
+	runID := uuid.NewString()
+	runVerID := uuid.NewString()
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	invocations := make([]map[string]any, 0)
+
+	failAndReturn := func(statusCode int, failure runFailure) (CreateRunResponse, error) {
+		if persistErr := s.persistFailedRun(ctx, req, flowVerID, runID, runVerID, startedAt, invocations, failure); persistErr != nil {
+			return CreateRunResponse{}, fmt.Errorf("persist failed run: %w", persistErr)
+		}
+		return CreateRunResponse{}, &RunCreateError{
+			StatusCode: statusCode,
+			Message:    failure.Message,
+			RunID:      runID,
+			RunVerID:   runVerID,
+		}
+	}
+
 	if err := s.validator.Validate([]byte(flowDoc.JSON)); err != nil {
-		return CreateRunResponse{}, &ValidationError{Message: fmt.Sprintf("flow schema validation failed: %v", err)}
+		return failAndReturn(http.StatusBadRequest, runFailure{
+			Message: fmt.Sprintf("flow schema validation failed: %v", err),
+			Kind:    "validation",
+		})
 	}
 
 	parsedFlow, err := ParseFlowDocument(flowDoc.JSON)
 	if err != nil {
-		return CreateRunResponse{}, &ValidationError{Message: err.Error()}
+		return failAndReturn(http.StatusBadRequest, runFailure{
+			Message: err.Error(),
+			Kind:    "validation",
+		})
 	}
 
 	executionOrder, err := ValidateRunnableFlow(parsedFlow)
 	if err != nil {
-		return CreateRunResponse{}, &ValidationError{Message: err.Error()}
+		return failAndReturn(http.StatusBadRequest, runFailure{
+			Message: err.Error(),
+			Kind:    "validation",
+		})
 	}
 
 	inputPath := req.Inputs["input_file"]
 	if inputPath == "" {
-		return CreateRunResponse{}, &ValidationError{Message: "inputs.input_file is required"}
+		return failAndReturn(http.StatusBadRequest, runFailure{
+			Message: "inputs.input_file is required",
+			Kind:    "validation",
+		})
 	}
 	outputPath := req.Inputs["output_file"]
 
-	runID := uuid.NewString()
-	runVerID := uuid.NewString()
 	artifactID := uuid.NewString()
 	artifactVerID := uuid.NewString()
-
-	startedAt := time.Now().UTC().Format(time.RFC3339)
-
 	artifactDocMap := map[string]any{
 		"doc_type":     "artifact",
 		"doc_id":       artifactID,
@@ -163,11 +207,18 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 	}
 	artifactBytes, err := json.Marshal(artifactDocMap)
 	if err != nil {
-		return CreateRunResponse{}, fmt.Errorf("marshal artifact document: %w", err)
+		return failAndReturn(http.StatusInternalServerError, runFailure{
+			Message: "failed to encode input artifact",
+			Kind:    "internal",
+		})
 	}
 	if err := s.validator.Validate(artifactBytes); err != nil {
-		return CreateRunResponse{}, &ValidationError{Message: err.Error()}
+		return failAndReturn(http.StatusBadRequest, runFailure{
+			Message: err.Error(),
+			Kind:    "validation",
+		})
 	}
+
 	pendingArtifacts := []store.Document{{
 		DocType:     "artifact",
 		DocID:       artifactID,
@@ -177,7 +228,6 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 		JSON:        string(artifactBytes),
 	}}
 
-	invocations := make([]map[string]any, 0, len(executionOrder))
 	latestArtifact := &ResolvedArtifact{
 		Ref: ArtifactRef{
 			DocID: artifactID,
@@ -185,6 +235,7 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 		},
 		Schema: "artifact/input_file",
 	}
+
 	for _, node := range executionOrder {
 		result, err := s.runner.RunNode(ctx, NodeRunRequest{
 			Node:                 node,
@@ -198,20 +249,63 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			UpstreamArtifact:     latestArtifact,
 		})
 		if err != nil {
+			failure := runFailure{
+				Message: err.Error(),
+				Kind:    "internal",
+				NodeID:  node.ID,
+			}
+			statusCode := http.StatusInternalServerError
+
 			var upstreamErr *UpstreamError
 			if errors.As(err, &upstreamErr) {
-				return CreateRunResponse{}, upstreamErr
+				failure.Message = upstreamErr.Message
+				failure.Kind = "llm"
+				statusCode = http.StatusBadGateway
 			}
 			var validationErr *ValidationError
 			if errors.As(err, &validationErr) {
-				return CreateRunResponse{}, validationErr
+				failure.Message = validationErr.Message
+				failure.Kind = "validation"
+				statusCode = http.StatusBadRequest
+				if strings.Contains(strings.ToLower(validationErr.Message), "file.read failed") ||
+					strings.Contains(strings.ToLower(validationErr.Message), "file.write failed") {
+					failure.Kind = "io"
+				}
 			}
-			return CreateRunResponse{}, &ValidationError{Message: err.Error()}
+
+			now := time.Now().UTC().Format(time.RFC3339)
+			failedInvocation := map[string]any{
+				"invocation_id": uuid.NewString(),
+				"node_id":       node.ID,
+				"status":        "failed",
+				"started_at":    now,
+				"ended_at":      now,
+				"inputs":        []ArtifactRefWrapper{},
+				"outputs":       []ArtifactRefWrapper{},
+			}
+			if latestArtifact != nil {
+				failedInvocation["inputs"] = []ArtifactRefWrapper{
+					{
+						ArtifactRef: map[string]any{
+							"doc_id":   latestArtifact.Ref.DocID,
+							"ver_id":   latestArtifact.Ref.VerID,
+							"selector": "pinned",
+						},
+					},
+				}
+			}
+			invocations = append(invocations, failedInvocation)
+
+			return failAndReturn(statusCode, failure)
 		}
 
 		for _, artifact := range result.Artifacts {
 			if err := s.validator.Validate([]byte(artifact.JSON)); err != nil {
-				return CreateRunResponse{}, &ValidationError{Message: fmt.Sprintf("artifact schema validation failed: %v", err)}
+				return failAndReturn(http.StatusBadRequest, runFailure{
+					Message: fmt.Sprintf("artifact schema validation failed: %v", err),
+					Kind:    "validation",
+					NodeID:  node.ID,
+				})
 			}
 			pendingArtifacts = append(pendingArtifacts, store.Document{
 				DocType:     "artifact",
@@ -222,6 +316,7 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 				JSON:        artifact.JSON,
 			})
 		}
+
 		invocations = append(invocations, map[string]any{
 			"invocation_id": result.Invocation.InvocationID,
 			"node_id":       result.Invocation.NodeID,
@@ -247,6 +342,7 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			},
 		})
 	}
+
 	runDocMap := map[string]any{
 		"doc_type":     "run",
 		"doc_id":       runID,
@@ -307,6 +403,70 @@ func (s *RunService) CreateRun(ctx context.Context, req CreateRunRequest) (Creat
 			VerID: flowVerID,
 		},
 	}, nil
+}
+
+func (s *RunService) persistFailedRun(
+	ctx context.Context,
+	req CreateRunRequest,
+	flowVerID, runID, runVerID, startedAt string,
+	invocations []map[string]any,
+	failure runFailure,
+) error {
+	endedAt := time.Now().UTC().Format(time.RFC3339)
+	errorObject := map[string]any{
+		"message": failure.Message,
+		"kind":    failure.Kind,
+	}
+	if failure.NodeID != "" {
+		errorObject["node_id"] = failure.NodeID
+	}
+
+	runDocMap := map[string]any{
+		"doc_type":     "run",
+		"doc_id":       runID,
+		"ver_id":       runVerID,
+		"workspace_id": req.WorkspaceID,
+		"created_at":   startedAt,
+		"body": map[string]any{
+			"flow_ref": map[string]any{
+				"doc_id":   req.FlowRef.DocID,
+				"ver_id":   flowVerID,
+				"selector": "pinned",
+			},
+			"mode":       "hybrid",
+			"status":     "failed",
+			"started_at": startedAt,
+			"ended_at":   endedAt,
+			"invocations": func() []map[string]any {
+				if invocations == nil {
+					return []map[string]any{}
+				}
+				return invocations
+			}(),
+			"trace_ref": map[string]any{
+				"error": errorObject,
+			},
+		},
+	}
+
+	runBytes, err := json.Marshal(runDocMap)
+	if err != nil {
+		return fmt.Errorf("marshal failed run document: %w", err)
+	}
+	if err := s.validator.Validate(runBytes); err != nil {
+		return fmt.Errorf("validate failed run document: %w", err)
+	}
+	if err := s.store.PutDocument(ctx, store.Document{
+		DocType:     "run",
+		DocID:       runID,
+		VerID:       runVerID,
+		WorkspaceID: req.WorkspaceID,
+		CreatedAt:   startedAt,
+		JSON:        string(runBytes),
+	}); err != nil {
+		return fmt.Errorf("store failed run document: %w", err)
+	}
+	return nil
 }
 
 func (s *RunService) resolveFlowVersion(ctx context.Context, workspaceID string, flowRef DocRefRequest) (string, error) {

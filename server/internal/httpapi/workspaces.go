@@ -36,6 +36,30 @@ type getHeadResponse struct {
 	VerID string `json:"ver_id"`
 }
 
+type listFlowsResponse struct {
+	Items []listFlowItem `json:"items"`
+}
+
+type listFlowItem struct {
+	DocID     string `json:"doc_id"`
+	VerID     string `json:"ver_id"`
+	CreatedAt string `json:"created_at"`
+	Ref       string `json:"ref"`
+	Title     string `json:"title"`
+}
+
+type listRunsResponse struct {
+	Items []listRunItem `json:"items"`
+}
+
+type listRunItem struct {
+	DocID     string `json:"doc_id"`
+	VerID     string `json:"ver_id"`
+	CreatedAt string `json:"created_at"`
+	Status    string `json:"status"`
+	Mode      string `json:"mode"`
+}
+
 func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/workspaces" {
 		if r.Method != http.MethodPost {
@@ -47,12 +71,21 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if workspaceID, ok := parseWorkspaceNotesPath(r.URL.Path); ok {
-		if h.notes == nil {
+	if workspaceID, resource, ok := parseWorkspaceListPath(r.URL.Path); ok {
+		switch resource {
+		case "notes":
+			if h.notes == nil {
+				http.NotFound(w, r)
+				return
+			}
+			h.notes.HandleWorkspaceList(w, r, workspaceID)
+		case "flows":
+			h.handleListFlows(w, r, workspaceID)
+		case "runs":
+			h.handleListRuns(w, r, workspaceID)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		h.notes.HandleWorkspaceList(w, r, workspaceID)
 		return
 	}
 
@@ -71,6 +104,116 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PUT")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (h *WorkspacesHandler) handleListFlows(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := h.validateWorkspace(w, r, workspaceID); err != nil {
+		return
+	}
+
+	rows, err := h.store.ListDocumentsByType(r.Context(), workspaceID, "flow", 50, 0)
+	if err != nil {
+		http.Error(w, "failed to list flows", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]listFlowItem, 0, len(rows))
+	for _, row := range rows {
+		title := ""
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(row.JSON), &doc); err == nil {
+			if meta, ok := doc["meta"].(map[string]any); ok {
+				if parsedTitle, ok := meta["title"].(string); ok {
+					title = parsedTitle
+				}
+			}
+		}
+
+		ref := ""
+		if row.Ref.Valid {
+			ref = row.Ref.String
+		}
+
+		items = append(items, listFlowItem{
+			DocID:     row.DocID,
+			VerID:     row.VerID,
+			CreatedAt: row.CreatedAt,
+			Ref:       ref,
+			Title:     title,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(listFlowsResponse{Items: items})
+}
+
+func (h *WorkspacesHandler) handleListRuns(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := h.validateWorkspace(w, r, workspaceID); err != nil {
+		return
+	}
+
+	rows, err := h.store.ListDocumentsByType(r.Context(), workspaceID, "run", 50, 0)
+	if err != nil {
+		http.Error(w, "failed to list runs", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]listRunItem, 0, len(rows))
+	for _, row := range rows {
+		status := ""
+		mode := ""
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(row.JSON), &doc); err == nil {
+			if body, ok := doc["body"].(map[string]any); ok {
+				status, _ = body["status"].(string)
+				mode, _ = body["mode"].(string)
+			}
+		}
+
+		items = append(items, listRunItem{
+			DocID:     row.DocID,
+			VerID:     row.VerID,
+			CreatedAt: row.CreatedAt,
+			Status:    status,
+			Mode:      mode,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(listRunsResponse{Items: items})
+}
+
+func (h *WorkspacesHandler) validateWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) (store.Document, error) {
+	if _, err := uuid.Parse(workspaceID); err != nil {
+		http.Error(w, "workspace_id must be a valid UUID", http.StatusBadRequest)
+		return store.Document{}, err
+	}
+	workspaceDoc, err := h.store.GetLatestWorkspaceDoc(r.Context(), workspaceID)
+	if errors.Is(err, store.ErrDocumentNotFound) {
+		http.NotFound(w, r)
+		return store.Document{}, err
+	}
+	if err != nil {
+		http.Error(w, "failed to fetch workspace", http.StatusInternalServerError)
+		return store.Document{}, err
+	}
+	if workspaceDoc.DocID != workspaceID || workspaceDoc.WorkspaceID != workspaceID {
+		http.NotFound(w, r)
+		return store.Document{}, errors.New("workspace identity mismatch")
+	}
+	return workspaceDoc, nil
 }
 
 func (h *WorkspacesHandler) handleCreateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -261,14 +404,14 @@ func parseWorkspaceHeadPath(path string) (workspaceID, docID string, ok bool) {
 	return parts[2], parts[4], true
 }
 
-func parseWorkspaceNotesPath(path string) (workspaceID string, ok bool) {
+func parseWorkspaceListPath(path string) (workspaceID, resource string, ok bool) {
 	trimmed := strings.Trim(path, "/")
 	parts := strings.Split(trimmed, "/")
-	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "workspaces" || parts[3] != "notes" {
-		return "", false
+	if len(parts) != 4 || parts[0] != "v1" || parts[1] != "workspaces" {
+		return "", "", false
 	}
-	if parts[2] == "" {
-		return "", false
+	if parts[2] == "" || parts[3] == "" {
+		return "", "", false
 	}
-	return parts[2], true
+	return parts[2], parts[3], true
 }

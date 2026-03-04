@@ -18,6 +18,7 @@ func NewMux(
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/health", HealthHandler)
+	mux.HandleFunc("/v1/node-types", NodeTypesHandler)
 	if docStore != nil && validator != nil {
 		nh := &NotesHandler{
 			store:     docStore,

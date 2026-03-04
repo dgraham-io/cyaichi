@@ -57,6 +57,14 @@ Script details and prerequisites:
 curl -i http://127.0.0.1:8080/v1/health
 ```
 
+## Node types
+
+Get built-in node type templates used by the server:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/node-types | jq
+```
+
 ## Documents API
 
 Store a memory document:

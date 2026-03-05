@@ -27,12 +27,12 @@ class _RenameWorkspaceApiClient extends ApiClient {
   }
 
   @override
-  Future<void> putDocument({
-    required String docType,
-    required String docId,
-    required String verId,
-    required Map<String, dynamic> document,
-  }) async {}
+  Future<WorkspacePatched> patchWorkspace({
+    required String workspaceId,
+    required String name,
+  }) async {
+    return WorkspacePatched(workspaceId: workspaceId, verId: 'v2', name: name);
+  }
 
   @override
   Future<List<NodeTypeDef>> getNodeTypes() async {

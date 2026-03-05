@@ -86,7 +86,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Rename workspace'), findsOneWidget);
-    expect(find.text('Select workspace'), findsOneWidget);
+    expect(find.text('Select workspace'), findsAtLeastNWidgets(1));
     expect(find.text('New workspace'), findsOneWidget);
     expect(find.text('Delete workspace'), findsOneWidget);
   });
@@ -121,7 +121,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.workspaces));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Select workspace'));
+    await tester.tap(find.byIcon(Icons.swap_horiz));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Demo Workspace'));

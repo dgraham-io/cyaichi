@@ -449,6 +449,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 preferredSize: const Size.fromHeight(74),
                 child: _TopControlsBar(
                   flowTitleController: _flowTitleController,
+                  hasWorkspaceSelected: _selectedWorkspaceId != null,
                   isSavingToServer: _isSavingToServer,
                   isRunning: _isRunning,
                   onSaveToServer: _saveNewFlowVersionToServer,
@@ -504,7 +505,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       ),
       floatingActionButton: _selectedTabIndex == 3
           ? FloatingActionButton.extended(
-              onPressed: _showCreateNoteDialog,
+              onPressed: _selectedWorkspaceId == null
+                  ? null
+                  : _showCreateNoteDialog,
               icon: const Icon(Icons.add),
               label: const Text('New Note'),
             )
@@ -514,6 +517,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   Widget _buildFlowTab() {
     final runGuard = _computeRunGuard();
+    final hasWorkspaceSelected = _selectedWorkspaceId != null;
     final nodes = _controller.nodes.values.toList(growable: false);
     final selectedNode = _selectedNodeId == null
         ? null
@@ -534,189 +538,230 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         }
         return KeyEventResult.ignored;
       },
-      child: Row(
+      child: Stack(
         children: [
-          DecoratedBox(
-            decoration: const BoxDecoration(color: CyaichiTheme.surface),
-            child: _PalettePanel(
-              nodeTypes: _nodeTypeRegistry.all,
-              onAddNode: _addNode,
-            ),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    CyaichiTheme.background,
-                    CyaichiTheme.surface,
-                    CyaichiTheme.outline.withValues(alpha: 0.45),
-                  ],
+          AbsorbPointer(
+            absorbing: !hasWorkspaceSelected,
+            child: Row(
+              children: [
+                DecoratedBox(
+                  decoration: const BoxDecoration(color: CyaichiTheme.surface),
+                  child: _PalettePanel(
+                    nodeTypes: _nodeTypeRegistry.all,
+                    onAddNode: _addNode,
+                  ),
                 ),
-              ),
-              child: Stack(
-                children: [
-                  NodeFlowEditor<Map<String, dynamic>, dynamic>(
-                    controller: _controller,
-                    theme: canvasTheme,
-                    nodeBuilder: _buildNodeCard,
-                    behavior: NodeFlowBehavior.design,
-                    events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
-                      node: NodeEvents(
-                        onSelected: (node) {
-                          setState(() {
-                            _selectedNodeId = node?.id;
-                          });
-                        },
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          CyaichiTheme.background,
+                          CyaichiTheme.surface,
+                          CyaichiTheme.outline.withValues(alpha: 0.45),
+                        ],
                       ),
-                      connection:
-                          ConnectionEvents<Map<String, dynamic>, dynamic>(
-                            onBeforeComplete: _validateConnectionBeforeComplete,
-                            onCreated: (_) {
-                              _markFlowDirty();
-                            },
-                            onDeleted: (_) {
-                              _markFlowDirty();
-                            },
-                            onSelected: (connection) {
+                    ),
+                    child: Stack(
+                      children: [
+                        NodeFlowEditor<Map<String, dynamic>, dynamic>(
+                          controller: _controller,
+                          theme: canvasTheme,
+                          nodeBuilder: _buildNodeCard,
+                          behavior: NodeFlowBehavior.design,
+                          events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
+                            node: NodeEvents(
+                              onSelected: (node) {
+                                setState(() {
+                                  _selectedNodeId = node?.id;
+                                });
+                              },
+                            ),
+                            connection:
+                                ConnectionEvents<Map<String, dynamic>, dynamic>(
+                                  onBeforeComplete:
+                                      _validateConnectionBeforeComplete,
+                                  onCreated: (_) {
+                                    _markFlowDirty();
+                                  },
+                                  onDeleted: (_) {
+                                    _markFlowDirty();
+                                  },
+                                  onSelected: (connection) {
+                                    setState(() {
+                                      _selectedConnectionId = connection?.id;
+                                    });
+                                  },
+                                  onConnectEnd: (_, __, ___) {
+                                    final reason = _connectionRejectReason;
+                                    if (reason != null && mounted) {
+                                      _showSnack(reason);
+                                      _connectionRejectReason = null;
+                                    }
+                                  },
+                                ),
+                            onSelectionChange: (selection) {
                               setState(() {
-                                _selectedConnectionId = connection?.id;
+                                _selectedNodeId = selection.nodes.isEmpty
+                                    ? null
+                                    : selection.nodes.first.id;
+                                _selectedConnectionId =
+                                    selection.connections.isEmpty
+                                    ? null
+                                    : selection.connections.first.id;
                               });
                             },
-                            onConnectEnd: (_, __, ___) {
-                              final reason = _connectionRejectReason;
-                              if (reason != null && mounted) {
-                                _showSnack(reason);
-                                _connectionRejectReason = null;
-                              }
-                            },
-                          ),
-                      onSelectionChange: (selection) {
-                        setState(() {
-                          _selectedNodeId = selection.nodes.isEmpty
-                              ? null
-                              : selection.nodes.first.id;
-                          _selectedConnectionId = selection.connections.isEmpty
-                              ? null
-                              : selection.connections.first.id;
-                        });
-                      },
-                    ),
-                  ),
-                  Positioned(
-                    left: 12,
-                    bottom: 12,
-                    child: _CanvasZoomControls(
-                      onZoomIn: () => _controller.zoomBy(0.1),
-                      onZoomOut: () => _controller.zoomBy(-0.1),
-                      onReset: () => _controller.zoomTo(1.0),
-                      onFit: _controller.fitToView,
-                    ),
-                  ),
-                  if (_isLoadingFlow)
-                    Positioned.fill(
-                      child: ColoredBox(
-                        color: Colors.black.withValues(alpha: 0.28),
-                        child: Center(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surface,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.outlineVariant,
-                              ),
-                            ),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              child: Text('Loading flow...'),
-                            ),
                           ),
                         ),
+                        Positioned(
+                          left: 12,
+                          bottom: 12,
+                          child: _CanvasZoomControls(
+                            onZoomIn: () => _controller.zoomBy(0.1),
+                            onZoomOut: () => _controller.zoomBy(-0.1),
+                            onReset: () => _controller.zoomTo(1.0),
+                            onFit: _controller.fitToView,
+                          ),
+                        ),
+                        if (_isLoadingFlow)
+                          Positioned.fill(
+                            child: ColoredBox(
+                              color: Colors.black.withValues(alpha: 0.28),
+                              child: Center(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.outlineVariant,
+                                    ),
+                                  ),
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    child: Text('Loading flow...'),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                SizedBox(
+                  width: 380,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      color: CyaichiTheme.surface,
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: _InspectorPanel(
+                            selectedNode: selectedNode,
+                            selectedConnection: selectedConnection,
+                            isPrimaryWriteNode:
+                                selectedNode != null &&
+                                selectedNode.type == 'file.write' &&
+                                _isPrimaryWriteNode(selectedNode.id),
+                            nodeType: selectedNode == null
+                                ? null
+                                : _nodeTypeRegistry.byType(selectedNode.type),
+                            onTitleChanged: (value) =>
+                                _updateNodeTitle(selectedNode, value),
+                            onConfigChanged: (key, value) =>
+                                _updateNodeConfig(selectedNode, key, value),
+                            onDeleteNode: _deleteSelectedNode,
+                            onDeleteConnection: _deleteSelectedConnection,
+                            onSetPrimaryOutput: selectedNode == null
+                                ? null
+                                : () => _setPrimaryOutputNode(selectedNode.id),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        _RunPanel(
+                          inputFileController: _inputFileController,
+                          outputFileController: _outputFileController,
+                          inputFileHint: _defaultRunInputFile,
+                          outputFileHint: _defaultRunOutputFile,
+                          status: _lastRunStatus,
+                          blockers: runGuard.blockers,
+                          showBlockers: _hasAttemptedRun,
+                          subtleHint:
+                              !_hasAttemptedRun && runGuard.blockers.isNotEmpty
+                              ? runGuard.blockers.first
+                              : null,
+                          showEmptyHint: nodes.isEmpty,
+                          validationError: _runValidationError,
+                          runId: _lastRunId,
+                          runVerId: _lastRunVerId,
+                          error: _lastRunError,
+                          errorKind: _lastRunErrorKind,
+                          errorNodeId: _lastRunErrorNodeId,
+                          errorCopyText: _lastRunErrorCopyText,
+                          errorCopyJson: _lastRunErrorCopyJson,
+                          invocations: _lastRunInvocations,
+                          outputArtifactSummary: _lastOutputArtifactSummary,
+                          outputPath: _lastOutputPath,
+                          outputContent: _lastOutputContent,
+                          outputContentFull: _lastOutputContentFull,
+                          isRunning: _isRunning,
+                          duration: _lastRunDuration,
+                          retryable: _lastRunRetryable,
+                          runTimedOut: _lastRunTimedOut,
+                          onRetry: _runFlow,
+                          onCancel: _cancelRunWait,
+                          onOpenRunDetails: _openLatestRunDetailsFromPanel,
+                          onRefreshRuns: _loadRuns,
+                          onOpenOutputFileFromTimeout:
+                              _openKnownOutputFileFromRunPanel,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!hasWorkspaceSelected)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.24),
+                child: Center(
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'No workspace selected',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 10),
+                          FilledButton.icon(
+                            onPressed: _showSelectWorkspaceDialog,
+                            icon: const Icon(Icons.workspaces_outlined),
+                            label: const Text('Select workspace'),
+                          ),
+                        ],
                       ),
                     ),
-                ],
+                  ),
+                ),
               ),
             ),
-          ),
-          const VerticalDivider(width: 1),
-          SizedBox(
-            width: 380,
-            child: DecoratedBox(
-              decoration: const BoxDecoration(color: CyaichiTheme.surface),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: _InspectorPanel(
-                      selectedNode: selectedNode,
-                      selectedConnection: selectedConnection,
-                      isPrimaryWriteNode:
-                          selectedNode != null &&
-                          selectedNode.type == 'file.write' &&
-                          _isPrimaryWriteNode(selectedNode.id),
-                      nodeType: selectedNode == null
-                          ? null
-                          : _nodeTypeRegistry.byType(selectedNode.type),
-                      onTitleChanged: (value) =>
-                          _updateNodeTitle(selectedNode, value),
-                      onConfigChanged: (key, value) =>
-                          _updateNodeConfig(selectedNode, key, value),
-                      onDeleteNode: _deleteSelectedNode,
-                      onDeleteConnection: _deleteSelectedConnection,
-                      onSetPrimaryOutput: selectedNode == null
-                          ? null
-                          : () => _setPrimaryOutputNode(selectedNode.id),
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  _RunPanel(
-                    inputFileController: _inputFileController,
-                    outputFileController: _outputFileController,
-                    inputFileHint: _defaultRunInputFile,
-                    outputFileHint: _defaultRunOutputFile,
-                    status: _lastRunStatus,
-                    blockers: runGuard.blockers,
-                    showBlockers: _hasAttemptedRun,
-                    subtleHint:
-                        !_hasAttemptedRun && runGuard.blockers.isNotEmpty
-                        ? runGuard.blockers.first
-                        : null,
-                    showEmptyHint: nodes.isEmpty,
-                    validationError: _runValidationError,
-                    runId: _lastRunId,
-                    runVerId: _lastRunVerId,
-                    error: _lastRunError,
-                    errorKind: _lastRunErrorKind,
-                    errorNodeId: _lastRunErrorNodeId,
-                    errorCopyText: _lastRunErrorCopyText,
-                    errorCopyJson: _lastRunErrorCopyJson,
-                    invocations: _lastRunInvocations,
-                    outputArtifactSummary: _lastOutputArtifactSummary,
-                    outputPath: _lastOutputPath,
-                    outputContent: _lastOutputContent,
-                    outputContentFull: _lastOutputContentFull,
-                    isRunning: _isRunning,
-                    duration: _lastRunDuration,
-                    retryable: _lastRunRetryable,
-                    runTimedOut: _lastRunTimedOut,
-                    onRetry: _runFlow,
-                    onCancel: _cancelRunWait,
-                    onOpenRunDetails: _openLatestRunDetailsFromPanel,
-                    onRefreshRuns: _loadRuns,
-                    onOpenOutputFileFromTimeout:
-                        _openKnownOutputFileFromRunPanel,
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1166,40 +1211,60 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _showSelectWorkspaceDialog() async {
+    await _showSelectWorkspaceDialogInternal(forceSelection: false);
+  }
+
+  Future<void> _showSelectWorkspaceDialogInternal({
+    required bool forceSelection,
+  }) async {
     await showDialog<void>(
       context: context,
+      barrierDismissible: !forceSelection,
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('Select workspace'),
           content: SizedBox(
             width: 560,
-            child: _workspaceIds.isEmpty
-                ? const Text('No workspaces found on server.')
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _workspaceIds.length,
-                    itemBuilder: (context, index) {
-                      final workspaceID = _workspaceIds[index];
-                      final workspaceName =
-                          _workspaceNames[workspaceID] ??
-                          'Workspace ${_shortId(workspaceID)}';
-                      return ListTile(
-                        title: Text(workspaceName),
-                        subtitle: Text(_shortId(workspaceID)),
-                        selected: workspaceID == _selectedWorkspaceId,
-                        onTap: () async {
-                          Navigator.of(dialogContext).pop();
-                          await _onWorkspaceSelected(workspaceID);
-                        },
-                      );
-                    },
-                  ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: _workspaceIds.isEmpty
+                  ? const Text('No workspaces found on server.')
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _workspaceIds.length,
+                      itemBuilder: (context, index) {
+                        final workspaceID = _workspaceIds[index];
+                        final workspaceName =
+                            _workspaceNames[workspaceID] ??
+                            'Workspace ${_shortId(workspaceID)}';
+                        return ListTile(
+                          leading: const Icon(Icons.workspaces_outlined),
+                          title: Text(workspaceName),
+                          subtitle: Text(_shortId(workspaceID)),
+                          selected: workspaceID == _selectedWorkspaceId,
+                          onTap: () async {
+                            Navigator.of(dialogContext).pop();
+                            await _onWorkspaceSelected(workspaceID);
+                          },
+                        );
+                      },
+                    ),
+            ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await _showCreateWorkspaceDialog();
+              },
+              icon: const Icon(Icons.add_circle_outline),
+              label: const Text('New workspace'),
             ),
+            if (!forceSelection && _selectedWorkspaceId != null)
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
           ],
         );
       },
@@ -1256,6 +1321,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   onPressed: isSubmitting
                       ? null
                       : () async {
+                          var didCloseDialog = false;
                           final name = controller.text.trim();
                           if (name.isEmpty) {
                             setDialogState(() {
@@ -1271,14 +1337,23 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             await _createWorkspace(name);
                             if (mounted && dialogContext.mounted) {
                               FocusManager.instance.primaryFocus?.unfocus();
+                              didCloseDialog = true;
                               Navigator.of(dialogContext).pop();
                             }
                           } on ApiError catch (error) {
-                            setDialogState(() {
-                              errorMessage = _formatApiError(error);
-                            });
-                          } finally {
                             if (dialogContext.mounted) {
+                              setDialogState(() {
+                                errorMessage = _formatApiError(error);
+                              });
+                            }
+                          } catch (error) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                errorMessage = error.toString();
+                              });
+                            }
+                          } finally {
+                            if (dialogContext.mounted && !didCloseDialog) {
                               setDialogState(() {
                                 isSubmitting = false;
                               });
@@ -1407,6 +1482,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return;
     }
     var isSubmitting = false;
+    String? errorMessage;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -1414,8 +1490,26 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('Delete workspace?'),
-              content: const Text(
-                'This will delete the workspace record from the client list and may orphan data on disk. This is a soft delete for MVP.',
+              content: SizedBox(
+                width: 460,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'This will delete the workspace record and may orphan data on disk. This action is soft-delete only for MVP.',
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 10),
+                      ErrorBanner(
+                        title: 'Delete failed',
+                        message: errorMessage!,
+                        copyText:
+                            'title: Delete failed\nmessage: ${errorMessage!}',
+                      ),
+                    ],
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
@@ -1433,13 +1527,47 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                       : () async {
                           setDialogState(() {
                             isSubmitting = true;
+                            errorMessage = null;
                           });
-                          await _softDeleteWorkspace(workspaceID);
-                          if (dialogContext.mounted) {
-                            Navigator.of(dialogContext).pop();
+                          try {
+                            await _softDeleteWorkspace(workspaceID);
+                            if (!mounted) {
+                              return;
+                            }
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            await _showSelectWorkspaceDialogInternal(
+                              forceSelection: true,
+                            );
+                          } on ApiError catch (error) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                errorMessage = _formatApiError(error);
+                              });
+                            }
+                          } catch (error) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                errorMessage = error.toString();
+                              });
+                            }
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                              });
+                            }
                           }
                         },
-                  child: const Text('Delete'),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.delete_outline),
+                      SizedBox(width: 6),
+                      Text('Delete'),
+                    ],
+                  ),
                 ),
               ],
             );
@@ -1927,35 +2055,24 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _renameWorkspace(String workspaceID, String nextName) async {
-    final nextVerID = _uuid.v4();
-    final now = DateTime.now().toUtc().toIso8601String();
-    final workspaceDoc = <String, dynamic>{
-      'doc_type': 'workspace',
-      'doc_id': workspaceID,
-      'ver_id': nextVerID,
-      'workspace_id': workspaceID,
-      'created_at': now,
-      'body': <String, dynamic>{'name': nextName, 'heads': <String, String>{}},
-    };
-    await _apiClient.putDocument(
-      docType: 'workspace',
-      docId: workspaceID,
-      verId: nextVerID,
-      document: workspaceDoc,
-    );
+    await _apiClient.patchWorkspace(workspaceId: workspaceID, name: nextName);
     await _loadWorkspaces();
     await _persistSettings();
     _showSnack('Workspace renamed');
   }
 
   Future<void> _softDeleteWorkspace(String workspaceID) async {
+    await _apiClient.deleteWorkspace(workspaceId: workspaceID);
     _hiddenWorkspaceIDs.add(workspaceID);
     if (_selectedWorkspaceId == workspaceID) {
       _selectedWorkspaceId = null;
+      _lastOpenedFlowWorkspaceId = null;
+      _lastOpenedFlowDocId = null;
+      _lastOpenedFlowVerId = null;
     }
     await _loadWorkspaces();
     await _persistSettings();
-    _showSnack('Workspace hidden');
+    _showSnack('Workspace deleted');
   }
 
   Future<bool> _saveNewFlowVersionToServer() async {
@@ -3758,6 +3875,7 @@ enum _WorkspaceMenuAction { rename, select, create, delete }
 class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
     required this.flowTitleController,
+    required this.hasWorkspaceSelected,
     required this.isSavingToServer,
     required this.isRunning,
     required this.onSaveToServer,
@@ -3773,6 +3891,7 @@ class _TopControlsBar extends StatelessWidget {
   });
 
   final TextEditingController flowTitleController;
+  final bool hasWorkspaceSelected;
   final bool isSavingToServer;
   final bool isRunning;
   final Future<bool> Function() onSaveToServer;
@@ -3829,7 +3948,9 @@ class _TopControlsBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 FilledButton.icon(
-                  onPressed: isSavingToServer ? null : onSetHead,
+                  onPressed: isSavingToServer || !hasWorkspaceSelected
+                      ? null
+                      : onSetHead,
                   icon: const Icon(Icons.push_pin),
                   label: const Text('Set Head'),
                 ),

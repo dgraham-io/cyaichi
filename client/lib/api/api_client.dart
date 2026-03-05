@@ -49,6 +49,30 @@ class WorkspaceCreated {
   final String verId;
 }
 
+class WorkspacePatched {
+  WorkspacePatched({
+    required this.workspaceId,
+    required this.verId,
+    required this.name,
+  });
+
+  final String workspaceId;
+  final String verId;
+  final String name;
+}
+
+class WorkspaceDeleted {
+  WorkspaceDeleted({
+    required this.workspaceId,
+    required this.verId,
+    required this.deleted,
+  });
+
+  final String workspaceId;
+  final String verId;
+  final bool deleted;
+}
+
 class RunCreated {
   RunCreated({
     required this.runId,
@@ -194,6 +218,33 @@ class ApiClient {
   Future<List<WorkspaceListItem>> getWorkspaces() async {
     final json = await _requestJson('GET', '/v1/workspaces');
     return parseWorkspaceListResponse(json);
+  }
+
+  Future<WorkspacePatched> patchWorkspace({
+    required String workspaceId,
+    required String name,
+  }) async {
+    final json = await _requestJson(
+      'PATCH',
+      '/v1/workspaces/$workspaceId',
+      body: <String, dynamic>{'name': name},
+    );
+    return WorkspacePatched(
+      workspaceId: json['workspace_id'] as String? ?? workspaceId,
+      verId: json['ver_id'] as String? ?? '',
+      name: json['name'] as String? ?? name,
+    );
+  }
+
+  Future<WorkspaceDeleted> deleteWorkspace({
+    required String workspaceId,
+  }) async {
+    final json = await _requestJson('DELETE', '/v1/workspaces/$workspaceId');
+    return WorkspaceDeleted(
+      workspaceId: json['workspace_id'] as String? ?? workspaceId,
+      verId: json['ver_id'] as String? ?? '',
+      deleted: json['deleted'] as bool? ?? false,
+    );
   }
 
   Future<void> putFlowDocument({

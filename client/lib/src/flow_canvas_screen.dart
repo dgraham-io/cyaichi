@@ -71,7 +71,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       'client.last_opened_flow.workspace_id';
   static const _prefLastOpenedFlowDocId = 'client.last_opened_flow.doc_id';
   static const _prefLastOpenedFlowVerId = 'client.last_opened_flow.ver_id';
-  static const _prefLeftSidebarCollapsed = 'client.left_sidebar_collapsed';
+  static const _prefRightOverlaySidebarOpen =
+      'client.right_overlay_sidebar_open';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   late final TextEditingController _flowTitleController;
@@ -157,7 +158,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String _lastExportJson = '';
   String _nodePaletteSearchQuery = '';
   Timer? _nodePaletteSearchDebounce;
-  bool _isLeftSidebarCollapsed = false;
+  bool _isRightOverlaySidebarOpen = true;
 
   @override
   void initState() {
@@ -238,8 +239,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
     final loadedLastOpenedFlowDocId = prefs.getString(_prefLastOpenedFlowDocId);
     final loadedLastOpenedFlowVerId = prefs.getString(_prefLastOpenedFlowVerId);
-    final loadedLeftSidebarCollapsed =
-        prefs.getBool(_prefLeftSidebarCollapsed) ?? false;
+    final loadedRightOverlaySidebarOpen =
+        prefs.getBool(_prefRightOverlaySidebarOpen) ?? true;
     final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
@@ -288,7 +289,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastOpenedFlowWorkspaceId = loadedLastOpenedFlowWorkspaceId;
       _lastOpenedFlowDocId = loadedLastOpenedFlowDocId;
       _lastOpenedFlowVerId = loadedLastOpenedFlowVerId;
-      _isLeftSidebarCollapsed = loadedLeftSidebarCollapsed;
+      _isRightOverlaySidebarOpen = loadedRightOverlaySidebarOpen;
       _nodeTypeRegistry = loadedRegistry;
       _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
@@ -332,15 +333,18 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       await prefs.setString(_prefLastOpenedFlowDocId, _lastOpenedFlowDocId!);
       await prefs.setString(_prefLastOpenedFlowVerId, _lastOpenedFlowVerId!);
     }
-    await prefs.setBool(_prefLeftSidebarCollapsed, _isLeftSidebarCollapsed);
+    await prefs.setBool(
+      _prefRightOverlaySidebarOpen,
+      _isRightOverlaySidebarOpen,
+    );
   }
 
-  void _toggleLeftSidebarCollapsed() {
+  void _toggleRightOverlaySidebar() {
     if (!mounted) {
       return;
     }
     setState(() {
-      _isLeftSidebarCollapsed = !_isLeftSidebarCollapsed;
+      _isRightOverlaySidebarOpen = !_isRightOverlaySidebarOpen;
     });
     unawaited(_persistSettings());
   }
@@ -602,8 +606,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Widget _buildFlowTab() {
-    const expandedSidebarWidth = 360.0;
-    const collapsedSidebarWidth = 56.0;
     final runGuard = _computeRunGuard();
     final hasWorkspaceSelected = _selectedWorkspaceId != null;
     final nodes = _controller.nodes.values.toList(growable: false);
@@ -675,301 +677,348 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             children: [
               AbsorbPointer(
                 absorbing: !hasWorkspaceSelected,
-                child: Row(
-                  children: [
-                    AnimatedContainer(
-                      key: const Key('left-sidebar'),
-                      duration: const Duration(milliseconds: 180),
-                      curve: Curves.easeOutCubic,
-                      width: _isLeftSidebarCollapsed
-                          ? collapsedSidebarWidth
-                          : expandedSidebarWidth,
-                      decoration: const BoxDecoration(
-                        color: CyaichiTheme.surface,
-                      ),
-                      child: _isLeftSidebarCollapsed
-                          ? Column(
-                              children: [
-                                const SizedBox(height: 8),
-                                Tooltip(
-                                  message: 'Expand sidebar',
-                                  child: IconButton(
-                                    key: const Key(
-                                      'left-sidebar-expand-button',
-                                    ),
-                                    onPressed: _toggleLeftSidebarCollapsed,
-                                    icon: const Icon(Icons.chevron_right),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                const Divider(height: 1),
-                              ],
-                            )
-                          : Column(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Tooltip(
-                                      message: 'Collapse sidebar',
-                                      child: IconButton(
-                                        key: const Key(
-                                          'left-sidebar-collapse-button',
-                                        ),
-                                        onPressed: _toggleLeftSidebarCollapsed,
-                                        icon: const Icon(Icons.chevron_left),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
-                                  child: SizedBox(
-                                    height: 192,
-                                    child: _PalettePanel(
-                                      nodeTypes: _nodeTypeRegistry.all,
-                                      onAddNode: _addNode,
-                                      searchController:
-                                          _nodePaletteSearchController,
-                                      searchQuery: _nodePaletteSearchQuery,
-                                      onSearchChanged:
-                                          _onNodePaletteSearchChanged,
-                                      onClearSearch: _clearNodePaletteSearch,
-                                    ),
-                                  ),
-                                ),
-                                const Divider(height: 1),
-                                Expanded(
-                                  child: _InspectorPanel(
-                                    selectedNode: selectedNode,
-                                    selectedConnection: selectedConnection,
-                                    isPrimaryWriteNode:
-                                        selectedNode != null &&
-                                        selectedNode.type == 'file.write' &&
-                                        _isPrimaryWriteNode(selectedNode.id),
-                                    nodeType: selectedNode == null
-                                        ? null
-                                        : _nodeTypeRegistry.byType(
-                                            selectedNode.type,
-                                          ),
-                                    onTitleChanged: (value) =>
-                                        _updateNodeTitle(selectedNode, value),
-                                    onConfigChanged: (key, value) =>
-                                        _updateNodeConfig(
-                                          selectedNode,
-                                          key,
-                                          value,
-                                        ),
-                                    onDeleteNode: _deleteSelectedNode,
-                                    onDeleteConnection:
-                                        _deleteSelectedConnection,
-                                    onSetPrimaryOutput: selectedNode == null
-                                        ? null
-                                        : () => _setPrimaryOutputNode(
-                                            selectedNode.id,
-                                          ),
-                                  ),
-                                ),
-                                const Divider(height: 1),
-                                _RunPanel(
-                                  inputFileController: _inputFileController,
-                                  outputFileController: _outputFileController,
-                                  inputFileHint: _defaultRunInputFile,
-                                  outputFileHint: _defaultRunOutputFile,
-                                  status: _lastRunStatus,
-                                  blockers: runGuard.blockers,
-                                  showBlockers: _hasAttemptedRun,
-                                  subtleHint:
-                                      !_hasAttemptedRun &&
-                                          runGuard.blockers.isNotEmpty
-                                      ? runGuard.blockers.first
-                                      : null,
-                                  showEmptyHint: nodes.isEmpty,
-                                  validationError: _runValidationError,
-                                  runId: _lastRunId,
-                                  runVerId: _lastRunVerId,
-                                  error: _lastRunError,
-                                  errorKind: _lastRunErrorKind,
-                                  errorNodeId: _lastRunErrorNodeId,
-                                  errorCopyText: _lastRunErrorCopyText,
-                                  errorCopyJson: _lastRunErrorCopyJson,
-                                  invocations: _lastRunInvocations,
-                                  outputArtifactSummary:
-                                      _lastOutputArtifactSummary,
-                                  outputPath: _lastOutputPath,
-                                  outputContent: _lastOutputContent,
-                                  outputContentFull: _lastOutputContentFull,
-                                  isRunning: _isRunning,
-                                  duration: _lastRunDuration,
-                                  retryable: _lastRunRetryable,
-                                  runTimedOut: _lastRunTimedOut,
-                                  onRetry: _runFlow,
-                                  onCancel: _cancelRunWait,
-                                  onOpenRunDetails:
-                                      _openLatestRunDetailsFromPanel,
-                                  onRefreshRuns: _loadRuns,
-                                  onOpenOutputFileFromTimeout:
-                                      _openKnownOutputFileFromRunPanel,
-                                ),
-                              ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final computedPanelWidth = (constraints.maxWidth * 0.32)
+                        .clamp(300.0, 420.0);
+                    final panelWidth = computedPanelWidth.toDouble();
+                    final panelRight = _isRightOverlaySidebarOpen
+                        ? 0.0
+                        : -(panelWidth + 16);
+                    final toggleRight = _isRightOverlaySidebarOpen
+                        ? panelWidth + 12
+                        : 12.0;
+                    return Stack(
+                      children: [
+                        KeyedSubtree(
+                          key: const Key('flow-canvas-pane'),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  CyaichiTheme.background,
+                                  CyaichiTheme.surface,
+                                  CyaichiTheme.outline.withValues(alpha: 0.45),
+                                ],
+                              ),
                             ),
-                    ),
-                    const VerticalDivider(width: 1),
-                    Expanded(
-                      child: KeyedSubtree(
-                        key: const Key('flow-canvas-pane'),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                CyaichiTheme.background,
-                                CyaichiTheme.surface,
-                                CyaichiTheme.outline.withValues(alpha: 0.45),
-                              ],
-                            ),
-                          ),
-                          child: Stack(
-                            children: [
-                              NodeFlowEditor<Map<String, dynamic>, dynamic>(
-                                controller: _controller,
-                                theme: canvasTheme,
-                                nodeBuilder: _buildNodeCard,
-                                behavior: NodeFlowBehavior.design,
-                                events:
-                                    NodeFlowEvents<
-                                      Map<String, dynamic>,
-                                      dynamic
-                                    >(
-                                      node: NodeEvents(
-                                        onSelected: (node) {
+                            child: Stack(
+                              children: [
+                                NodeFlowEditor<Map<String, dynamic>, dynamic>(
+                                  controller: _controller,
+                                  theme: canvasTheme,
+                                  nodeBuilder: _buildNodeCard,
+                                  behavior: NodeFlowBehavior.design,
+                                  events:
+                                      NodeFlowEvents<
+                                        Map<String, dynamic>,
+                                        dynamic
+                                      >(
+                                        node: NodeEvents(
+                                          onSelected: (node) {
+                                            setState(() {
+                                              _selectedNodeId = node?.id;
+                                            });
+                                          },
+                                        ),
+                                        connection:
+                                            ConnectionEvents<
+                                              Map<String, dynamic>,
+                                              dynamic
+                                            >(
+                                              onBeforeComplete:
+                                                  _validateConnectionBeforeComplete,
+                                              onCreated: (_) {
+                                                _markFlowDirty();
+                                              },
+                                              onDeleted: (_) {
+                                                _markFlowDirty();
+                                              },
+                                              onSelected: (connection) {
+                                                setState(() {
+                                                  _selectedConnectionId =
+                                                      connection?.id;
+                                                });
+                                              },
+                                              onConnectEnd: (_, __, ___) {
+                                                final reason =
+                                                    _connectionRejectReason;
+                                                if (reason != null && mounted) {
+                                                  _showSnack(reason);
+                                                  _connectionRejectReason =
+                                                      null;
+                                                }
+                                              },
+                                            ),
+                                        onSelectionChange: (selection) {
                                           setState(() {
-                                            _selectedNodeId = node?.id;
+                                            _selectedNodeId =
+                                                selection.nodes.isEmpty
+                                                ? null
+                                                : selection.nodes.first.id;
+                                            _selectedConnectionId =
+                                                selection.connections.isEmpty
+                                                ? null
+                                                : selection
+                                                      .connections
+                                                      .first
+                                                      .id;
                                           });
                                         },
                                       ),
-                                      connection:
-                                          ConnectionEvents<
-                                            Map<String, dynamic>,
-                                            dynamic
-                                          >(
-                                            onBeforeComplete:
-                                                _validateConnectionBeforeComplete,
-                                            onCreated: (_) {
-                                              _markFlowDirty();
-                                            },
-                                            onDeleted: (_) {
-                                              _markFlowDirty();
-                                            },
-                                            onSelected: (connection) {
-                                              setState(() {
-                                                _selectedConnectionId =
-                                                    connection?.id;
-                                              });
-                                            },
-                                            onConnectEnd: (_, __, ___) {
-                                              final reason =
-                                                  _connectionRejectReason;
-                                              if (reason != null && mounted) {
-                                                _showSnack(reason);
-                                                _connectionRejectReason = null;
-                                              }
-                                            },
-                                          ),
-                                      onSelectionChange: (selection) {
-                                        setState(() {
-                                          _selectedNodeId =
-                                              selection.nodes.isEmpty
-                                              ? null
-                                              : selection.nodes.first.id;
-                                          _selectedConnectionId =
-                                              selection.connections.isEmpty
-                                              ? null
-                                              : selection.connections.first.id;
-                                        });
-                                      },
+                                ),
+                                Positioned(
+                                  left: 12,
+                                  top: 12,
+                                  child: _FlowTitleOverlay(
+                                    title: _flowTitleController.text,
+                                    canUpdate:
+                                        !_isSavingToServer &&
+                                        _selectedWorkspaceId != null &&
+                                        _isFlowDirty,
+                                    canDuplicate: !_isSavingToServer,
+                                    canSetHead:
+                                        !_isSavingToServer &&
+                                        _selectedWorkspaceId != null,
+                                    onRename: _showRenameFlowDialog,
+                                    onUpdate: () {
+                                      unawaited(_saveNewFlowVersionToServer());
+                                    },
+                                    onDuplicate: () {
+                                      unawaited(_duplicateCurrentFlow());
+                                    },
+                                    onSetHead: () {
+                                      unawaited(_setCurrentFlowAsHead());
+                                    },
+                                    runEnabled: runEnabled,
+                                    showRunBlockedOverlay:
+                                        showRunBlockedOverlay,
+                                    isRunning: _isRunning,
+                                    runTooltip: runTooltip,
+                                    onRun: () {
+                                      unawaited(_runFlow());
+                                    },
+                                  ),
+                                ),
+                                Positioned(
+                                  left: 12,
+                                  bottom: 12,
+                                  child: _CanvasZoomControls(
+                                    onZoomIn: () => _controller.zoomBy(0.1),
+                                    onZoomOut: () => _controller.zoomBy(-0.1),
+                                    onReset: () => _controller.zoomTo(1.0),
+                                    onFit: _controller.fitToView,
+                                  ),
+                                ),
+                                AnimatedPositioned(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutCubic,
+                                  top: 12,
+                                  right: toggleRight,
+                                  child: Card(
+                                    margin: EdgeInsets.zero,
+                                    elevation: 4,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
                                     ),
-                              ),
-                              Positioned(
-                                left: 12,
-                                top: 12,
-                                child: _FlowTitleOverlay(
-                                  title: _flowTitleController.text,
-                                  canUpdate:
-                                      !_isSavingToServer &&
-                                      _selectedWorkspaceId != null &&
-                                      _isFlowDirty,
-                                  canDuplicate: !_isSavingToServer,
-                                  canSetHead:
-                                      !_isSavingToServer &&
-                                      _selectedWorkspaceId != null,
-                                  onRename: _showRenameFlowDialog,
-                                  onUpdate: () {
-                                    unawaited(_saveNewFlowVersionToServer());
-                                  },
-                                  onDuplicate: () {
-                                    unawaited(_duplicateCurrentFlow());
-                                  },
-                                  onSetHead: () {
-                                    unawaited(_setCurrentFlowAsHead());
-                                  },
-                                  runEnabled: runEnabled,
-                                  showRunBlockedOverlay: showRunBlockedOverlay,
-                                  isRunning: _isRunning,
-                                  runTooltip: runTooltip,
-                                  onRun: () {
-                                    unawaited(_runFlow());
-                                  },
-                                ),
-                              ),
-                              Positioned(
-                                left: 12,
-                                bottom: 12,
-                                child: _CanvasZoomControls(
-                                  onZoomIn: () => _controller.zoomBy(0.1),
-                                  onZoomOut: () => _controller.zoomBy(-0.1),
-                                  onReset: () => _controller.zoomTo(1.0),
-                                  onFit: _controller.fitToView,
-                                ),
-                              ),
-                              if (_isLoadingFlow)
-                                Positioned.fill(
-                                  child: ColoredBox(
-                                    color: Colors.black.withValues(alpha: 0.28),
-                                    child: Center(
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.surface,
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                          border: Border.all(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.outlineVariant,
-                                          ),
-                                        ),
-                                        child: const Padding(
-                                          padding: EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 10,
-                                          ),
-                                          child: Text('Loading flow...'),
+                                    child: Tooltip(
+                                      message: _isRightOverlaySidebarOpen
+                                          ? 'Hide panel'
+                                          : 'Show panel',
+                                      child: IconButton(
+                                        key: const Key('right-sidebar-toggle'),
+                                        onPressed: _toggleRightOverlaySidebar,
+                                        icon: Icon(
+                                          _isRightOverlaySidebarOpen
+                                              ? Icons.chevron_right
+                                              : Icons.chevron_left,
                                         ),
                                       ),
                                     ),
                                   ),
                                 ),
-                            ],
+                                if (_isLoadingFlow)
+                                  Positioned.fill(
+                                    child: ColoredBox(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.28,
+                                      ),
+                                      child: Center(
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.surface,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                            border: Border.all(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.outlineVariant,
+                                            ),
+                                          ),
+                                          child: const Padding(
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: 14,
+                                              vertical: 10,
+                                            ),
+                                            child: Text('Loading flow...'),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  ],
+                        AnimatedPositioned(
+                          key: const Key('right-overlay-sidebar-position'),
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          top: 0,
+                          bottom: 0,
+                          right: panelRight,
+                          child: IgnorePointer(
+                            ignoring: !_isRightOverlaySidebarOpen,
+                            child: SizedBox(
+                              key: const Key('right-overlay-sidebar'),
+                              width: panelWidth,
+                              child: Material(
+                                elevation: 10,
+                                color: Theme.of(context).colorScheme.surface,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      left: BorderSide(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.outlineVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          10,
+                                          10,
+                                          10,
+                                          6,
+                                        ),
+                                        child: SizedBox(
+                                          height: 220,
+                                          child: _PalettePanel(
+                                            nodeTypes: _nodeTypeRegistry.all,
+                                            onAddNode: _addNode,
+                                            searchController:
+                                                _nodePaletteSearchController,
+                                            searchQuery:
+                                                _nodePaletteSearchQuery,
+                                            onSearchChanged:
+                                                _onNodePaletteSearchChanged,
+                                            onClearSearch:
+                                                _clearNodePaletteSearch,
+                                          ),
+                                        ),
+                                      ),
+                                      const Divider(height: 1),
+                                      Expanded(
+                                        child: _InspectorPanel(
+                                          selectedNode: selectedNode,
+                                          selectedConnection:
+                                              selectedConnection,
+                                          isPrimaryWriteNode:
+                                              selectedNode != null &&
+                                              selectedNode.type ==
+                                                  'file.write' &&
+                                              _isPrimaryWriteNode(
+                                                selectedNode.id,
+                                              ),
+                                          nodeType: selectedNode == null
+                                              ? null
+                                              : _nodeTypeRegistry.byType(
+                                                  selectedNode.type,
+                                                ),
+                                          onTitleChanged: (value) =>
+                                              _updateNodeTitle(
+                                                selectedNode,
+                                                value,
+                                              ),
+                                          onConfigChanged: (key, value) =>
+                                              _updateNodeConfig(
+                                                selectedNode,
+                                                key,
+                                                value,
+                                              ),
+                                          onDeleteNode: _deleteSelectedNode,
+                                          onDeleteConnection:
+                                              _deleteSelectedConnection,
+                                          onSetPrimaryOutput:
+                                              selectedNode == null
+                                              ? null
+                                              : () => _setPrimaryOutputNode(
+                                                  selectedNode.id,
+                                                ),
+                                        ),
+                                      ),
+                                      const Divider(height: 1),
+                                      _RunPanel(
+                                        inputFileController:
+                                            _inputFileController,
+                                        outputFileController:
+                                            _outputFileController,
+                                        inputFileHint: _defaultRunInputFile,
+                                        outputFileHint: _defaultRunOutputFile,
+                                        status: _lastRunStatus,
+                                        blockers: runGuard.blockers,
+                                        showBlockers: _hasAttemptedRun,
+                                        subtleHint:
+                                            !_hasAttemptedRun &&
+                                                runGuard.blockers.isNotEmpty
+                                            ? runGuard.blockers.first
+                                            : null,
+                                        showEmptyHint: nodes.isEmpty,
+                                        validationError: _runValidationError,
+                                        runId: _lastRunId,
+                                        runVerId: _lastRunVerId,
+                                        error: _lastRunError,
+                                        errorKind: _lastRunErrorKind,
+                                        errorNodeId: _lastRunErrorNodeId,
+                                        errorCopyText: _lastRunErrorCopyText,
+                                        errorCopyJson: _lastRunErrorCopyJson,
+                                        invocations: _lastRunInvocations,
+                                        outputArtifactSummary:
+                                            _lastOutputArtifactSummary,
+                                        outputPath: _lastOutputPath,
+                                        outputContent: _lastOutputContent,
+                                        outputContentFull:
+                                            _lastOutputContentFull,
+                                        isRunning: _isRunning,
+                                        duration: _lastRunDuration,
+                                        retryable: _lastRunRetryable,
+                                        runTimedOut: _lastRunTimedOut,
+                                        onRetry: _runFlow,
+                                        onCancel: _cancelRunWait,
+                                        onOpenRunDetails:
+                                            _openLatestRunDetailsFromPanel,
+                                        onRefreshRuns: _loadRuns,
+                                        onOpenOutputFileFromTimeout:
+                                            _openKnownOutputFileFromRunPanel,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
               if (!hasWorkspaceSelected)

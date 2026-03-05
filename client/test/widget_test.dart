@@ -201,7 +201,9 @@ void main() {
     expect(find.byKey(const Key('add-file.write')), findsOneWidget);
   });
 
-  testWidgets('left sidebar collapses and expands', (WidgetTester tester) async {
+  testWidgets('right overlay sidebar toggles without resizing canvas', (
+    WidgetTester tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -221,34 +223,38 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final sidebarFinder = find.byKey(const Key('left-sidebar'));
+    final sidebarFinder = find.byKey(const Key('right-overlay-sidebar'));
     final canvasFinder = find.byKey(const Key('flow-canvas-pane'));
     expect(sidebarFinder, findsOneWidget);
     expect(canvasFinder, findsOneWidget);
+
+    final canvasRectBefore = tester.getRect(canvasFinder);
+    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
     expect(
-      tester.getTopLeft(sidebarFinder).dx < tester.getTopLeft(canvasFinder).dx,
+      tester.getTopLeft(sidebarFinder).dx < canvasRectBefore.right,
       isTrue,
     );
-    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
 
-    final expandedWidth = tester.getSize(sidebarFinder).width;
-    await tester.tap(find.byKey(const Key('left-sidebar-collapse-button')));
+    await tester.tap(find.byKey(const Key('right-sidebar-toggle')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 220));
 
-    final collapsedWidth = tester.getSize(sidebarFinder).width;
-    expect(collapsedWidth < expandedWidth, isTrue);
-    expect(find.byKey(const Key('left-sidebar-expand-button')), findsOneWidget);
-    expect(find.byKey(const Key('node-palette-search-field')), findsNothing);
+    final canvasRectClosed = tester.getRect(canvasFinder);
+    expect(canvasRectClosed, equals(canvasRectBefore));
+    expect(
+      tester.getTopLeft(sidebarFinder).dx >= canvasRectBefore.right,
+      isTrue,
+    );
 
-    await tester.tap(find.byKey(const Key('left-sidebar-expand-button')));
+    await tester.tap(find.byKey(const Key('right-sidebar-toggle')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 220));
 
+    expect(tester.getRect(canvasFinder), equals(canvasRectBefore));
+    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
     expect(
-      tester.getSize(sidebarFinder).width > collapsedWidth,
+      tester.getTopLeft(sidebarFinder).dx < canvasRectBefore.right,
       isTrue,
     );
-    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
   });
 }

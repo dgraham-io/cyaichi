@@ -146,11 +146,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Select workspace'), findsAtLeastNWidgets(1));
-      expect(find.text('New workspace'), findsOneWidget);
-      await tester.tap(find.text('New workspace'));
+      final newWorkspaceButton = find.byKey(
+        const Key('workspace-select-new-workspace'),
+      );
+      expect(newWorkspaceButton, findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, 'New workspace'),
+        findsOneWidget,
+      );
+      await tester.tap(newWorkspaceButton);
       await tester.pumpAndSettle();
 
       expect(find.text('New workspace'), findsOneWidget);
+      expect(find.byKey(const Key('workspace-create-confirm')), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
     },
   );
 }

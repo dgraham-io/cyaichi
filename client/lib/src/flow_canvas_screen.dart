@@ -1214,7 +1214,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         return AlertDialog(
           title: const Text('Select workspace'),
           content: SizedBox(
-            width: 560,
+            width: 520,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 360),
               child: _workspaceIds.isEmpty
@@ -1242,7 +1242,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             ),
           ),
           actions: [
-            FilledButton.icon(
+            if (!forceSelection && _selectedWorkspaceId != null)
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+            FilledButton.tonalIcon(
+              key: const Key('workspace-select-new-workspace'),
               onPressed: () async {
                 Navigator.of(dialogContext).pop();
                 await _showCreateWorkspaceDialog();
@@ -1250,11 +1256,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               icon: const Icon(Icons.add_circle_outline),
               label: const Text('New workspace'),
             ),
-            if (!forceSelection && _selectedWorkspaceId != null)
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('Cancel'),
-              ),
           ],
         );
       },
@@ -1272,8 +1273,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('New workspace'),
-              content: SizedBox(
-                width: 460,
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1307,7 +1308,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                       : () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancel'),
                 ),
-                FilledButton(
+                FilledButton.icon(
+                  key: const Key('workspace-create-confirm'),
                   onPressed: isSubmitting
                       ? null
                       : () async {
@@ -1350,7 +1352,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             }
                           }
                         },
-                  child: const Text('Create'),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Create'),
                 ),
               ],
             );
@@ -1376,8 +1379,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('Rename workspace'),
-              content: SizedBox(
-                width: 460,
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1411,7 +1414,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                       : () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancel'),
                 ),
-                FilledButton(
+                FilledButton.icon(
+                  key: const Key('workspace-rename-save'),
                   onPressed: isSubmitting
                       ? null
                       : () async {
@@ -1456,7 +1460,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             }
                           }
                         },
-                  child: const Text('Save'),
+                  icon: const Icon(Icons.drive_file_rename_outline),
+                  label: const Text('Save'),
                 ),
               ],
             );
@@ -1480,8 +1485,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('Delete workspace?'),
-              content: SizedBox(
-                width: 460,
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1508,9 +1513,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                       : () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancel'),
                 ),
-                FilledButton.tonal(
+                FilledButton.icon(
+                  key: const Key('workspace-delete-confirm'),
                   style: FilledButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.error,
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
                   ),
                   onPressed: isSubmitting
                       ? null
@@ -1550,14 +1557,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             }
                           }
                         },
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.delete_outline),
-                      SizedBox(width: 6),
-                      Text('Delete'),
-                    ],
-                  ),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete'),
                 ),
               ],
             );

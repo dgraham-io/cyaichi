@@ -23,6 +23,7 @@ flutter run
   - shows current workspace name (or `No workspace`)
   - edit menu actions: **Rename workspace**, **Select workspace**, **New workspace**, **Delete workspace**
   - all workspace actions run through dialogs (no workspace dropdown)
+  - dialogs follow Material 3 button hierarchy: **Filled** for primary, **Tonal** for secondary, **Text** for cancel
 - Bottom navigation with four tabs:
   - **Flow**: node editor + save/run controls
   - **Flows**: flow library for list/open/version management

@@ -227,6 +227,10 @@ void main() {
     final canvasFinder = find.byKey(const Key('flow-canvas-pane'));
     expect(sidebarFinder, findsOneWidget);
     expect(canvasFinder, findsOneWidget);
+    expect(
+      find.byKey(const Key('right-sidebar-resize-handle-hit')),
+      findsOneWidget,
+    );
 
     final canvasRectBefore = tester.getRect(canvasFinder);
     expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
@@ -256,5 +260,15 @@ void main() {
       tester.getTopLeft(sidebarFinder).dx < canvasRectBefore.right,
       isTrue,
     );
+
+    final initialWidth = tester.getSize(sidebarFinder).width;
+    await tester.drag(
+      find.byKey(const Key('right-sidebar-resize-handle-hit')),
+      const Offset(-80, 0),
+    );
+    await tester.pumpAndSettle();
+
+    final widenedWidth = tester.getSize(sidebarFinder).width;
+    expect(widenedWidth, greaterThan(initialWidth));
   });
 }

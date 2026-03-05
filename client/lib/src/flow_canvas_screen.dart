@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:client/api/api_client.dart';
 import 'package:client/src/flow/connection_validation.dart';
@@ -38,6 +39,16 @@ ApiClient _defaultApiClientFactory({
   );
 }
 
+@visibleForTesting
+double clampRightOverlaySidebarWidth(
+  double requestedWidth,
+  double screenWidth,
+) {
+  final maxAllowed = math.min(520.0, screenWidth * 0.6);
+  final clampedMax = math.max(280.0, maxAllowed);
+  return requestedWidth.clamp(280.0, clampedMax).toDouble();
+}
+
 class FlowCanvasScreen extends StatefulWidget {
   const FlowCanvasScreen({
     super.key,
@@ -73,6 +84,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefLastOpenedFlowVerId = 'client.last_opened_flow.ver_id';
   static const _prefRightOverlaySidebarOpen =
       'client.right_overlay_sidebar_open';
+  static const _prefRightOverlaySidebarWidth =
+      'client.right_overlay_sidebar_width';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   late final TextEditingController _flowTitleController;
@@ -159,6 +172,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String _nodePaletteSearchQuery = '';
   Timer? _nodePaletteSearchDebounce;
   bool _isRightOverlaySidebarOpen = true;
+  double _rightOverlaySidebarWidth = 360;
   double _canvasZoomLevel = 1.0;
 
   @override
@@ -242,6 +256,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedLastOpenedFlowVerId = prefs.getString(_prefLastOpenedFlowVerId);
     final loadedRightOverlaySidebarOpen =
         prefs.getBool(_prefRightOverlaySidebarOpen) ?? true;
+    final loadedRightOverlaySidebarWidth =
+        prefs.getDouble(_prefRightOverlaySidebarWidth) ??
+        (prefs.getInt(_prefRightOverlaySidebarWidth)?.toDouble() ?? 360);
     final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
@@ -291,6 +308,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastOpenedFlowDocId = loadedLastOpenedFlowDocId;
       _lastOpenedFlowVerId = loadedLastOpenedFlowVerId;
       _isRightOverlaySidebarOpen = loadedRightOverlaySidebarOpen;
+      _rightOverlaySidebarWidth = loadedRightOverlaySidebarWidth;
       _nodeTypeRegistry = loadedRegistry;
       _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
@@ -338,6 +356,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _prefRightOverlaySidebarOpen,
       _isRightOverlaySidebarOpen,
     );
+    await prefs.setDouble(
+      _prefRightOverlaySidebarWidth,
+      _rightOverlaySidebarWidth,
+    );
   }
 
   void _toggleRightOverlaySidebar() {
@@ -367,6 +389,19 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
     setState(() {
       _canvasZoomLevel = 1.0;
+    });
+  }
+
+  void _resizeRightOverlaySidebar(double deltaX, double screenWidth) {
+    final nextWidth = clampRightOverlaySidebarWidth(
+      _rightOverlaySidebarWidth - deltaX,
+      screenWidth,
+    );
+    if (!mounted || (nextWidth - _rightOverlaySidebarWidth).abs() < 0.01) {
+      return;
+    }
+    setState(() {
+      _rightOverlaySidebarWidth = nextWidth;
     });
   }
 
@@ -700,9 +735,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 absorbing: !hasWorkspaceSelected,
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final computedPanelWidth = (constraints.maxWidth * 0.32)
-                        .clamp(300.0, 420.0);
-                    final panelWidth = computedPanelWidth.toDouble();
+                    final panelWidth = clampRightOverlaySidebarWidth(
+                      _rightOverlaySidebarWidth,
+                      constraints.maxWidth,
+                    );
                     final panelRight = _isRightOverlaySidebarOpen
                         ? 0.0
                         : -(panelWidth + 16);
@@ -886,131 +922,187 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             child: SizedBox(
                               key: const Key('right-overlay-sidebar'),
                               width: panelWidth,
-                              child: Material(
-                                elevation: 10,
-                                color: Theme.of(context).colorScheme.surface,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      left: BorderSide(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.outlineVariant,
+                              child: Stack(
+                                children: [
+                                  Material(
+                                    elevation: 10,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 8),
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          border: Border(
+                                            left: BorderSide(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.outlineVariant,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    10,
+                                                    10,
+                                                    10,
+                                                    6,
+                                                  ),
+                                              child: SizedBox(
+                                                height: 220,
+                                                child: _PalettePanel(
+                                                  nodeTypes:
+                                                      _nodeTypeRegistry.all,
+                                                  onAddNode: _addNode,
+                                                  searchController:
+                                                      _nodePaletteSearchController,
+                                                  searchQuery:
+                                                      _nodePaletteSearchQuery,
+                                                  onSearchChanged:
+                                                      _onNodePaletteSearchChanged,
+                                                  onClearSearch:
+                                                      _clearNodePaletteSearch,
+                                                ),
+                                              ),
+                                            ),
+                                            const Divider(height: 1),
+                                            Expanded(
+                                              child: _InspectorPanel(
+                                                selectedNode: selectedNode,
+                                                selectedConnection:
+                                                    selectedConnection,
+                                                isPrimaryWriteNode:
+                                                    selectedNode != null &&
+                                                    selectedNode.type ==
+                                                        'file.write' &&
+                                                    _isPrimaryWriteNode(
+                                                      selectedNode.id,
+                                                    ),
+                                                nodeType: selectedNode == null
+                                                    ? null
+                                                    : _nodeTypeRegistry.byType(
+                                                        selectedNode.type,
+                                                      ),
+                                                onTitleChanged: (value) =>
+                                                    _updateNodeTitle(
+                                                      selectedNode,
+                                                      value,
+                                                    ),
+                                                onConfigChanged: (key, value) =>
+                                                    _updateNodeConfig(
+                                                      selectedNode,
+                                                      key,
+                                                      value,
+                                                    ),
+                                                onDeleteNode:
+                                                    _deleteSelectedNode,
+                                                onDeleteConnection:
+                                                    _deleteSelectedConnection,
+                                                onSetPrimaryOutput:
+                                                    selectedNode == null
+                                                    ? null
+                                                    : () =>
+                                                          _setPrimaryOutputNode(
+                                                            selectedNode.id,
+                                                          ),
+                                              ),
+                                            ),
+                                            const Divider(height: 1),
+                                            _RunPanel(
+                                              inputFileController:
+                                                  _inputFileController,
+                                              outputFileController:
+                                                  _outputFileController,
+                                              inputFileHint:
+                                                  _defaultRunInputFile,
+                                              outputFileHint:
+                                                  _defaultRunOutputFile,
+                                              status: _lastRunStatus,
+                                              blockers: runGuard.blockers,
+                                              showBlockers: _hasAttemptedRun,
+                                              subtleHint:
+                                                  !_hasAttemptedRun &&
+                                                      runGuard
+                                                          .blockers
+                                                          .isNotEmpty
+                                                  ? runGuard.blockers.first
+                                                  : null,
+                                              showEmptyHint: nodes.isEmpty,
+                                              validationError:
+                                                  _runValidationError,
+                                              runId: _lastRunId,
+                                              runVerId: _lastRunVerId,
+                                              error: _lastRunError,
+                                              errorKind: _lastRunErrorKind,
+                                              errorNodeId: _lastRunErrorNodeId,
+                                              errorCopyText:
+                                                  _lastRunErrorCopyText,
+                                              errorCopyJson:
+                                                  _lastRunErrorCopyJson,
+                                              invocations: _lastRunInvocations,
+                                              outputArtifactSummary:
+                                                  _lastOutputArtifactSummary,
+                                              outputPath: _lastOutputPath,
+                                              outputContent: _lastOutputContent,
+                                              outputContentFull:
+                                                  _lastOutputContentFull,
+                                              isRunning: _isRunning,
+                                              duration: _lastRunDuration,
+                                              retryable: _lastRunRetryable,
+                                              runTimedOut: _lastRunTimedOut,
+                                              onRetry: _runFlow,
+                                              onCancel: _cancelRunWait,
+                                              onOpenRunDetails:
+                                                  _openLatestRunDetailsFromPanel,
+                                              onRefreshRuns: _loadRuns,
+                                              onOpenOutputFileFromTimeout:
+                                                  _openKnownOutputFileFromRunPanel,
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ),
-                                  child: Column(
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          10,
-                                          10,
-                                          10,
-                                          6,
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: MouseRegion(
+                                      cursor:
+                                          SystemMouseCursors.resizeLeftRight,
+                                      child: GestureDetector(
+                                        key: const Key(
+                                          'right-sidebar-resize-handle-hit',
                                         ),
+                                        behavior: HitTestBehavior.opaque,
+                                        onHorizontalDragUpdate: (details) {
+                                          _resizeRightOverlaySidebar(
+                                            details.delta.dx,
+                                            constraints.maxWidth,
+                                          );
+                                        },
+                                        onHorizontalDragEnd: (_) {
+                                          unawaited(_persistSettings());
+                                        },
                                         child: SizedBox(
-                                          height: 220,
-                                          child: _PalettePanel(
-                                            nodeTypes: _nodeTypeRegistry.all,
-                                            onAddNode: _addNode,
-                                            searchController:
-                                                _nodePaletteSearchController,
-                                            searchQuery:
-                                                _nodePaletteSearchQuery,
-                                            onSearchChanged:
-                                                _onNodePaletteSearchChanged,
-                                            onClearSearch:
-                                                _clearNodePaletteSearch,
+                                          width: 8,
+                                          height: double.infinity,
+                                          child: Center(
+                                            child: Container(
+                                              width: 1,
+                                              height: 96,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .outlineVariant
+                                                  .withValues(alpha: 0.55),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                      const Divider(height: 1),
-                                      Expanded(
-                                        child: _InspectorPanel(
-                                          selectedNode: selectedNode,
-                                          selectedConnection:
-                                              selectedConnection,
-                                          isPrimaryWriteNode:
-                                              selectedNode != null &&
-                                              selectedNode.type ==
-                                                  'file.write' &&
-                                              _isPrimaryWriteNode(
-                                                selectedNode.id,
-                                              ),
-                                          nodeType: selectedNode == null
-                                              ? null
-                                              : _nodeTypeRegistry.byType(
-                                                  selectedNode.type,
-                                                ),
-                                          onTitleChanged: (value) =>
-                                              _updateNodeTitle(
-                                                selectedNode,
-                                                value,
-                                              ),
-                                          onConfigChanged: (key, value) =>
-                                              _updateNodeConfig(
-                                                selectedNode,
-                                                key,
-                                                value,
-                                              ),
-                                          onDeleteNode: _deleteSelectedNode,
-                                          onDeleteConnection:
-                                              _deleteSelectedConnection,
-                                          onSetPrimaryOutput:
-                                              selectedNode == null
-                                              ? null
-                                              : () => _setPrimaryOutputNode(
-                                                  selectedNode.id,
-                                                ),
-                                        ),
-                                      ),
-                                      const Divider(height: 1),
-                                      _RunPanel(
-                                        inputFileController:
-                                            _inputFileController,
-                                        outputFileController:
-                                            _outputFileController,
-                                        inputFileHint: _defaultRunInputFile,
-                                        outputFileHint: _defaultRunOutputFile,
-                                        status: _lastRunStatus,
-                                        blockers: runGuard.blockers,
-                                        showBlockers: _hasAttemptedRun,
-                                        subtleHint:
-                                            !_hasAttemptedRun &&
-                                                runGuard.blockers.isNotEmpty
-                                            ? runGuard.blockers.first
-                                            : null,
-                                        showEmptyHint: nodes.isEmpty,
-                                        validationError: _runValidationError,
-                                        runId: _lastRunId,
-                                        runVerId: _lastRunVerId,
-                                        error: _lastRunError,
-                                        errorKind: _lastRunErrorKind,
-                                        errorNodeId: _lastRunErrorNodeId,
-                                        errorCopyText: _lastRunErrorCopyText,
-                                        errorCopyJson: _lastRunErrorCopyJson,
-                                        invocations: _lastRunInvocations,
-                                        outputArtifactSummary:
-                                            _lastOutputArtifactSummary,
-                                        outputPath: _lastOutputPath,
-                                        outputContent: _lastOutputContent,
-                                        outputContentFull:
-                                            _lastOutputContentFull,
-                                        isRunning: _isRunning,
-                                        duration: _lastRunDuration,
-                                        retryable: _lastRunRetryable,
-                                        runTimedOut: _lastRunTimedOut,
-                                        onRetry: _runFlow,
-                                        onCancel: _cancelRunWait,
-                                        onOpenRunDetails:
-                                            _openLatestRunDetailsFromPanel,
-                                        onRefreshRuns: _loadRuns,
-                                        onOpenOutputFileFromTimeout:
-                                            _openKnownOutputFileFromRunPanel,
-                                      ),
-                                    ],
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
                             ),
                           ),

@@ -110,7 +110,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.workspaces));
+    await tester.tap(find.byIcon(Icons.edit_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Delete workspace'));
     await tester.pumpAndSettle();
@@ -140,7 +140,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.workspaces));
+      await tester.tap(find.byIcon(Icons.edit_outlined));
       await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.swap_horiz));
       await tester.pumpAndSettle();

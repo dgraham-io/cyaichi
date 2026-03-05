@@ -77,12 +77,11 @@ void main() {
 
     expect(find.text('No workspace'), findsOneWidget);
 
-    final editButton = tester.widget<IconButton>(
-      find.widgetWithIcon(IconButton, Icons.edit),
-    );
-    expect(editButton.onPressed, isNull);
+    final editButton = find.widgetWithIcon(IconButton, Icons.edit_outlined);
+    expect(editButton, findsOneWidget);
+    expect(find.byIcon(Icons.workspaces), findsNothing);
 
-    await tester.tap(find.byIcon(Icons.workspaces));
+    await tester.tap(editButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Rename workspace'), findsOneWidget);
@@ -119,7 +118,7 @@ void main() {
 
     expect(find.text('No workspace'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.workspaces));
+    await tester.tap(find.byIcon(Icons.edit_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.swap_horiz));
     await tester.pumpAndSettle();

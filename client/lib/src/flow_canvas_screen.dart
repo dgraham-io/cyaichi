@@ -401,9 +401,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     ),
                   ),
                   PopupMenuButton<_WorkspaceMenuAction>(
-                    tooltip: 'Edit workspace',
-                    enabled: hasSelectedWorkspace,
-                    icon: const Icon(Icons.edit),
+                    tooltip: 'Workspace actions',
+                    icon: const Icon(Icons.edit_outlined),
                     onSelected: _openWorkspaceMenuAction,
                     itemBuilder: (context) => _buildWorkspaceMenuItems(
                       context,
@@ -416,15 +415,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ],
         ),
         actions: [
-          PopupMenuButton<_WorkspaceMenuAction>(
-            tooltip: 'Workspaces',
-            icon: const Icon(Icons.workspaces),
-            onSelected: _openWorkspaceMenuAction,
-            itemBuilder: (context) => _buildWorkspaceMenuItems(
-              context,
-              hasSelectedWorkspace: hasSelectedWorkspace,
-            ),
-          ),
           if (_selectedTabIndex == 0) ...[
             IconButton(
               tooltip: 'Export JSON',

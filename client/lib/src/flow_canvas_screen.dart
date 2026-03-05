@@ -76,6 +76,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   late final TextEditingController _flowTitleController;
   late final TextEditingController _inputFileController;
   late final TextEditingController _outputFileController;
+  late final TextEditingController _nodePaletteSearchController;
 
   late ApiClient _apiClient;
   NodeTypeRegistry _nodeTypeRegistry = NodeTypeRegistry.fallback();
@@ -153,6 +154,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   List<NoteListItem> _notes = const <NoteListItem>[];
 
   String _lastExportJson = '';
+  String _nodePaletteSearchQuery = '';
+  Timer? _nodePaletteSearchDebounce;
 
   @override
   void initState() {
@@ -165,6 +168,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _flowTitleController = TextEditingController(text: 'My Flow');
     _inputFileController = TextEditingController();
     _outputFileController = TextEditingController();
+    _nodePaletteSearchController = TextEditingController();
     _apiClient = _createApiClient(_serverBaseUrl, _runRequestTimeoutSeconds);
     _scheduleFlowValidation(immediate: true);
 
@@ -181,12 +185,37 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   @override
   void dispose() {
     _validationDebounce?.cancel();
+    _nodePaletteSearchDebounce?.cancel();
     _controller.dispose();
     _flowTitleController.dispose();
     _inputFileController.dispose();
     _outputFileController.dispose();
+    _nodePaletteSearchController.dispose();
     _apiClient.close();
     super.dispose();
+  }
+
+  void _onNodePaletteSearchChanged(String value) {
+    _nodePaletteSearchDebounce?.cancel();
+    _nodePaletteSearchDebounce = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _nodePaletteSearchQuery = value;
+      });
+    });
+  }
+
+  void _clearNodePaletteSearch() {
+    _nodePaletteSearchDebounce?.cancel();
+    _nodePaletteSearchController.clear();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _nodePaletteSearchQuery = '';
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -630,16 +659,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 absorbing: !hasWorkspaceSelected,
                 child: Row(
                   children: [
-                    DecoratedBox(
-                      decoration: const BoxDecoration(
-                        color: CyaichiTheme.surface,
-                      ),
-                      child: _PalettePanel(
-                        nodeTypes: _nodeTypeRegistry.all,
-                        onAddNode: _addNode,
-                      ),
-                    ),
-                    const VerticalDivider(width: 1),
                     Expanded(
                       child: DecoratedBox(
                         decoration: BoxDecoration(
@@ -787,13 +806,29 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     ),
                     const VerticalDivider(width: 1),
                     SizedBox(
-                      width: 380,
+                      width: 400,
                       child: DecoratedBox(
                         decoration: const BoxDecoration(
                           color: CyaichiTheme.surface,
                         ),
                         child: Column(
                           children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+                              child: SizedBox(
+                                height: 220,
+                                child: _PalettePanel(
+                                  nodeTypes: _nodeTypeRegistry.all,
+                                  onAddNode: _addNode,
+                                  searchController:
+                                      _nodePaletteSearchController,
+                                  searchQuery: _nodePaletteSearchQuery,
+                                  onSearchChanged: _onNodePaletteSearchChanged,
+                                  onClearSearch: _clearNodePaletteSearch,
+                                ),
+                              ),
+                            ),
+                            const Divider(height: 1),
                             Expanded(
                               child: _InspectorPanel(
                                 selectedNode: selectedNode,
@@ -4242,58 +4277,117 @@ class _FlowTitleOverlay extends StatelessWidget {
 }
 
 class _PalettePanel extends StatelessWidget {
-  const _PalettePanel({required this.nodeTypes, required this.onAddNode});
+  const _PalettePanel({
+    required this.nodeTypes,
+    required this.onAddNode,
+    required this.searchController,
+    required this.searchQuery,
+    required this.onSearchChanged,
+    required this.onClearSearch,
+  });
 
   final List<NodeTypeDefinition> nodeTypes;
   final ValueChanged<String> onAddNode;
+  final TextEditingController searchController;
+  final String searchQuery;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onClearSearch;
 
   @override
   Widget build(BuildContext context) {
+    final normalizedQuery = searchQuery.trim().toLowerCase();
+    final visibleNodeTypes = normalizedQuery.isEmpty
+        ? nodeTypes
+        : nodeTypes
+              .where((type) {
+                final name = type.displayName.toLowerCase();
+                final typeId = type.typeId.toLowerCase();
+                final category = type.category.toLowerCase();
+                return name.contains(normalizedQuery) ||
+                    typeId.contains(normalizedQuery) ||
+                    category.contains(normalizedQuery);
+              })
+              .toList(growable: false);
     final grouped = <String, List<NodeTypeDefinition>>{};
-    for (final type in nodeTypes) {
+    for (final type in visibleNodeTypes) {
       grouped
           .putIfAbsent(type.category, () => <NodeTypeDefinition>[])
           .add(type);
     }
 
-    return SizedBox(
-      width: 220,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(
+          context,
+        ).colorScheme.surfaceVariant.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Nodes', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 12),
-              ...grouped.entries.expand((entry) sync* {
-                yield Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    entry.key.toUpperCase(),
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
-                );
-                for (final nodeType in entry.value) {
-                  yield Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: FilledButton.icon(
-                      key: Key('add-${nodeType.typeId}'),
-                      onPressed: () => onAddNode(nodeType.typeId),
-                      icon: Icon(nodeType.icon),
-                      label: Text(nodeType.displayName),
-                    ),
-                  );
-                }
-                yield const SizedBox(height: 6);
-              }),
-              const SizedBox(height: 24),
-              Text(
-                'Drag between ports to create edges. Click a node to edit fields.',
-                style: Theme.of(context).textTheme.bodySmall,
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              key: const Key('node-palette-search-field'),
+              controller: searchController,
+              onChanged: onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Search nodes…',
+                isDense: true,
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: normalizedQuery.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const Key('node-palette-search-clear'),
+                        tooltip: 'Clear search',
+                        onPressed: onClearSearch,
+                        icon: const Icon(Icons.close),
+                      ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: grouped.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No matching nodes',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    )
+                  : SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          ...grouped.entries.expand((entry) sync* {
+                            yield Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                entry.key.toUpperCase(),
+                                style: Theme.of(context).textTheme.labelMedium,
+                              ),
+                            );
+                            for (final nodeType in entry.value) {
+                              yield Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: FilledButton.icon(
+                                  key: Key('add-${nodeType.typeId}'),
+                                  onPressed: () => onAddNode(nodeType.typeId),
+                                  icon: Icon(nodeType.icon),
+                                  label: Text(nodeType.displayName),
+                                ),
+                              );
+                            }
+                            yield const SizedBox(height: 2);
+                          }),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
         ),
       ),
     );

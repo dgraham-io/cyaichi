@@ -47,6 +47,25 @@ class _WidgetTestApiClient extends ApiClient {
           ),
         ],
       ),
+      NodeTypeDef(
+        type: 'file.write',
+        displayName: 'File Write',
+        category: 'io',
+        inputs: <NodeTypePortDef>[
+          NodeTypePortDef(port: 'in', schema: 'artifact/text'),
+        ],
+        outputs: <NodeTypePortDef>[
+          NodeTypePortDef(port: 'out', schema: 'artifact/output_file'),
+        ],
+        configSchema: <NodeTypeConfigFieldDef>[
+          NodeTypeConfigFieldDef(
+            key: 'output_file',
+            kind: 'string',
+            required: true,
+            label: 'Output file',
+          ),
+        ],
+      ),
     ];
   }
 
@@ -137,5 +156,48 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No runs found for this workspace.'), findsOneWidget);
+  });
+
+  testWidgets('node palette search filters and clear restores list', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
+    expect(find.byKey(const Key('add-file.read')), findsOneWidget);
+    expect(find.byKey(const Key('add-file.write')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('node-palette-search-field')),
+      'write',
+    );
+    await tester.pump(const Duration(milliseconds: 180));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('add-file.read')), findsNothing);
+    expect(find.byKey(const Key('add-file.write')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('node-palette-search-clear')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('add-file.read')), findsOneWidget);
+    expect(find.byKey(const Key('add-file.write')), findsOneWidget);
   });
 }

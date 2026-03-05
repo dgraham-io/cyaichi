@@ -63,14 +63,27 @@ type listRunItem struct {
 	Mode      string `json:"mode"`
 }
 
+type listWorkspacesResponse struct {
+	Items []listWorkspaceItem `json:"items"`
+}
+
+type listWorkspaceItem struct {
+	WorkspaceID string `json:"workspace_id"`
+	Name        string `json:"name"`
+	CreatedAt   string `json:"created_at"`
+}
+
 func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/workspaces" {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
+		switch r.Method {
+		case http.MethodPost:
+			h.handleCreateWorkspace(w, r)
+		case http.MethodGet:
+			h.handleListWorkspaces(w, r)
+		default:
+			w.Header().Set("Allow", "GET, POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
 		}
-		h.handleCreateWorkspace(w, r)
 		return
 	}
 
@@ -107,6 +120,39 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PUT")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (h *WorkspacesHandler) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.store.ListLatestDocumentsByType(r.Context(), "workspace", 100, 0)
+	if err != nil {
+		http.Error(w, "failed to list workspaces", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]listWorkspaceItem, 0, len(rows))
+	for _, row := range rows {
+		name := ""
+		workspaceID := row.DocID
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(row.JSON), &doc); err == nil {
+			if body, ok := doc["body"].(map[string]any); ok {
+				name, _ = body["name"].(string)
+			}
+			if parsedWorkspaceID, ok := doc["workspace_id"].(string); ok {
+				workspaceID = parsedWorkspaceID
+			}
+		}
+
+		items = append(items, listWorkspaceItem{
+			WorkspaceID: workspaceID,
+			Name:        name,
+			CreatedAt:   row.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(listWorkspacesResponse{Items: items})
 }
 
 func (h *WorkspacesHandler) handleListFlows(w http.ResponseWriter, r *http.Request, workspaceID string) {

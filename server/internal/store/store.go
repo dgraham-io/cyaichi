@@ -234,3 +234,30 @@ func (s *Store) ListDocumentsByType(ctx context.Context, workspaceID, docType st
 	}
 	return result, nil
 }
+
+func (s *Store) ListLatestDocumentsByType(ctx context.Context, docType string, limit, offset int) ([]DocumentListRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT doc_id, ver_id, created_at, ref, json
+		FROM documents
+		WHERE doc_type = ?
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`, docType, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list latest documents by type: %w", err)
+	}
+	defer rows.Close()
+
+	result := []DocumentListRow{}
+	for rows.Next() {
+		var row DocumentListRow
+		if err := rows.Scan(&row.DocID, &row.VerID, &row.CreatedAt, &row.Ref, &row.JSON); err != nil {
+			return nil, fmt.Errorf("scan latest document row: %w", err)
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate latest document rows: %w", err)
+	}
+	return result, nil
+}

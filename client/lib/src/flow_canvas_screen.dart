@@ -60,11 +60,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   static const _prefServerBaseUrl = 'client.server_base_url';
   static const _prefWorkspaceDataRoot = 'client.workspace_data_root';
-  static const _prefWorkspaceIds = 'client.workspace_ids';
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
   static const _prefNodeTypesCache = 'client.node_types.cache.v1';
-  static const _prefWorkspaceEntries = 'client.workspace_entries.v1';
   static const _prefRunRequestTimeoutSeconds =
       'client.run_request_timeout_seconds';
   static const _prefLastOpenedFlowWorkspaceId =
@@ -131,6 +129,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastOpenedFlowDocId;
   String? _lastOpenedFlowVerId;
   bool _isLoadingFlow = false;
+  bool _didShowMissingWorkspaceToast = false;
 
   int _selectedTabIndex = 0;
 
@@ -186,9 +185,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         prefs.getString(_prefServerBaseUrl) ?? _defaultServerBaseUrl;
     final loadedWorkspaceRoot =
         prefs.getString(_prefWorkspaceDataRoot) ?? defaultWorkspaceDataRoot();
-    final loadedWorkspaceIds =
-        prefs.getStringList(_prefWorkspaceIds) ?? <String>[];
-    final loadedWorkspaceEntries = prefs.getString(_prefWorkspaceEntries) ?? '';
     final loadedSelectedWorkspace = prefs.getString(_prefSelectedWorkspaceId);
     final loadedAutoSetHead = prefs.getBool(_prefAutoSetHeadOnSave) ?? false;
     final loadedRunRequestTimeout =
@@ -203,30 +199,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
     _apiClient.close();
     _apiClient = _createApiClient(loadedBaseUrl, loadedRunRequestTimeout);
-
-    final loadedWorkspaceNames = <String, String>{};
-    if (loadedWorkspaceEntries.trim().isNotEmpty) {
-      try {
-        final decoded = jsonDecode(loadedWorkspaceEntries);
-        if (decoded is List<dynamic>) {
-          for (final raw in decoded) {
-            if (raw is! Map<String, dynamic>) {
-              continue;
-            }
-            final id = raw['id'];
-            final name = raw['name'];
-            if (id is String &&
-                id.trim().isNotEmpty &&
-                name is String &&
-                name.trim().isNotEmpty) {
-              loadedWorkspaceNames[id] = name;
-            }
-          }
-        }
-      } catch (_) {
-        // Keep fallback empty name mapping.
-      }
-    }
 
     var loadedRegistry = NodeTypeRegistry.fallback();
     if (nodeTypeCacheRaw != null && nodeTypeCacheRaw.trim().isNotEmpty) {
@@ -254,19 +226,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     setState(() {
       _serverBaseUrl = loadedBaseUrl;
       _workspaceDataRoot = loadedWorkspaceRoot;
-      _workspaceIds
-        ..clear()
-        ..addAll(loadedWorkspaceIds);
-      _workspaceNames
-        ..clear()
-        ..addAll(loadedWorkspaceNames);
-      for (final id in loadedWorkspaceIds) {
-        _workspaceNames.putIfAbsent(id, () => 'Workspace ${_shortId(id)}');
-      }
-      _selectedWorkspaceId =
-          loadedWorkspaceIds.contains(loadedSelectedWorkspace)
-          ? loadedSelectedWorkspace
-          : null;
+      _workspaceIds.clear();
+      _workspaceNames.clear();
+      _selectedWorkspaceId = loadedSelectedWorkspace;
       _autoSetHeadOnSave = loadedAutoSetHead;
       _runRequestTimeoutSeconds = loadedRunRequestTimeout < 5
           ? 5
@@ -292,16 +254,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _prefRunRequestTimeoutSeconds,
       _runRequestTimeoutSeconds,
     );
-    await prefs.setStringList(_prefWorkspaceIds, _workspaceIds);
-    final entries = _workspaceIds
-        .map(
-          (id) => <String, dynamic>{
-            'id': id,
-            'name': _workspaceNames[id] ?? 'Workspace ${_shortId(id)}',
-          },
-        )
-        .toList(growable: false);
-    await prefs.setString(_prefWorkspaceEntries, jsonEncode(entries));
+    await prefs.remove('client.workspace_ids');
+    await prefs.remove('client.workspace_entries.v1');
     if (_selectedWorkspaceId == null) {
       await prefs.remove(_prefSelectedWorkspaceId);
     } else {
@@ -1093,7 +1047,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (_workspaceIds.isEmpty)
-                      const Text('No workspaces saved in client settings yet.'),
+                      const Text('No workspaces found on server.'),
                     if (_workspaceIds.isNotEmpty)
                       Flexible(
                         child: ListView.builder(
@@ -1152,13 +1106,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _refreshWorkspaceData() async {
-    final workspaceId = _selectedWorkspaceId;
-    if (workspaceId != null && mounted) {
+    if (mounted) {
       setState(() {
         _isLoadingFlow = true;
       });
     }
     try {
+      await _loadWorkspaces();
       await _loadFlows();
       await _autoOpenFlowForSelectedWorkspace();
       await _loadRuns();
@@ -1169,6 +1123,60 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _isLoadingFlow = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadWorkspaces() async {
+    try {
+      final items = await _apiClient.getWorkspaces();
+      if (!mounted) {
+        return;
+      }
+
+      final nextIDs = items
+          .map((item) => item.workspaceId)
+          .toList(growable: false);
+      final nextNames = <String, String>{};
+      for (final item in items) {
+        final trimmedName = item.name.trim();
+        nextNames[item.workspaceId] = trimmedName.isEmpty
+            ? 'Workspace ${_shortId(item.workspaceId)}'
+            : trimmedName;
+      }
+
+      final previousSelected = _selectedWorkspaceId;
+      final selectedExists =
+          previousSelected != null && nextIDs.contains(previousSelected);
+      setState(() {
+        _workspaceIds
+          ..clear()
+          ..addAll(nextIDs);
+        _workspaceNames
+          ..clear()
+          ..addAll(nextNames);
+        if (!selectedExists) {
+          _selectedWorkspaceId = null;
+        }
+      });
+
+      if (!selectedExists &&
+          previousSelected != null &&
+          !_didShowMissingWorkspaceToast) {
+        _didShowMissingWorkspaceToast = true;
+        _showSnack('Previous workspace not found; please select a workspace.');
+      }
+
+      await _persistSettings();
+    } on ApiError catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _workspaceIds.clear();
+        _workspaceNames.clear();
+        _selectedWorkspaceId = null;
+      });
+      await _persistSettings();
     }
   }
 
@@ -1541,12 +1549,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     try {
       final created = await _apiClient.createWorkspace(name: workspaceName);
       setState(() {
-        if (!_workspaceIds.contains(created.workspaceId)) {
-          _workspaceIds.add(created.workspaceId);
-        }
-        _workspaceNames[created.workspaceId] = workspaceName;
         _selectedWorkspaceId = created.workspaceId;
       });
+      await _loadWorkspaces();
+      if (_workspaceIds.contains(created.workspaceId)) {
+        setState(() {
+          _selectedWorkspaceId = created.workspaceId;
+        });
+      }
       await _persistSettings();
       await _refreshWorkspaceData();
       _showSnack(
@@ -2985,14 +2995,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }) {
     final parsed = parseFlowDocumentEnvelope(decoded);
 
-    if (!_workspaceIds.contains(parsed.workspaceId)) {
-      _workspaceIds.add(parsed.workspaceId);
-    }
-    _workspaceNames.putIfAbsent(
-      parsed.workspaceId,
-      () => 'Workspace ${_shortId(parsed.workspaceId)}',
-    );
-    _selectedWorkspaceId = parsed.workspaceId;
     if (persistLastOpened) {
       _lastOpenedFlowWorkspaceId = parsed.workspaceId;
       _lastOpenedFlowDocId = parsed.docId;

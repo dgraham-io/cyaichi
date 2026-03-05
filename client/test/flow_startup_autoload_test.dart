@@ -56,6 +56,17 @@ class _MockFlowApiClient extends ApiClient {
   }
 
   @override
+  Future<List<WorkspaceListItem>> getWorkspaces() async {
+    return <WorkspaceListItem>[
+      WorkspaceListItem(
+        workspaceId: 'ws-1',
+        name: 'Workspace One',
+        createdAt: '2026-03-04T00:00:00Z',
+      ),
+    ];
+  }
+
+  @override
   Future<List<FlowListItem>> getFlows({required String workspaceId}) async {
     return <FlowListItem>[
       FlowListItem(
@@ -147,7 +158,6 @@ void main() {
     WidgetTester tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{
-      'client.workspace_ids': <String>['ws-1'],
       'client.selected_workspace_id': 'ws-1',
     });
 

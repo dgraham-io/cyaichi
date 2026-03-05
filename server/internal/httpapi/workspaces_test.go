@@ -364,3 +364,78 @@ func TestWorkspaceListFlowsAndRuns(t *testing.T) {
 		t.Fatalf("unexpected run status/mode: %+v", runsResp.Items[0])
 	}
 }
+
+func TestListWorkspacesReturnsMostRecentWorkspaceDocuments(t *testing.T) {
+	h := newAPITestHarness(t)
+
+	olderWorkspaceID := uuid.NewString()
+	olderVerID := uuid.NewString()
+	olderCreatedAt := "2026-03-01T00:00:00Z"
+	olderJSON := `{
+	  "doc_type":"workspace",
+	  "doc_id":"` + olderWorkspaceID + `",
+	  "ver_id":"` + olderVerID + `",
+	  "workspace_id":"` + olderWorkspaceID + `",
+	  "created_at":"` + olderCreatedAt + `",
+	  "body":{"name":"Old Workspace","heads":{}}
+	}`
+	if err := h.store.PutDocument(context.Background(), store.Document{
+		DocType:     "workspace",
+		DocID:       olderWorkspaceID,
+		VerID:       olderVerID,
+		WorkspaceID: olderWorkspaceID,
+		CreatedAt:   olderCreatedAt,
+		JSON:        olderJSON,
+	}); err != nil {
+		t.Fatalf("put old workspace: %v", err)
+	}
+
+	newerWorkspaceID := uuid.NewString()
+	newerVerID := uuid.NewString()
+	newerCreatedAt := "2026-03-02T00:00:00Z"
+	newerJSON := `{
+	  "doc_type":"workspace",
+	  "doc_id":"` + newerWorkspaceID + `",
+	  "ver_id":"` + newerVerID + `",
+	  "workspace_id":"` + newerWorkspaceID + `",
+	  "created_at":"` + newerCreatedAt + `",
+	  "body":{"name":"New Workspace","heads":{}}
+	}`
+	if err := h.store.PutDocument(context.Background(), store.Document{
+		DocType:     "workspace",
+		DocID:       newerWorkspaceID,
+		VerID:       newerVerID,
+		WorkspaceID: newerWorkspaceID,
+		CreatedAt:   newerCreatedAt,
+		JSON:        newerJSON,
+	}); err != nil {
+		t.Fatalf("put new workspace: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/workspaces", nil)
+	rr := httptest.NewRecorder()
+	h.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list workspaces failed: %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Items []struct {
+			WorkspaceID string `json:"workspace_id"`
+			Name        string `json:"name"`
+			CreatedAt   string `json:"created_at"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode workspace list response: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 workspaces, got %d", len(resp.Items))
+	}
+	if resp.Items[0].WorkspaceID != newerWorkspaceID || resp.Items[0].Name != "New Workspace" {
+		t.Fatalf("expected newest workspace first, got %+v", resp.Items[0])
+	}
+	if resp.Items[1].WorkspaceID != olderWorkspaceID || resp.Items[1].Name != "Old Workspace" {
+		t.Fatalf("expected older workspace second, got %+v", resp.Items[1])
+	}
+}

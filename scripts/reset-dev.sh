@@ -87,13 +87,17 @@ path_points_to_tmp_cyaichi_db() {
 }
 
 detect_macos_bundle_id() {
-  local pbxproj="$REPO_ROOT/client/macos/Runner.xcodeproj/project.pbxproj"
-  if [[ ! -f "$pbxproj" ]]; then
-    return
-  fi
-
   local bundle_id
-  bundle_id="$(sed -n 's/.*PRODUCT_BUNDLE_IDENTIFIER = \([^;]*\);/\1/p' "$pbxproj" | head -n1 | tr -d '[:space:]')"
+  local app_info="$REPO_ROOT/client/macos/Runner/Configs/AppInfo.xcconfig"
+  if [[ -f "$app_info" ]]; then
+    bundle_id="$(sed -n 's/^PRODUCT_BUNDLE_IDENTIFIER[[:space:]]*=[[:space:]]*//p' "$app_info" | head -n1 | tr -d '[:space:]')"
+  fi
+  if [[ -z "${bundle_id:-}" ]]; then
+    local pbxproj="$REPO_ROOT/client/macos/Runner.xcodeproj/project.pbxproj"
+    if [[ -f "$pbxproj" ]]; then
+      bundle_id="$(sed -n 's/.*PRODUCT_BUNDLE_IDENTIFIER = \([^;]*\);/\1/p' "$pbxproj" | head -n1 | tr -d '[:space:]')"
+    fi
+  fi
   if [[ -n "$bundle_id" ]]; then
     printf '%s' "$bundle_id"
   fi
@@ -161,14 +165,13 @@ MAC_TARGETS=()
 if [[ "$(uname -s)" == "Darwin" ]]; then
   bundle_id="$(detect_macos_bundle_id || true)"
   if [[ -n "$bundle_id" ]]; then
-    collect_macos_matches "$HOME/Library/Preferences/${bundle_id}*"
-    collect_macos_matches "$HOME/Library/Application Support/${bundle_id}*"
-    collect_macos_matches "$HOME/Library/Caches/${bundle_id}*"
+    collect_macos_matches "$HOME/Library/Preferences/${bundle_id}.plist"
+    collect_macos_matches "$HOME/Library/Preferences/${bundle_id}.*.plist"
+    collect_macos_matches "$HOME/Library/Application Support/${bundle_id}"
+    collect_macos_matches "$HOME/Library/Caches/${bundle_id}"
+  else
+    warn "could not detect macOS bundle id; skipping client preference/cache reset"
   fi
-
-  collect_macos_matches "$HOME/Library/Preferences/*cyaichi*"
-  collect_macos_matches "$HOME/Library/Application Support/*cyaichi*"
-  collect_macos_matches "$HOME/Library/Caches/*cyaichi*"
 
   if [[ ${#MAC_TARGETS[@]} -gt 0 ]]; then
     log ""

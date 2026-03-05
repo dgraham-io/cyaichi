@@ -41,10 +41,10 @@ Normal interactive run:
   - `./server/workspace-data/`
   - `./workspace-data/`
 - macOS client cache/config (best effort):
-  - `~/Library/Preferences/*cyaichi*`
-  - `~/Library/Application Support/*cyaichi*`
-  - `~/Library/Caches/*cyaichi*`
-  - plus bundle-id-based matches when detected from the Flutter macOS project
+  - uses the macOS app bundle id (detected from `client/macos/...`) and targets:
+    - `~/Library/Preferences/<bundle-id>.plist`
+    - `~/Library/Application Support/<bundle-id>`
+    - `~/Library/Caches/<bundle-id>`
 
 The script prints each resolved path before deletion and skips missing paths quietly.
 

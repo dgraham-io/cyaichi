@@ -86,6 +86,26 @@ class FlowListItem {
   }
 }
 
+class WorkspaceListItem {
+  WorkspaceListItem({
+    required this.workspaceId,
+    required this.name,
+    required this.createdAt,
+  });
+
+  final String workspaceId;
+  final String name;
+  final String createdAt;
+
+  factory WorkspaceListItem.fromJson(Map<String, dynamic> json) {
+    return WorkspaceListItem(
+      workspaceId: json['workspace_id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      createdAt: json['created_at'] as String? ?? '',
+    );
+  }
+}
+
 class NodeTypePortDef {
   NodeTypePortDef({required this.port, required this.schema});
 
@@ -241,6 +261,19 @@ List<FlowListItem> parseFlowListResponse(Map<String, dynamic> json) {
       .whereType<Map<String, dynamic>>()
       .map(FlowListItem.fromJson)
       .where((item) => item.docId.isNotEmpty && item.verId.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<WorkspaceListItem> parseWorkspaceListResponse(Map<String, dynamic> json) {
+  final rawItems = json['items'];
+  if (rawItems is! List<dynamic>) {
+    return const <WorkspaceListItem>[];
+  }
+
+  return rawItems
+      .whereType<Map<String, dynamic>>()
+      .map(WorkspaceListItem.fromJson)
+      .where((item) => item.workspaceId.isNotEmpty)
       .toList(growable: false);
 }
 

@@ -191,6 +191,11 @@ class ApiClient {
     );
   }
 
+  Future<List<WorkspaceListItem>> getWorkspaces() async {
+    final json = await _requestJson('GET', '/v1/workspaces');
+    return parseWorkspaceListResponse(json);
+  }
+
   Future<void> putFlowDocument({
     required String docId,
     required String verId,

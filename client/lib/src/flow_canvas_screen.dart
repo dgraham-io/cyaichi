@@ -8,6 +8,7 @@ import 'package:client/src/flow/flow_validation.dart';
 import 'package:client/src/flow/node_registry.dart';
 import 'package:client/src/flow/primary_output.dart';
 import 'package:client/src/flow/run_request_builder.dart';
+import 'package:client/src/flow/run_preflight.dart';
 import 'package:client/src/flow/run_output_resolver.dart';
 import 'package:client/src/io/workspace_root_path.dart';
 import 'package:client/src/models/server_models.dart';
@@ -1853,19 +1854,23 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastRunTimedOut = false;
       _lastRunDuration = null;
     });
+    _showSnack('Running...');
 
-    final saved = await _saveNewFlowVersionToServer();
-    if (!saved || _currentFlowDocId == null || _currentFlowVerId == null) {
+    final saveDecision = await ensureFlowSavedForRun(
+      isFlowDirty: _isFlowDirty,
+      saveNewVersion: _saveNewFlowVersionToServer,
+    );
+    if (!saveDecision.shouldContinue) {
       if (mounted) {
         setState(() {
           _isRunning = false;
           _lastRunStatus = 'failed';
-          _lastRunError = 'Flow save failed; run aborted.';
+          _lastRunError = saveDecision.errorMessage ?? 'Run preflight failed.';
           _lastRunErrorKind = 'client';
           _lastRunErrorNodeId = null;
           _lastRunErrorCopyText = _buildRunErrorCopyText(
             title: 'Run failed',
-            message: 'Flow save failed; run aborted.',
+            message: saveDecision.errorMessage ?? 'Run preflight failed.',
             kind: 'client',
             workspaceId: workspaceId,
             flowDocId: _currentFlowDocId,
@@ -1875,6 +1880,52 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _lastRunTimedOut = false;
         });
       }
+      return;
+    }
+    if (_currentFlowDocId == null || _currentFlowVerId == null) {
+      if (mounted) {
+        setState(() {
+          _isRunning = false;
+          _lastRunStatus = 'failed';
+          _lastRunError = 'Save flow before running.';
+          _lastRunErrorKind = 'client';
+          _lastRunErrorNodeId = null;
+          _lastRunErrorCopyText = _buildRunErrorCopyText(
+            title: 'Run failed',
+            message: 'Save flow before running.',
+            kind: 'client',
+            workspaceId: workspaceId,
+          );
+          _lastRunErrorCopyJson = null;
+          _lastRunTimedOut = false;
+        });
+      }
+      _showSnack('Run failed');
+      return;
+    }
+    if (_currentFlowWorkspaceId != workspaceId) {
+      if (mounted) {
+        setState(() {
+          _isRunning = false;
+          _lastRunStatus = 'failed';
+          _lastRunError =
+              'Open or save a flow in the selected workspace before running.';
+          _lastRunErrorKind = 'client';
+          _lastRunErrorNodeId = null;
+          _lastRunErrorCopyText = _buildRunErrorCopyText(
+            title: 'Run failed',
+            message:
+                'Open or save a flow in the selected workspace before running.',
+            kind: 'client',
+            workspaceId: workspaceId,
+            flowDocId: _currentFlowDocId,
+            flowVerId: _currentFlowVerId,
+          );
+          _lastRunErrorCopyJson = null;
+          _lastRunTimedOut = false;
+        });
+      }
+      _showSnack('Run failed');
       return;
     }
 
@@ -1987,6 +2038,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunTimedOut = false;
         _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
+      _showSnack(status == 'succeeded' ? 'Run succeeded' : 'Run failed');
     } on ApiError catch (error) {
       String status = 'failed';
       String? runId;
@@ -2073,7 +2125,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           'Run request timed out after ${timeoutSeconds}s. The run may have completed.',
         );
       } else {
-        _showSnack(_formatApiError(error));
+        _showSnack('Run failed');
       }
     } finally {
       if (mounted && _isRunRequestActive(runToken)) {

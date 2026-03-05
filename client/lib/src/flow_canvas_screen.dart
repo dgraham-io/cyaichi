@@ -1010,7 +1010,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             height: drawerHeight,
                             child: _MessageDrawerPanel(
                               messages: _messageCenter.messages,
-                              onClose: () => _toggleMessageDrawer(open: false),
                               onClear: _messageCenter.clear,
                               onResizeUpdate: (deltaY) {
                                 _resizeMessageDrawer(
@@ -5367,14 +5366,12 @@ class _ErrorState extends StatelessWidget {
 class _MessageDrawerPanel extends StatefulWidget {
   const _MessageDrawerPanel({
     required this.messages,
-    required this.onClose,
     required this.onClear,
     required this.onResizeUpdate,
     required this.onResizeEnd,
   });
 
   final List<AppMessage> messages;
-  final VoidCallback onClose;
   final VoidCallback onClear;
   final ValueChanged<double> onResizeUpdate;
   final VoidCallback onResizeEnd;
@@ -5461,8 +5458,6 @@ class _MessageDrawerPanelState extends State<_MessageDrawerPanel> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             child: Row(
               children: [
-                Text('Messages', style: Theme.of(context).textTheme.titleSmall),
-                const SizedBox(width: 8),
                 Expanded(
                   child: TextField(
                     key: const Key('message-drawer-search-field'),
@@ -5491,11 +5486,6 @@ class _MessageDrawerPanelState extends State<_MessageDrawerPanel> {
                   tooltip: 'Clear messages',
                   onPressed: widget.onClear,
                   icon: const Icon(Icons.clear_all),
-                ),
-                IconButton(
-                  tooltip: 'Close drawer',
-                  onPressed: widget.onClose,
-                  icon: const Icon(Icons.close),
                 ),
               ],
             ),

@@ -204,6 +204,19 @@ class ApiClient {
     await _requestJson('PUT', '/v1/docs/flow/$docId/$verId', body: document);
   }
 
+  Future<void> putDocument({
+    required String docType,
+    required String docId,
+    required String verId,
+    required Map<String, dynamic> document,
+  }) async {
+    await _requestJson(
+      'PUT',
+      '/v1/docs/$docType/$docId/$verId',
+      body: document,
+    );
+  }
+
   Future<void> setHead({
     required String workspaceId,
     required String docId,

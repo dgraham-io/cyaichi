@@ -54,7 +54,7 @@ class _EmptyWorkspaceApiClient extends ApiClient {
 
 void main() {
   testWidgets(
-    'workspace dropdown stays safe when selected id exists in prefs but items are empty',
+    'workspace selection stays safe when selected id exists in prefs but items are empty',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         'client.selected_workspace_id': 'stale-workspace-id',
@@ -75,7 +75,7 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(find.text('Select workspace'), findsOneWidget);
+      expect(find.text('No workspace'), findsOneWidget);
     },
   );
 }

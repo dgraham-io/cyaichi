@@ -62,6 +62,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefServerBaseUrl = 'client.server_base_url';
   static const _prefWorkspaceDataRoot = 'client.workspace_data_root';
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
+  static const _prefHiddenWorkspaceIDs = 'client.hidden_workspace_ids';
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
   static const _prefNodeTypesCache = 'client.node_types.cache.v1';
   static const _prefRunRequestTimeoutSeconds =
@@ -86,6 +87,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   final List<String> _workspaceIds = <String>[];
   final Map<String, String> _workspaceNames = <String, String>{};
+  final Set<String> _hiddenWorkspaceIDs = <String>{};
   String? _selectedWorkspaceId;
 
   String? _selectedNodeId;
@@ -188,6 +190,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedWorkspaceRoot =
         prefs.getString(_prefWorkspaceDataRoot) ?? defaultWorkspaceDataRoot();
     final loadedSelectedWorkspace = prefs.getString(_prefSelectedWorkspaceId);
+    final loadedHiddenWorkspaceIDs =
+        prefs.getStringList(_prefHiddenWorkspaceIDs) ?? <String>[];
     final loadedAutoSetHead = prefs.getBool(_prefAutoSetHeadOnSave) ?? false;
     final loadedRunRequestTimeout =
         prefs.getInt(_prefRunRequestTimeoutSeconds) ??
@@ -230,6 +234,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _workspaceDataRoot = loadedWorkspaceRoot;
       _workspaceIds.clear();
       _workspaceNames.clear();
+      _hiddenWorkspaceIDs
+        ..clear()
+        ..addAll(
+          loadedHiddenWorkspaceIDs
+              .map((id) => id.trim())
+              .where((id) => id.isNotEmpty),
+        );
       _selectedWorkspaceId = loadedSelectedWorkspace;
       _autoSetHeadOnSave = loadedAutoSetHead;
       _runRequestTimeoutSeconds = loadedRunRequestTimeout < 5
@@ -263,6 +274,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     } else {
       await prefs.setString(_prefSelectedWorkspaceId, _selectedWorkspaceId!);
     }
+    await prefs.setStringList(
+      _prefHiddenWorkspaceIDs,
+      _hiddenWorkspaceIDs.toList(growable: false),
+    );
     if (_lastOpenedFlowWorkspaceId == null ||
         _lastOpenedFlowDocId == null ||
         _lastOpenedFlowVerId == null) {
@@ -352,14 +367,63 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   @override
   Widget build(BuildContext context) {
     final runGuard = _computeRunGuard();
+    final hasSelectedWorkspace = _selectedWorkspaceId != null;
     return Scaffold(
       appBar: AppBar(
-        title: Text('cyaichi flow client${_isFlowDirty ? ' •' : ''}'),
+        title: Row(
+          children: [
+            const Icon(Icons.hub),
+            const SizedBox(width: 8),
+            Text('cyaichi${_isFlowDirty ? ' •' : ''}'),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Row(
+                children: [
+                  if (_isLoadingWorkspaces) ...[
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      _currentWorkspaceLabel,
+                      overflow: TextOverflow.ellipsis,
+                      style: hasSelectedWorkspace
+                          ? null
+                          : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                    ),
+                  ),
+                  PopupMenuButton<_WorkspaceMenuAction>(
+                    tooltip: 'Edit workspace',
+                    enabled: hasSelectedWorkspace,
+                    icon: const Icon(Icons.edit),
+                    onSelected: _openWorkspaceMenuAction,
+                    itemBuilder: (context) => _buildWorkspaceMenuItems(
+                      context,
+                      hasSelectedWorkspace: hasSelectedWorkspace,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
-          IconButton(
+          PopupMenuButton<_WorkspaceMenuAction>(
             tooltip: 'Workspaces',
-            onPressed: _showWorkspaceDialog,
             icon: const Icon(Icons.workspaces),
+            onSelected: _openWorkspaceMenuAction,
+            itemBuilder: (context) => _buildWorkspaceMenuItems(
+              context,
+              hasSelectedWorkspace: hasSelectedWorkspace,
+            ),
           ),
           if (_selectedTabIndex == 0) ...[
             IconButton(
@@ -384,17 +448,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(74),
                 child: _TopControlsBar(
-                  settingsLoaded: _settingsLoaded,
-                  isLoadingWorkspaces: _isLoadingWorkspaces,
-                  workspaceIds: _workspaceIds,
-                  workspaceNames: _workspaceNames,
-                  selectedWorkspaceId: _selectedWorkspaceId,
                   flowTitleController: _flowTitleController,
-                  isCreatingWorkspace: _isCreatingWorkspace,
                   isSavingToServer: _isSavingToServer,
                   isRunning: _isRunning,
-                  onWorkspaceSelected: _onWorkspaceSelected,
-                  onCreateWorkspace: _createWorkspace,
                   onSaveToServer: _saveNewFlowVersionToServer,
                   onSetHead: _setCurrentFlowAsHead,
                   onDuplicate: _duplicateCurrentFlow,
@@ -1034,67 +1090,199 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _showSnack('Settings saved');
   }
 
-  Future<void> _showWorkspaceDialog() async {
-    String? selected = _selectedWorkspaceId;
-    final result = await showDialog<String?>(
+  String get _currentWorkspaceLabel {
+    final id = _selectedWorkspaceId;
+    if (id == null) {
+      return 'No workspace';
+    }
+    return _workspaceNames[id] ?? 'Workspace ${_shortId(id)}';
+  }
+
+  List<PopupMenuEntry<_WorkspaceMenuAction>> _buildWorkspaceMenuItems(
+    BuildContext context, {
+    required bool hasSelectedWorkspace,
+  }) {
+    return [
+      PopupMenuItem(
+        value: _WorkspaceMenuAction.rename,
+        enabled: hasSelectedWorkspace,
+        child: const ListTile(
+          leading: Icon(Icons.drive_file_rename_outline),
+          title: Text('Rename workspace'),
+          dense: true,
+        ),
+      ),
+      const PopupMenuItem(
+        value: _WorkspaceMenuAction.select,
+        child: ListTile(
+          leading: Icon(Icons.swap_horiz),
+          title: Text('Select workspace'),
+          dense: true,
+        ),
+      ),
+      const PopupMenuItem(
+        value: _WorkspaceMenuAction.create,
+        child: ListTile(
+          leading: Icon(Icons.add_circle_outline),
+          title: Text('New workspace'),
+          dense: true,
+        ),
+      ),
+      PopupMenuItem(
+        value: _WorkspaceMenuAction.delete,
+        enabled: hasSelectedWorkspace,
+        child: ListTile(
+          leading: Icon(
+            Icons.delete_outline,
+            color: hasSelectedWorkspace
+                ? Theme.of(context).colorScheme.error
+                : null,
+          ),
+          title: Text(
+            'Delete workspace',
+            style: TextStyle(
+              color: hasSelectedWorkspace
+                  ? Theme.of(context).colorScheme.error
+                  : null,
+            ),
+          ),
+          dense: true,
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _openWorkspaceMenuAction(_WorkspaceMenuAction action) async {
+    switch (action) {
+      case _WorkspaceMenuAction.rename:
+        await _showRenameWorkspaceDialog();
+      case _WorkspaceMenuAction.select:
+        await _showSelectWorkspaceDialog();
+      case _WorkspaceMenuAction.create:
+        await _showCreateWorkspaceDialog();
+      case _WorkspaceMenuAction.delete:
+        await _showDeleteWorkspaceDialog();
+    }
+  }
+
+  Future<void> _showSelectWorkspaceDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Select workspace'),
+          content: SizedBox(
+            width: 560,
+            child: _workspaceIds.isEmpty
+                ? const Text('No workspaces found on server.')
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _workspaceIds.length,
+                    itemBuilder: (context, index) {
+                      final workspaceID = _workspaceIds[index];
+                      final workspaceName =
+                          _workspaceNames[workspaceID] ??
+                          'Workspace ${_shortId(workspaceID)}';
+                      return ListTile(
+                        title: Text(workspaceName),
+                        subtitle: Text(_shortId(workspaceID)),
+                        selected: workspaceID == _selectedWorkspaceId,
+                        onTap: () async {
+                          Navigator.of(dialogContext).pop();
+                          await _onWorkspaceSelected(workspaceID);
+                        },
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showCreateWorkspaceDialog() async {
+    final controller = TextEditingController();
+    var isSubmitting = false;
+    String? errorMessage;
+    await showDialog<void>(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Workspaces'),
+              title: const Text('New workspace'),
               content: SizedBox(
-                width: 560,
+                width: 460,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (_workspaceIds.isEmpty)
-                      const Text('No workspaces found on server.'),
-                    if (_workspaceIds.isNotEmpty)
-                      Flexible(
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _workspaceIds.length,
-                          itemBuilder: (context, index) {
-                            final workspaceId = _workspaceIds[index];
-                            final workspaceName =
-                                _workspaceNames[workspaceId] ??
-                                'Workspace ${_shortId(workspaceId)}';
-                            return RadioListTile<String>(
-                              dense: true,
-                              title: Text(workspaceName),
-                              subtitle: Text(_shortId(workspaceId)),
-                              value: workspaceId,
-                              groupValue: selected,
-                              onChanged: (value) {
-                                setDialogState(() {
-                                  selected = value;
-                                });
-                              },
-                            );
-                          },
-                        ),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Workspace name',
+                        border: OutlineInputBorder(),
                       ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 10),
+                      ErrorBanner(
+                        title: 'Request error',
+                        message: errorMessage!,
+                        copyText:
+                            'title: Request error\nmessage: ${errorMessage!}',
+                      ),
+                    ],
                   ],
                 ),
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  onPressed: isSubmitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancel'),
                 ),
-                FilledButton.icon(
-                  onPressed: () async {
-                    Navigator.of(dialogContext).pop();
-                    await _createWorkspace();
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('New Workspace'),
-                ),
                 FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(selected),
-                  child: const Text('Select'),
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final name = controller.text.trim();
+                          if (name.isEmpty) {
+                            setDialogState(() {
+                              errorMessage = 'Workspace name is required.';
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            isSubmitting = true;
+                            errorMessage = null;
+                          });
+                          try {
+                            await _createWorkspace(name);
+                            if (mounted && dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                          } on ApiError catch (error) {
+                            setDialogState(() {
+                              errorMessage = _formatApiError(error);
+                            });
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                              });
+                            }
+                          }
+                        },
+                  child: const Text('Create'),
                 ),
               ],
             );
@@ -1102,10 +1290,147 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         );
       },
     );
+    controller.dispose();
+  }
 
-    if (result != null) {
-      await _onWorkspaceSelected(result);
+  Future<void> _showRenameWorkspaceDialog() async {
+    final workspaceID = _selectedWorkspaceId;
+    if (workspaceID == null) {
+      return;
     }
+    final currentName = _workspaceNames[workspaceID] ?? 'Workspace';
+    final controller = TextEditingController(text: currentName);
+    var isSubmitting = false;
+    String? errorMessage;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Rename workspace'),
+              content: SizedBox(
+                width: 460,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Workspace name',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 10),
+                      ErrorBanner(
+                        title: 'Request error',
+                        message: errorMessage!,
+                        copyText:
+                            'title: Request error\nmessage: ${errorMessage!}',
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final nextName = controller.text.trim();
+                          if (nextName.isEmpty) {
+                            setDialogState(() {
+                              errorMessage = 'Workspace name is required.';
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            isSubmitting = true;
+                            errorMessage = null;
+                          });
+                          try {
+                            await _renameWorkspace(workspaceID, nextName);
+                            if (mounted && dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                          } on ApiError catch (error) {
+                            setDialogState(() {
+                              errorMessage = _formatApiError(error);
+                            });
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                              });
+                            }
+                          }
+                        },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+  }
+
+  Future<void> _showDeleteWorkspaceDialog() async {
+    final workspaceID = _selectedWorkspaceId;
+    if (workspaceID == null) {
+      return;
+    }
+    var isSubmitting = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Delete workspace?'),
+              content: const Text(
+                'This will delete the workspace record from the client list and may orphan data on disk. This is a soft delete for MVP.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.error,
+                  ),
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            isSubmitting = true;
+                          });
+                          await _softDeleteWorkspace(workspaceID);
+                          if (dialogContext.mounted) {
+                            Navigator.of(dialogContext).pop();
+                          }
+                        },
+                  child: const Text('Delete'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _refreshWorkspaceData() async {
@@ -1136,7 +1461,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       });
     }
     try {
-      final items = dedupeWorkspaceItemsByID(await _apiClient.getWorkspaces());
+      final items = dedupeWorkspaceItemsByID(await _apiClient.getWorkspaces())
+          .where((item) => !_hiddenWorkspaceIDs.contains(item.workspaceId))
+          .toList(growable: false);
       if (!mounted) {
         return;
       }
@@ -1549,17 +1876,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
-  Future<void> _createWorkspace() async {
+  Future<WorkspaceCreated> _createWorkspace(String workspaceName) async {
     if (_isCreatingWorkspace) {
-      return;
+      throw ApiError(message: 'Workspace create already in progress.');
     }
 
     setState(() {
       _isCreatingWorkspace = true;
     });
-
-    final workspaceName =
-        'Client Workspace ${DateTime.now().toIso8601String()}';
     try {
       final created = await _apiClient.createWorkspace(name: workspaceName);
       setState(() {
@@ -1576,11 +1900,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _showSnack(
         'Workspace created: $workspaceName (${_shortId(created.workspaceId)})',
       );
-    } on ApiError catch (error) {
-      _showCopyableErrorSnack(
-        message: _formatApiError(error),
-        copyText: _buildApiErrorCopyText(error, title: 'Run request error'),
-      );
+      return created;
     } finally {
       if (mounted) {
         setState(() {
@@ -1588,6 +1908,38 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         });
       }
     }
+  }
+
+  Future<void> _renameWorkspace(String workspaceID, String nextName) async {
+    final nextVerID = _uuid.v4();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final workspaceDoc = <String, dynamic>{
+      'doc_type': 'workspace',
+      'doc_id': workspaceID,
+      'ver_id': nextVerID,
+      'workspace_id': workspaceID,
+      'created_at': now,
+      'body': <String, dynamic>{'name': nextName, 'heads': <String, String>{}},
+    };
+    await _apiClient.putDocument(
+      docType: 'workspace',
+      docId: workspaceID,
+      verId: nextVerID,
+      document: workspaceDoc,
+    );
+    await _loadWorkspaces();
+    await _persistSettings();
+    _showSnack('Workspace renamed to "$nextName"');
+  }
+
+  Future<void> _softDeleteWorkspace(String workspaceID) async {
+    _hiddenWorkspaceIDs.add(workspaceID);
+    if (_selectedWorkspaceId == workspaceID) {
+      _selectedWorkspaceId = null;
+    }
+    await _loadWorkspaces();
+    await _persistSettings();
+    _showSnack('Workspace hidden');
   }
 
   Future<bool> _saveNewFlowVersionToServer() async {
@@ -3385,19 +3737,13 @@ class _RunGuardResult {
 
 enum _UnsavedFlowDecision { discard, cancel, save }
 
+enum _WorkspaceMenuAction { rename, select, create, delete }
+
 class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
-    required this.settingsLoaded,
-    required this.isLoadingWorkspaces,
-    required this.workspaceIds,
-    required this.workspaceNames,
-    required this.selectedWorkspaceId,
     required this.flowTitleController,
-    required this.isCreatingWorkspace,
     required this.isSavingToServer,
     required this.isRunning,
-    required this.onWorkspaceSelected,
-    required this.onCreateWorkspace,
     required this.onSaveToServer,
     required this.onSetHead,
     required this.onDuplicate,
@@ -3410,17 +3756,9 @@ class _TopControlsBar extends StatelessWidget {
     required this.runDisabledHint,
   });
 
-  final bool settingsLoaded;
-  final bool isLoadingWorkspaces;
-  final List<String> workspaceIds;
-  final Map<String, String> workspaceNames;
-  final String? selectedWorkspaceId;
   final TextEditingController flowTitleController;
-  final bool isCreatingWorkspace;
   final bool isSavingToServer;
   final bool isRunning;
-  final Future<void> Function(String?) onWorkspaceSelected;
-  final Future<void> Function() onCreateWorkspace;
   final Future<bool> Function() onSaveToServer;
   final Future<void> Function() onSetHead;
   final Future<void> Function() onDuplicate;
@@ -3434,11 +3772,6 @@ class _TopControlsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedForDropdown = resolveWorkspaceDropdownValue(
-      workspaceIDs: workspaceIds,
-      selectedWorkspaceID: selectedWorkspaceId,
-    );
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Column(
@@ -3448,77 +3781,6 @@ class _TopControlsBar extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                SizedBox(
-                  width: 260,
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Workspace',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                    ),
-                    child: settingsLoaded
-                        ? (isLoadingWorkspaces
-                              ? const Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text('Loading workspaces...'),
-                                  ],
-                                )
-                              : DropdownButtonHideUnderline(
-                                  child: DropdownButton<String>(
-                                    isExpanded: true,
-                                    value: selectedForDropdown,
-                                    hint: const Text('Select workspace'),
-                                    items: workspaceIds
-                                        .map(
-                                          (id) => DropdownMenuItem<String>(
-                                            value: id,
-                                            child: Builder(
-                                              builder: (context) {
-                                                final short = id.length > 8
-                                                    ? id.substring(0, 8)
-                                                    : id;
-                                                return Text(
-                                                  '${workspaceNames[id] ?? 'Workspace $short'} · $short',
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                );
-                                              },
-                                            ),
-                                          ),
-                                        )
-                                        .toList(growable: false),
-                                    onChanged: (value) {
-                                      onWorkspaceSelected(value);
-                                    },
-                                  ),
-                                ))
-                        : const Text('Loading...'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: isCreatingWorkspace ? null : onCreateWorkspace,
-                  icon: isCreatingWorkspace
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add),
-                  label: const Text('New Workspace'),
-                ),
-                const SizedBox(width: 12),
                 SizedBox(
                   width: 240,
                   child: TextField(

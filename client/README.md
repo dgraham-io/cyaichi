@@ -19,6 +19,10 @@ flutter run
 
 ## Implemented
 
+- Workspace management in top app bar (Material 3):
+  - shows current workspace name (or `No workspace`)
+  - edit menu actions: **Rename workspace**, **Select workspace**, **New workspace**, **Delete workspace**
+  - all workspace actions run through dialogs (no workspace dropdown)
 - Bottom navigation with four tabs:
   - **Flow**: node editor + save/run controls
   - **Flows**: flow library for list/open/version management
@@ -32,7 +36,8 @@ flutter run
   - **Export JSON** (dialog + clipboard copy)
   - **Import JSON** (paste + rehydrate canvas)
 - Server integration:
-  - create/select workspace (workspace picker + persisted list)
+  - create/select/rename workspace from top-bar dialogs
+  - soft-delete workspace in client list (MVP hide)
   - flow library:
     - list flows in workspace
     - open flow from server into canvas
@@ -127,7 +132,9 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 
 ## Required Server Endpoints
 
+- `GET /v1/workspaces`
 - `POST /v1/workspaces`
+- `PUT /v1/docs/workspace/{doc_id}/{ver_id}` (used for workspace rename version in MVP)
 - `GET /v1/workspaces/{workspace_id}/flows`
 - `GET /v1/docs/flow/{doc_id}/{ver_id}`
 - `PUT /v1/docs/flow/{doc_id}/{ver_id}`

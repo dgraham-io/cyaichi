@@ -20,7 +20,7 @@ void main() {
     await tester.pumpWidget(const CyaichiApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('cyaichi flow client'), findsOneWidget);
+    expect(find.textContaining('cyaichi'), findsOneWidget);
     expect(find.byKey(const Key('add-file.read')), findsOneWidget);
     expect(find.text('File Read 1'), findsNothing);
 

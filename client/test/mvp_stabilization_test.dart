@@ -34,11 +34,11 @@ void main() {
     await tester.pumpWidget(const CyaichiApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('cyaichi flow client •'), findsNothing);
+    expect(find.textContaining('•'), findsNothing);
 
     await tester.tap(find.byKey(const Key('add-file.read')));
     await tester.pumpAndSettle();
 
-    expect(find.text('cyaichi flow client •'), findsOneWidget);
+    expect(find.textContaining('•'), findsOneWidget);
   });
 }

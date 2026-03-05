@@ -4942,36 +4942,105 @@ class _CanvasZoomControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      ),
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      key: const Key('canvas-zoom-toolbar'),
+      margin: EdgeInsets.zero,
+      elevation: 3,
+      color: scheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Wrap(
-          spacing: 6,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              tooltip: 'Zoom in',
-              onPressed: onZoomIn,
-              icon: const Icon(Icons.add),
+            Tooltip(
+              key: const Key('canvas-zoom-in-tooltip'),
+              message: 'Zoom in',
+              child: IconButton(
+                key: const Key('canvas-zoom-in-button'),
+                tooltip: null,
+                onPressed: onZoomIn,
+                icon: const Icon(Icons.add),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
+                ),
+              ),
             ),
-            IconButton(
-              tooltip: 'Zoom out',
-              onPressed: onZoomOut,
-              icon: const Icon(Icons.remove),
+            SizedBox(
+              height: 24,
+              child: VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.8),
+              ),
             ),
-            IconButton(
-              tooltip: 'Reset zoom',
-              onPressed: onReset,
-              icon: const Icon(Icons.refresh),
+            Tooltip(
+              key: const Key('canvas-zoom-out-tooltip'),
+              message: 'Zoom out',
+              child: IconButton(
+                key: const Key('canvas-zoom-out-button'),
+                tooltip: null,
+                onPressed: onZoomOut,
+                icon: const Icon(Icons.remove),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
+                ),
+              ),
             ),
-            IconButton(
-              tooltip: 'Fit to content',
-              onPressed: onFit,
-              icon: const Icon(Icons.fit_screen),
+            SizedBox(
+              height: 24,
+              child: VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.8),
+              ),
+            ),
+            Tooltip(
+              key: const Key('canvas-zoom-reset-tooltip'),
+              message: 'Reset zoom',
+              child: IconButton(
+                key: const Key('canvas-zoom-reset-button'),
+                tooltip: null,
+                onPressed: onReset,
+                icon: const Icon(Icons.center_focus_strong_outlined),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 24,
+              child: VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.8),
+              ),
+            ),
+            Tooltip(
+              key: const Key('canvas-zoom-fit-tooltip'),
+              message: 'Fit to content',
+              child: IconButton(
+                key: const Key('canvas-zoom-fit-button'),
+                tooltip: null,
+                onPressed: onFit,
+                icon: const Icon(Icons.fit_screen),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
+                ),
+              ),
             ),
           ],
         ),

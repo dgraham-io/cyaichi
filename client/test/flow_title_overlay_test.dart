@@ -215,4 +215,47 @@ void main() {
     );
     expect(runTooltip.message, 'Run (select a workspace)');
   });
+
+  testWidgets('zoom panel renders with zoom icons', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _FlowTitleTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('canvas-zoom-toolbar')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('canvas-zoom-toolbar')),
+        matching: find.byIcon(Icons.add),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('canvas-zoom-toolbar')),
+        matching: find.byIcon(Icons.remove),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('canvas-zoom-toolbar')),
+        matching: find.byIcon(Icons.center_focus_strong_outlined),
+      ),
+      findsOneWidget,
+    );
+  });
 }

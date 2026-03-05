@@ -102,6 +102,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isRunning = false;
   String? _connectionRejectReason;
   String? _runValidationError;
+  Timer? _validationDebounce;
+  List<String> _flowValidationErrors = const <String>[];
+  List<String> _flowValidationWarnings = const <String>[];
 
   String _lastRunStatus = 'idle';
   String? _lastRunError;
@@ -163,6 +166,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _inputFileController = TextEditingController();
     _outputFileController = TextEditingController();
     _apiClient = _createApiClient(_serverBaseUrl, _runRequestTimeoutSeconds);
+    _scheduleFlowValidation(immediate: true);
 
     _loadSettings();
   }
@@ -176,6 +180,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   @override
   void dispose() {
+    _validationDebounce?.cancel();
     _controller.dispose();
     _flowTitleController.dispose();
     _inputFileController.dispose();
@@ -509,24 +514,36 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         : _controller.getConnection(_selectedConnectionId!);
     final canvasTheme = NodeFlowTheme.dark;
 
-    final runEnabled = hasWorkspaceSelected && runGuard.canRun && !_isRunning;
+    final hasFlowErrors = _flowValidationErrors.isNotEmpty;
+    final hasOtherFlowBlockers =
+        runGuard.blockers.isNotEmpty &&
+        hasWorkspaceSelected &&
+        !_isRunning &&
+        !hasFlowErrors;
+    final showRunBlockedOverlay = hasFlowErrors || hasOtherFlowBlockers;
+    final runEnabled =
+        hasWorkspaceSelected &&
+        !showRunBlockedOverlay &&
+        runGuard.canRun &&
+        !_isRunning;
+    final firstValidationIssue = hasFlowErrors
+        ? _flowValidationErrors.first
+        : (hasOtherFlowBlockers ? runGuard.blockers.first : null);
     final runTooltip = _isRunning
         ? 'Run (in progress)'
         : !hasWorkspaceSelected
         ? 'Run (select a workspace)'
         : runEnabled
         ? 'Run'
-        : 'Run (fix validation errors)';
+        : firstValidationIssue == null
+        ? 'Run (fix flow errors)'
+        : 'Run (fix flow errors): $firstValidationIssue';
 
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.enter, control: true):
             _RunFlowIntent(),
         SingleActivator(LogicalKeyboardKey.enter, meta: true): _RunFlowIntent(),
-        SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true):
-            _ValidateFlowIntent(),
-        SingleActivator(LogicalKeyboardKey.keyV, meta: true, shift: true):
-            _ValidateFlowIntent(),
       },
       child: Actions(
         actions: <Type, Action<Intent>>{
@@ -541,12 +558,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               } else {
                 _onRunBlockedAttempt();
               }
-              return null;
-            },
-          ),
-          _ValidateFlowIntent: CallbackAction<_ValidateFlowIntent>(
-            onInvoke: (_) {
-              unawaited(_validateFlow());
               return null;
             },
           ),
@@ -679,17 +690,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                               child: Padding(
                                 padding: const EdgeInsets.only(top: 12),
                                 child: _CanvasFloatingToolbar(
-                                  validateEnabled: !_isSavingToServer,
                                   runEnabled: runEnabled,
                                   isRunning: _isRunning,
                                   runTooltip: runTooltip,
-                                  onValidate: () {
-                                    unawaited(_validateFlow());
-                                  },
+                                  showBlockedOverlay: showRunBlockedOverlay,
                                   onRun: () {
                                     unawaited(_runFlow());
                                   },
-                                  onRunBlockedAttempt: _onRunBlockedAttempt,
                                 ),
                               ),
                             ),
@@ -1772,6 +1779,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastOpenedFlowDocId = null;
         _lastOpenedFlowVerId = null;
       });
+      _scheduleFlowValidation(immediate: true);
       await _persistSettings();
       return;
     }
@@ -1827,6 +1835,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _nodeTypeRegistry = nextRegistry;
         _nodeTypesStatus = _nodeTypesStatusLabel(nextRegistry.source);
       });
+      _scheduleFlowValidation(immediate: true);
     } on ApiError catch (error) {
       if (!mounted) {
         return;
@@ -1872,38 +1881,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       blockers.add('Create at least one connection before running.');
     }
 
-    if (nodes.isNotEmpty && edges.isNotEmpty) {
-      final validation = validateFlowGraph(
-        nodes: nodes
-            .map(
-              (node) => FlowValidationNode(
-                id: node.id,
-                type: node.type,
-                inputPorts: _readFlowPorts(
-                  node.data['inputs'],
-                ).map((port) => port.port).toList(growable: false),
-                outputPorts: _readFlowPorts(
-                  node.data['outputs'],
-                ).map((port) => port.port).toList(growable: false),
-                config: _readConfig(node.data),
-              ),
-            )
-            .toList(growable: false),
-        edges: edges
-            .map(
-              (edge) => FlowValidationEdge(
-                sourceNodeId: edge.sourceNodeId,
-                sourcePortId: edge.sourcePortId,
-                targetNodeId: edge.targetNodeId,
-                targetPortId: edge.targetPortId,
-              ),
-            )
-            .toList(growable: false),
-        nodeTypeLookup: _nodeTypeRegistry.byType,
-      );
-      if (validation.errors.isNotEmpty) {
-        blockers.addAll(validation.errors.map((issue) => issue.message));
-      }
+    if (_flowValidationErrors.isNotEmpty) {
+      blockers.addAll(_flowValidationErrors);
     }
 
     final hasFileReadNode = nodes.any((node) => node.type == 'file.read');
@@ -1930,6 +1909,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   void _onRunBlockedAttempt() {
+    _runFlowValidationNow();
     final runGuard = _computeRunGuard(forRunAttempt: true);
     if (!mounted) {
       return;
@@ -1944,14 +1924,71 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   void _markFlowDirty() {
-    if (_isFlowDirty) {
+    if (!mounted) {
       return;
     }
-    if (!mounted) {
+    if (_isFlowDirty) {
+      _scheduleFlowValidation();
       return;
     }
     setState(() {
       _isFlowDirty = true;
+    });
+    _scheduleFlowValidation();
+  }
+
+  void _scheduleFlowValidation({bool immediate = false}) {
+    _validationDebounce?.cancel();
+    if (immediate) {
+      _runFlowValidationNow();
+      return;
+    }
+    _validationDebounce = Timer(const Duration(milliseconds: 220), () {
+      _runFlowValidationNow();
+    });
+  }
+
+  void _runFlowValidationNow() {
+    final nodes = _controller.nodes.values.toList(growable: false);
+    final edges = _controller.connections.toList(growable: false);
+    final result = validateFlowGraph(
+      nodes: nodes
+          .map(
+            (node) => FlowValidationNode(
+              id: node.id,
+              type: node.type,
+              inputPorts: _readFlowPorts(
+                node.data['inputs'],
+              ).map((port) => port.port).toList(growable: false),
+              outputPorts: _readFlowPorts(
+                node.data['outputs'],
+              ).map((port) => port.port).toList(growable: false),
+              config: _readConfig(node.data),
+            ),
+          )
+          .toList(growable: false),
+      edges: edges
+          .map(
+            (edge) => FlowValidationEdge(
+              sourceNodeId: edge.sourceNodeId,
+              sourcePortId: edge.sourcePortId,
+              targetNodeId: edge.targetNodeId,
+              targetPortId: edge.targetPortId,
+            ),
+          )
+          .toList(growable: false),
+      nodeTypeLookup: _nodeTypeRegistry.byType,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _flowValidationErrors = result.errors
+          .map((issue) => issue.message)
+          .toList(growable: false);
+      _flowValidationWarnings = result.warnings
+          .map((issue) => issue.message)
+          .toList(growable: false);
     });
   }
 
@@ -2001,8 +2038,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
     setState(() {
       _flowTitleController.text = nextTitle;
-      _isFlowDirty = true;
     });
+    _markFlowDirty();
   }
 
   void _clearFlowDirty() {
@@ -2404,6 +2441,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     if (_isRunning) {
       return;
     }
+
+    _runFlowValidationNow();
 
     setState(() {
       _hasAttemptedRun = true;
@@ -2867,71 +2906,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
     }
     return null;
-  }
-
-  Future<void> _validateFlow() async {
-    final nodes = _controller.nodes.values.toList(growable: false);
-    final edges = _controller.connections.toList(growable: false);
-    final result = validateFlowGraph(
-      nodes: nodes
-          .map(
-            (node) => FlowValidationNode(
-              id: node.id,
-              type: node.type,
-              inputPorts: _readFlowPorts(
-                node.data['inputs'],
-              ).map((port) => port.port).toList(growable: false),
-              outputPorts: _readFlowPorts(
-                node.data['outputs'],
-              ).map((port) => port.port).toList(growable: false),
-              config: _readConfig(node.data),
-            ),
-          )
-          .toList(growable: false),
-      edges: edges
-          .map(
-            (edge) => FlowValidationEdge(
-              sourceNodeId: edge.sourceNodeId,
-              sourcePortId: edge.sourcePortId,
-              targetNodeId: edge.targetNodeId,
-              targetPortId: edge.targetPortId,
-            ),
-          )
-          .toList(growable: false),
-      nodeTypeLookup: _nodeTypeRegistry.byType,
-    );
-
-    final message = <String>[
-      if (result.errors.isEmpty) 'Errors: none' else 'Errors:',
-      ...result.errors.map((issue) => '• ${issue.message}'),
-      '',
-      if (result.warnings.isEmpty) 'Warnings: none' else 'Warnings:',
-      ...result.warnings.map((issue) => '• ${issue.message}'),
-    ].join('\n');
-
-    if (!mounted) {
-      return;
-    }
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(
-            result.hasErrors ? 'Validation errors' : 'Validation result',
-          ),
-          content: SizedBox(
-            width: 700,
-            child: SingleChildScrollView(child: Text(message)),
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   Future<void> _deleteSelected() async {
@@ -3727,6 +3701,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _isFlowDirty = false;
       _hasAttemptedRun = false;
     });
+    _scheduleFlowValidation(immediate: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.fitToView();
     });
@@ -3986,6 +3961,32 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   @visibleForTesting
   int get debugCanvasEdgeCount => _controller.connections.length;
+
+  @visibleForTesting
+  bool get debugHasFlowValidationErrors => _flowValidationErrors.isNotEmpty;
+
+  @visibleForTesting
+  List<String> get debugFlowValidationErrors =>
+      List<String>.from(_flowValidationErrors);
+
+  @visibleForTesting
+  List<String> get debugFlowValidationWarnings =>
+      List<String>.from(_flowValidationWarnings);
+
+  @visibleForTesting
+  void debugSetSimpleGraphForTest({
+    required List<Node<Map<String, dynamic>>> nodes,
+    required List<Connection<dynamic>> connections,
+  }) {
+    _controller.clearGraph();
+    for (final node in nodes) {
+      _controller.addNode(node);
+    }
+    for (final connection in connections) {
+      _controller.addConnection(connection);
+    }
+    _scheduleFlowValidation(immediate: true);
+  }
 }
 
 class _TraceErrorDetails {
@@ -4009,10 +4010,6 @@ enum _WorkspaceMenuAction { rename, select, create, delete }
 
 class _RunFlowIntent extends Intent {
   const _RunFlowIntent();
-}
-
-class _ValidateFlowIntent extends Intent {
-  const _ValidateFlowIntent();
 }
 
 class _FlowTitleOverlay extends StatelessWidget {
@@ -4132,22 +4129,18 @@ class _FlowTitleOverlay extends StatelessWidget {
 
 class _CanvasFloatingToolbar extends StatelessWidget {
   const _CanvasFloatingToolbar({
-    required this.validateEnabled,
     required this.runEnabled,
     required this.isRunning,
     required this.runTooltip,
-    required this.onValidate,
+    required this.showBlockedOverlay,
     required this.onRun,
-    required this.onRunBlockedAttempt,
   });
 
-  final bool validateEnabled;
   final bool runEnabled;
   final bool isRunning;
   final String runTooltip;
-  final VoidCallback onValidate;
+  final bool showBlockedOverlay;
   final VoidCallback onRun;
-  final VoidCallback onRunBlockedAttempt;
 
   @override
   Widget build(BuildContext context) {
@@ -4160,60 +4153,46 @@ class _CanvasFloatingToolbar extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Tooltip(
-              key: const Key('canvas-validate-tooltip'),
-              message: 'Validate',
-              child: IconButton(
-                key: const Key('canvas-validate-button'),
-                tooltip: null,
-                onPressed: validateEnabled ? onValidate : null,
-                icon: const Icon(Icons.fact_check_outlined),
-                iconSize: 20,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
-                ),
-              ),
+        child: Tooltip(
+          key: const Key('canvas-run-tooltip'),
+          message: runTooltip,
+          child: IconButton(
+            key: const Key('canvas-run-button'),
+            tooltip: null,
+            onPressed: runEnabled ? onRun : null,
+            icon: SizedBox(
+              width: 22,
+              height: 22,
+              child: isRunning
+                  ? const Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Center(child: Icon(Icons.play_arrow_rounded)),
+                        if (showBlockedOverlay)
+                          Positioned(
+                            right: -2,
+                            top: -2,
+                            child: Icon(
+                              Icons.block,
+                              key: const Key('canvas-run-blocked-overlay'),
+                              size: 13,
+                              color: scheme.error.withValues(alpha: 0.8),
+                            ),
+                          ),
+                      ],
+                    ),
             ),
-            SizedBox(
-              height: 24,
-              child: VerticalDivider(
-                width: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.8),
-              ),
-            ),
-            Tooltip(
-              key: const Key('canvas-run-tooltip'),
-              message: runTooltip,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: !runEnabled && !isRunning ? onRunBlockedAttempt : null,
-                child: IconButton(
-                  key: const Key('canvas-run-button'),
-                  tooltip: null,
-                  onPressed: runEnabled ? onRun : null,
-                  icon: isRunning
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.play_arrow_rounded),
-                  iconSize: 20,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 40,
-                    height: 40,
-                  ),
-                ),
-              ),
-            ),
-          ],
+            iconSize: 20,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+          ),
         ),
       ),
     );

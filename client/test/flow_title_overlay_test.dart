@@ -4,6 +4,7 @@ import 'package:client/src/models/server_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vyuh_node_flow/vyuh_node_flow.dart';
 
 class _FlowTitleTestApiClient extends ApiClient {
   _FlowTitleTestApiClient()
@@ -37,6 +38,69 @@ class _FlowTitleTestApiClient extends ApiClient {
         outputs: <NodeTypePortDef>[
           NodeTypePortDef(port: 'out', schema: 'artifact/text'),
         ],
+        configSchema: const <NodeTypeConfigFieldDef>[],
+      ),
+    ];
+  }
+
+  @override
+  Future<List<FlowListItem>> getFlows({required String workspaceId}) async {
+    return const <FlowListItem>[];
+  }
+
+  @override
+  Future<List<RunListItem>> getRuns({required String workspaceId}) async {
+    return const <RunListItem>[];
+  }
+
+  @override
+  Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
+    return const <NoteListItem>[];
+  }
+}
+
+class _RunValidApiClient extends ApiClient {
+  _RunValidApiClient()
+    : super(
+        baseUrl: 'http://localhost:8080',
+        runRequestTimeout: const Duration(seconds: 300),
+      );
+
+  @override
+  void close() {}
+
+  @override
+  Future<List<WorkspaceListItem>> getWorkspaces() async {
+    return <WorkspaceListItem>[
+      WorkspaceListItem(
+        workspaceId: '11111111-1111-1111-1111-111111111111',
+        name: 'Workspace One',
+        createdAt: '2026-03-05T00:00:00Z',
+      ),
+    ];
+  }
+
+  @override
+  Future<List<NodeTypeDef>> getNodeTypes() async {
+    return <NodeTypeDef>[
+      NodeTypeDef(
+        type: 'source.node',
+        displayName: 'Source',
+        category: 'custom',
+        inputs: const <NodeTypePortDef>[],
+        outputs: <NodeTypePortDef>[
+          NodeTypePortDef(port: 'out', schema: 'artifact/text'),
+        ],
+        configSchema: const <NodeTypeConfigFieldDef>[],
+      ),
+      NodeTypeDef(
+        type: 'sink.node',
+        displayName: 'Sink',
+        category: 'custom',
+        inputs: <NodeTypePortDef>[
+          NodeTypePortDef(port: 'in', schema: 'artifact/text'),
+        ],
+        outputs: const <NodeTypePortDef>[],
         configSchema: const <NodeTypeConfigFieldDef>[],
       ),
     ];
@@ -207,13 +271,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('canvas-floating-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('canvas-validate-button')), findsOneWidget);
     expect(find.byKey(const Key('canvas-run-button')), findsOneWidget);
-
-    final validateTooltip = tester.widget<Tooltip>(
-      find.byKey(const Key('canvas-validate-tooltip')),
-    );
-    expect(validateTooltip.message, 'Validate');
 
     final runTooltip = tester.widget<Tooltip>(
       find.byKey(const Key('canvas-run-tooltip')),
@@ -250,6 +308,122 @@ void main() {
       find.byKey(const Key('canvas-run-tooltip')),
     );
     expect(runTooltip.message, 'Run (select a workspace)');
+  });
+
+  testWidgets('invalid flow shows blocked run overlay and disabled button', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _FlowTitleTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final runButton = tester.widget<IconButton>(
+      find.byKey(const Key('canvas-run-button')),
+    );
+    expect(runButton.onPressed, isNull);
+    expect(find.byKey(const Key('canvas-run-blocked-overlay')), findsOneWidget);
+  });
+
+  testWidgets('valid flow enables run and hides blocked overlay', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _RunValidApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final dynamic state = tester.state(find.byType(FlowCanvasScreen));
+    state.debugSetSimpleGraphForTest(
+      nodes: <Node<Map<String, dynamic>>>[
+        Node<Map<String, dynamic>>(
+          id: 'source-1',
+          type: 'source.node',
+          position: const Offset(100, 120),
+          size: const Size(220, 132),
+          ports: <Port>[
+            Port(
+              id: 'out',
+              name: 'out',
+              position: PortPosition.right,
+              type: PortType.output,
+              offset: Offset(0, 66),
+              multiConnections: true,
+            ),
+          ],
+          data: <String, dynamic>{
+            'title': 'Source',
+            'config': <String, dynamic>{},
+            'inputs': <Map<String, dynamic>>[],
+            'outputs': <Map<String, dynamic>>[
+              <String, dynamic>{'port': 'out', 'schema': 'artifact/text'},
+            ],
+          },
+        ),
+        Node<Map<String, dynamic>>(
+          id: 'sink-1',
+          type: 'sink.node',
+          position: const Offset(420, 120),
+          size: const Size(220, 132),
+          ports: <Port>[
+            Port(
+              id: 'in',
+              name: 'in',
+              position: PortPosition.left,
+              type: PortType.input,
+              offset: Offset(0, 66),
+              multiConnections: true,
+            ),
+          ],
+          data: <String, dynamic>{
+            'title': 'Sink',
+            'config': <String, dynamic>{},
+            'inputs': <Map<String, dynamic>>[
+              <String, dynamic>{'port': 'in', 'schema': 'artifact/text'},
+            ],
+            'outputs': <Map<String, dynamic>>[],
+          },
+        ),
+      ],
+      connections: <Connection<dynamic>>[
+        Connection<dynamic>(
+          id: 'conn-1',
+          sourceNodeId: 'source-1',
+          sourcePortId: 'out',
+          targetNodeId: 'sink-1',
+          targetPortId: 'in',
+        ),
+      ],
+    );
+    await tester.pumpAndSettle();
+
+    final runButton = tester.widget<IconButton>(
+      find.byKey(const Key('canvas-run-button')),
+    );
+    expect(runButton.onPressed, isNotNull);
+    expect(find.byKey(const Key('canvas-run-blocked-overlay')), findsNothing);
   });
 
   testWidgets('zoom panel renders with zoom icons', (

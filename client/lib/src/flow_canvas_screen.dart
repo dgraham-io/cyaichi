@@ -66,6 +66,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _primaryWriteNodeId;
   int _nodeCounter = 1;
   bool _isFlowDirty = false;
+  bool _hasAttemptedRun = false;
 
   bool _isCreatingWorkspace = false;
   bool _isSavingToServer = false;
@@ -253,6 +254,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     setState(() {
       _selectedWorkspaceId = workspaceId;
       _primaryWriteNodeId = null;
+      _hasAttemptedRun = false;
     });
     await _persistSettings();
     await _refreshWorkspaceData();
@@ -368,9 +370,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   onDuplicate: _duplicateCurrentFlow,
                   onValidateFlow: _validateFlow,
                   onRun: _runFlow,
+                  onRunBlockedAttempt: _onRunBlockedAttempt,
                   onCancelRun: _cancelRunWait,
                   saveEnabled: _selectedWorkspaceId != null,
                   runEnabled: runGuard.canRun && !_isRunning,
+                  runDisabledHint: runGuard.blockers.isEmpty
+                      ? null
+                      : runGuard.blockers.first,
                 ),
               )
             : null,
@@ -422,6 +428,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   Widget _buildFlowTab() {
     final runGuard = _computeRunGuard();
+    final nodes = _controller.nodes.values.toList(growable: false);
     final selectedNode = _selectedNodeId == null
         ? null
         : _controller.getNode(_selectedNodeId!);
@@ -564,6 +571,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     outputFileHint: _defaultRunOutputFile,
                     status: _lastRunStatus,
                     blockers: runGuard.blockers,
+                    showBlockers: _hasAttemptedRun,
+                    subtleHint:
+                        !_hasAttemptedRun && runGuard.blockers.isNotEmpty
+                        ? runGuard.blockers.first
+                        : null,
+                    showEmptyHint: nodes.isEmpty,
                     validationError: _runValidationError,
                     runId: _lastRunId,
                     runVerId: _lastRunVerId,
@@ -1073,7 +1086,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
-  _RunGuardResult _computeRunGuard() {
+  _RunGuardResult _computeRunGuard({bool forRunAttempt = false}) {
     final blockers = <String>[];
     if (_selectedWorkspaceId == null) {
       blockers.add('Select or create a workspace to save and run.');
@@ -1122,33 +1135,41 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
     }
 
-    final runDefaultsCheck = buildRunRequestParams(
-      enteredInputFile: _inputFileController.text,
-      enteredOutputFile: _outputFileController.text,
-      readNodeConfigInputFiles: _collectReadNodeInputDefaults(),
-      writeNodes: _collectWriteNodeOptions(),
-      preferredPrimaryWriteNodeId: _primaryWriteNodeId,
-    );
-    if (runDefaultsCheck.errorMessage != null &&
-        (runDefaultsCheck.errorMessage!.contains('input_file is required') ||
-            runDefaultsCheck.errorMessage!.contains(
-              'output_file is required',
-            ))) {
-      blockers.add(runDefaultsCheck.errorMessage!);
-    }
-
-    final writeNodes = _collectWriteNodeOptions();
-    if (_outputFileController.text.trim().isEmpty && writeNodes.isNotEmpty) {
-      final chosenOutput = chooseRunOutputFile(
-        writes: writeNodes,
-        primaryNodeId: _primaryWriteNodeId,
+    final hasFileReadNode = nodes.any((node) => node.type == 'file.read');
+    final hasFileWriteNode = nodes.any((node) => node.type == 'file.write');
+    final includePathRequirements =
+        forRunAttempt ||
+        _hasAttemptedRun ||
+        hasFileReadNode ||
+        hasFileWriteNode;
+    if (includePathRequirements) {
+      final runDefaultsCheck = buildRunRequestParams(
+        enteredInputFile: _inputFileController.text,
+        enteredOutputFile: _outputFileController.text,
+        readNodeConfigInputFiles: _collectReadNodeInputDefaults(),
+        writeNodes: _collectWriteNodeOptions(),
+        preferredPrimaryWriteNodeId: _primaryWriteNodeId,
       );
-      if (chosenOutput == null || chosenOutput.trim().isEmpty) {
-        blockers.add('output_file is required');
+      if (runDefaultsCheck.errorMessage != null) {
+        blockers.add(runDefaultsCheck.errorMessage!);
       }
     }
 
     return _RunGuardResult(canRun: blockers.isEmpty, blockers: blockers);
+  }
+
+  void _onRunBlockedAttempt() {
+    final runGuard = _computeRunGuard(forRunAttempt: true);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _hasAttemptedRun = true;
+      _runValidationError = null;
+    });
+    if (runGuard.blockers.isNotEmpty) {
+      _showSnack('Run blocked. Review requirements in Run Panel.');
+    }
   }
 
   void _markFlowDirty() {
@@ -1539,15 +1560,19 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return;
     }
 
+    setState(() {
+      _hasAttemptedRun = true;
+    });
+
     final workspaceId = _selectedWorkspaceId;
     if (workspaceId == null) {
       _showSnack('Select or create a workspace first.');
       return;
     }
-    final runGuard = _computeRunGuard();
+    final runGuard = _computeRunGuard(forRunAttempt: true);
     if (!runGuard.canRun) {
       setState(() {
-        _runValidationError = runGuard.blockers.join('\n');
+        _runValidationError = null;
       });
       return;
     }
@@ -2753,6 +2778,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _currentFlowParents = parsed.parents;
       _primaryWriteNodeId = importedPrimaryWriteNodeId;
       _isFlowDirty = false;
+      _hasAttemptedRun = false;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.fitToView();
@@ -3045,9 +3071,11 @@ class _TopControlsBar extends StatelessWidget {
     required this.onDuplicate,
     required this.onValidateFlow,
     required this.onRun,
+    required this.onRunBlockedAttempt,
     required this.onCancelRun,
     required this.saveEnabled,
     required this.runEnabled,
+    required this.runDisabledHint,
   });
 
   final bool settingsLoaded;
@@ -3065,9 +3093,11 @@ class _TopControlsBar extends StatelessWidget {
   final Future<void> Function() onDuplicate;
   final Future<void> Function() onValidateFlow;
   final Future<void> Function() onRun;
+  final VoidCallback onRunBlockedAttempt;
   final VoidCallback onCancelRun;
   final bool saveEnabled;
   final bool runEnabled;
+  final String? runDisabledHint;
 
   @override
   Widget build(BuildContext context) {
@@ -3179,16 +3209,27 @@ class _TopControlsBar extends StatelessWidget {
                   label: const Text('Validate Flow'),
                 ),
                 const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: runEnabled ? onRun : null,
-                  icon: isRunning
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.play_arrow),
-                  label: const Text('Run'),
+                Tooltip(
+                  message: runEnabled
+                      ? 'Run flow'
+                      : (runDisabledHint == null
+                            ? 'Run unavailable'
+                            : 'Run unavailable: $runDisabledHint'),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: runEnabled ? null : onRunBlockedAttempt,
+                    child: FilledButton.icon(
+                      onPressed: runEnabled ? onRun : null,
+                      icon: isRunning
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.play_arrow),
+                      label: const Text('Run'),
+                    ),
+                  ),
                 ),
                 if (isRunning) ...[
                   const SizedBox(width: 8),
@@ -3422,6 +3463,9 @@ class _RunPanel extends StatelessWidget {
     required this.outputFileHint,
     required this.status,
     required this.blockers,
+    required this.showBlockers,
+    required this.subtleHint,
+    required this.showEmptyHint,
     required this.validationError,
     required this.runId,
     required this.runVerId,
@@ -3449,6 +3493,9 @@ class _RunPanel extends StatelessWidget {
   final String outputFileHint;
   final String status;
   final List<String> blockers;
+  final bool showBlockers;
+  final String? subtleHint;
+  final bool showEmptyHint;
   final String? validationError;
   final String? runId;
   final String? runVerId;
@@ -3513,7 +3560,23 @@ class _RunPanel extends StatelessWidget {
                       'title: Validation error\nmessage: ${validationError!}',
                 ),
               ),
-            if (blockers.isNotEmpty)
+            if (showEmptyHint)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  'Add nodes from the left palette to get started.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            if (!showBlockers && subtleHint != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  'Run unavailable: $subtleHint',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            if (showBlockers && blockers.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
                 child: ErrorBanner(

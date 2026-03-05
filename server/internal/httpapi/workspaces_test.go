@@ -439,3 +439,199 @@ func TestListWorkspacesReturnsMostRecentWorkspaceDocuments(t *testing.T) {
 		t.Fatalf("expected older workspace second, got %+v", resp.Items[1])
 	}
 }
+
+func TestGetWorkspacesReturnsEmptyWhenNoneExist(t *testing.T) {
+	h := newAPITestHarness(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/workspaces", nil)
+	rr := httptest.NewRecorder()
+	h.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Items) != 0 {
+		t.Fatalf("expected empty items, got %d", len(resp.Items))
+	}
+}
+
+func TestPatchWorkspaceRenamesAndListUsesNewestVersion(t *testing.T) {
+	h := newAPITestHarness(t)
+
+	workspaceA := createWorkspaceViaAPI(t, h, "Workspace A")
+	workspaceB := createWorkspaceViaAPI(t, h, "Workspace B")
+
+	patchReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/workspaces/"+workspaceA.WorkspaceID,
+		strings.NewReader(`{"name":"Workspace A Renamed"}`),
+	)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(patchRR, patchReq)
+	if patchRR.Code != http.StatusOK {
+		t.Fatalf("patch workspace failed: %d body=%s", patchRR.Code, patchRR.Body.String())
+	}
+
+	var patched struct {
+		WorkspaceID string `json:"workspace_id"`
+		VerID       string `json:"ver_id"`
+		Name        string `json:"name"`
+	}
+	if err := json.Unmarshal(patchRR.Body.Bytes(), &patched); err != nil {
+		t.Fatalf("decode patch response: %v", err)
+	}
+	if patched.WorkspaceID != workspaceA.WorkspaceID {
+		t.Fatalf("unexpected workspace id in patch response: %q", patched.WorkspaceID)
+	}
+	if patched.Name != "Workspace A Renamed" {
+		t.Fatalf("expected renamed name in patch response, got %q", patched.Name)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces", nil)
+	listRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("list workspaces failed: %d body=%s", listRR.Code, listRR.Body.String())
+	}
+
+	var listResp struct {
+		Items []struct {
+			WorkspaceID string `json:"workspace_id"`
+			Name        string `json:"name"`
+			VerID       string `json:"ver_id"`
+			Deleted     bool   `json:"deleted"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listResp.Items) != 2 {
+		t.Fatalf("expected 2 workspaces, got %d", len(listResp.Items))
+	}
+
+	gotByID := map[string]struct {
+		Name    string
+		VerID   string
+		Deleted bool
+	}{}
+	for _, item := range listResp.Items {
+		gotByID[item.WorkspaceID] = struct {
+			Name    string
+			VerID   string
+			Deleted bool
+		}{Name: item.Name, VerID: item.VerID, Deleted: item.Deleted}
+	}
+
+	gotA, ok := gotByID[workspaceA.WorkspaceID]
+	if !ok {
+		t.Fatalf("workspace A missing from list")
+	}
+	if gotA.Name != "Workspace A Renamed" {
+		t.Fatalf("expected renamed workspace name, got %q", gotA.Name)
+	}
+	if gotA.VerID != patched.VerID {
+		t.Fatalf("expected latest ver_id %q, got %q", patched.VerID, gotA.VerID)
+	}
+	if gotA.Deleted {
+		t.Fatalf("expected renamed workspace not deleted")
+	}
+
+	gotB, ok := gotByID[workspaceB.WorkspaceID]
+	if !ok {
+		t.Fatalf("workspace B missing from list")
+	}
+	if gotB.Name != "Workspace B" {
+		t.Fatalf("expected workspace B unchanged, got %q", gotB.Name)
+	}
+}
+
+func TestDeleteWorkspaceExcludedByDefaultAndIncludedWithQueryParam(t *testing.T) {
+	h := newAPITestHarness(t)
+
+	workspace := createWorkspaceViaAPI(t, h, "To Delete")
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v1/workspaces/"+workspace.WorkspaceID, nil)
+	deleteRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(deleteRR, deleteReq)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("delete workspace failed: %d body=%s", deleteRR.Code, deleteRR.Body.String())
+	}
+
+	var deletedResp struct {
+		WorkspaceID string `json:"workspace_id"`
+		VerID       string `json:"ver_id"`
+		Deleted     bool   `json:"deleted"`
+	}
+	if err := json.Unmarshal(deleteRR.Body.Bytes(), &deletedResp); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
+	if !deletedResp.Deleted {
+		t.Fatalf("expected deleted=true in delete response")
+	}
+
+	defaultListReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces", nil)
+	defaultListRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(defaultListRR, defaultListReq)
+	if defaultListRR.Code != http.StatusOK {
+		t.Fatalf("default list failed: %d body=%s", defaultListRR.Code, defaultListRR.Body.String())
+	}
+	var defaultList struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(defaultListRR.Body.Bytes(), &defaultList); err != nil {
+		t.Fatalf("decode default list response: %v", err)
+	}
+	if len(defaultList.Items) != 0 {
+		t.Fatalf("expected deleted workspace hidden by default, got %d items", len(defaultList.Items))
+	}
+
+	includeDeletedReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces?include_deleted=true", nil)
+	includeDeletedRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(includeDeletedRR, includeDeletedReq)
+	if includeDeletedRR.Code != http.StatusOK {
+		t.Fatalf("include_deleted list failed: %d body=%s", includeDeletedRR.Code, includeDeletedRR.Body.String())
+	}
+	var includeDeletedList struct {
+		Items []struct {
+			WorkspaceID string `json:"workspace_id"`
+			Deleted     bool   `json:"deleted"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(includeDeletedRR.Body.Bytes(), &includeDeletedList); err != nil {
+		t.Fatalf("decode include_deleted list response: %v", err)
+	}
+	if len(includeDeletedList.Items) != 1 {
+		t.Fatalf("expected one deleted workspace, got %d", len(includeDeletedList.Items))
+	}
+	if includeDeletedList.Items[0].WorkspaceID != workspace.WorkspaceID {
+		t.Fatalf("unexpected workspace_id in include_deleted list: %q", includeDeletedList.Items[0].WorkspaceID)
+	}
+	if !includeDeletedList.Items[0].Deleted {
+		t.Fatalf("expected deleted workspace to have deleted=true")
+	}
+}
+
+func TestPatchWorkspaceReturnsNotFoundForUnknownWorkspace(t *testing.T) {
+	h := newAPITestHarness(t)
+
+	unknownWorkspaceID := uuid.NewString()
+	req := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/workspaces/"+unknownWorkspaceID,
+		strings.NewReader(`{"name":"Nope"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}

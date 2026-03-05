@@ -70,7 +70,25 @@ type listWorkspacesResponse struct {
 type listWorkspaceItem struct {
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
+	VerID       string `json:"ver_id"`
 	CreatedAt   string `json:"created_at"`
+	Deleted     bool   `json:"deleted"`
+}
+
+type patchWorkspaceRequest struct {
+	Name string `json:"name"`
+}
+
+type patchWorkspaceResponse struct {
+	WorkspaceID string `json:"workspace_id"`
+	VerID       string `json:"ver_id"`
+	Name        string `json:"name"`
+}
+
+type deleteWorkspaceResponse struct {
+	WorkspaceID string `json:"workspace_id"`
+	VerID       string `json:"ver_id"`
+	Deleted     bool   `json:"deleted"`
 }
 
 func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +100,21 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			h.handleListWorkspaces(w, r)
 		default:
 			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	if workspaceID, ok := parseWorkspacePath(r.URL.Path); ok {
+		switch r.Method {
+		case http.MethodGet:
+			h.handleGetWorkspace(w, r, workspaceID)
+		case http.MethodPatch:
+			h.handlePatchWorkspace(w, r, workspaceID)
+		case http.MethodDelete:
+			h.handleDeleteWorkspace(w, r, workspaceID)
+		default:
+			w.Header().Set("Allow", "GET, PATCH, DELETE")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 		return
@@ -123,7 +156,12 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WorkspacesHandler) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.store.ListLatestDocumentsByType(r.Context(), "workspace", 100, 0)
+	includeDeleted := false
+	if rawIncludeDeleted := strings.TrimSpace(r.URL.Query().Get("include_deleted")); rawIncludeDeleted != "" {
+		includeDeleted = rawIncludeDeleted == "1" || strings.EqualFold(rawIncludeDeleted, "true")
+	}
+
+	rows, err := h.store.ListLatestWorkspaces(r.Context(), 100, 0, includeDeleted)
 	if err != nil {
 		http.Error(w, "failed to list workspaces", http.StatusInternalServerError)
 		return
@@ -132,7 +170,7 @@ func (h *WorkspacesHandler) handleListWorkspaces(w http.ResponseWriter, r *http.
 	items := make([]listWorkspaceItem, 0, len(rows))
 	for _, row := range rows {
 		name := ""
-		workspaceID := row.DocID
+		workspaceID := row.WorkspaceID
 		var doc map[string]any
 		if err := json.Unmarshal([]byte(row.JSON), &doc); err == nil {
 			if body, ok := doc["body"].(map[string]any); ok {
@@ -146,13 +184,127 @@ func (h *WorkspacesHandler) handleListWorkspaces(w http.ResponseWriter, r *http.
 		items = append(items, listWorkspaceItem{
 			WorkspaceID: workspaceID,
 			Name:        name,
+			VerID:       row.VerID,
 			CreatedAt:   row.CreatedAt,
+			Deleted:     row.Deleted,
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(listWorkspacesResponse{Items: items})
+}
+
+func (h *WorkspacesHandler) handleGetWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	doc, err := h.validateWorkspace(w, r, workspaceID)
+	if err != nil {
+		return
+	}
+
+	name := ""
+	deleted := false
+	var docMap map[string]any
+	if err := json.Unmarshal([]byte(doc.JSON), &docMap); err == nil {
+		if body, ok := docMap["body"].(map[string]any); ok {
+			name, _ = body["name"].(string)
+		}
+		deleted = workspaceDocDeletedFlag(docMap)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(listWorkspaceItem{
+		WorkspaceID: workspaceID,
+		Name:        name,
+		VerID:       doc.VerID,
+		CreatedAt:   doc.CreatedAt,
+		Deleted:     deleted,
+	})
+}
+
+func (h *WorkspacesHandler) handlePatchWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	var req patchWorkspaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	latestDoc, err := h.validateWorkspace(w, r, workspaceID)
+	if err != nil {
+		return
+	}
+
+	updatedDocMap, newVerID, err := h.newWorkspaceVersionFromLatest(latestDoc)
+	if err != nil {
+		http.Error(w, "failed to prepare workspace update", http.StatusInternalServerError)
+		return
+	}
+
+	bodyMap, ok := updatedDocMap["body"].(map[string]any)
+	if !ok || bodyMap == nil {
+		http.Error(w, "stored workspace document body is invalid", http.StatusInternalServerError)
+		return
+	}
+	bodyMap["name"] = req.Name
+	updatedDocMap["body"] = bodyMap
+
+	if err := h.persistWorkspaceVersion(r, workspaceID, newVerID, updatedDocMap); err != nil {
+		if errors.Is(err, store.ErrDocumentExists) {
+			http.Error(w, "workspace document already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, "failed to store workspace", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(patchWorkspaceResponse{
+		WorkspaceID: workspaceID,
+		VerID:       newVerID,
+		Name:        req.Name,
+	})
+}
+
+func (h *WorkspacesHandler) handleDeleteWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	latestDoc, err := h.validateWorkspace(w, r, workspaceID)
+	if err != nil {
+		return
+	}
+
+	updatedDocMap, newVerID, err := h.newWorkspaceVersionFromLatest(latestDoc)
+	if err != nil {
+		http.Error(w, "failed to prepare workspace delete", http.StatusInternalServerError)
+		return
+	}
+
+	metaMap, ok := updatedDocMap["meta"].(map[string]any)
+	if !ok || metaMap == nil {
+		metaMap = map[string]any{}
+	}
+	metaMap["comment"] = "cyaichi.deleted=true"
+	updatedDocMap["meta"] = metaMap
+
+	if err := h.persistWorkspaceVersion(r, workspaceID, newVerID, updatedDocMap); err != nil {
+		if errors.Is(err, store.ErrDocumentExists) {
+			http.Error(w, "workspace document already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, "failed to store workspace", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(deleteWorkspaceResponse{
+		WorkspaceID: workspaceID,
+		VerID:       newVerID,
+		Deleted:     true,
+	})
 }
 
 func (h *WorkspacesHandler) handleListFlows(w http.ResponseWriter, r *http.Request, workspaceID string) {
@@ -354,23 +506,14 @@ func (h *WorkspacesHandler) handleSetHead(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	currentDoc, err := h.store.GetLatestWorkspaceDoc(r.Context(), workspaceID)
-	if errors.Is(err, store.ErrDocumentNotFound) {
-		http.NotFound(w, r)
-		return
-	}
+	currentDoc, err := h.validateWorkspace(w, r, workspaceID)
 	if err != nil {
-		http.Error(w, "failed to fetch workspace", http.StatusInternalServerError)
-		return
-	}
-	if currentDoc.DocID != workspaceID || currentDoc.WorkspaceID != workspaceID {
-		http.NotFound(w, r)
 		return
 	}
 
-	var docMap map[string]any
-	if err := json.Unmarshal([]byte(currentDoc.JSON), &docMap); err != nil {
-		http.Error(w, "stored workspace document is invalid", http.StatusInternalServerError)
+	docMap, newWorkspaceVerID, err := h.newWorkspaceVersionFromLatest(currentDoc)
+	if err != nil {
+		http.Error(w, "failed to prepare workspace update", http.StatusInternalServerError)
 		return
 	}
 
@@ -386,30 +529,7 @@ func (h *WorkspacesHandler) handleSetHead(w http.ResponseWriter, r *http.Request
 	headsMap[docID] = req.VerID
 	bodyMap["heads"] = headsMap
 	docMap["body"] = bodyMap
-
-	newWorkspaceVerID := uuid.NewString()
-	docMap["ver_id"] = newWorkspaceVerID
-	docMap["created_at"] = time.Now().UTC().Format(time.RFC3339)
-	docMap["parents"] = []string{currentDoc.VerID}
-
-	newDocBytes, err := json.Marshal(docMap)
-	if err != nil {
-		http.Error(w, "failed to encode workspace document", http.StatusInternalServerError)
-		return
-	}
-	if err := h.validator.Validate(newDocBytes); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if err := h.store.PutDocument(r.Context(), store.Document{
-		DocType:     "workspace",
-		DocID:       workspaceID,
-		VerID:       newWorkspaceVerID,
-		WorkspaceID: workspaceID,
-		CreatedAt:   docMap["created_at"].(string),
-		JSON:        string(newDocBytes),
-	}); err != nil {
+	if err := h.persistWorkspaceVersion(r, workspaceID, newWorkspaceVerID, docMap); err != nil {
 		if errors.Is(err, store.ErrDocumentExists) {
 			http.Error(w, "workspace document already exists", http.StatusConflict)
 			return
@@ -460,6 +580,18 @@ func parseWorkspaceHeadPath(path string) (workspaceID, docID string, ok bool) {
 	return parts[2], parts[4], true
 }
 
+func parseWorkspacePath(path string) (workspaceID string, ok bool) {
+	trimmed := strings.Trim(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 3 || parts[0] != "v1" || parts[1] != "workspaces" {
+		return "", false
+	}
+	if parts[2] == "" {
+		return "", false
+	}
+	return parts[2], true
+}
+
 func parseWorkspaceListPath(path string) (workspaceID, resource string, ok bool) {
 	trimmed := strings.Trim(path, "/")
 	parts := strings.Split(trimmed, "/")
@@ -470,4 +602,45 @@ func parseWorkspaceListPath(path string) (workspaceID, resource string, ok bool)
 		return "", "", false
 	}
 	return parts[2], parts[3], true
+}
+
+func (h *WorkspacesHandler) newWorkspaceVersionFromLatest(currentDoc store.Document) (map[string]any, string, error) {
+	var docMap map[string]any
+	if err := json.Unmarshal([]byte(currentDoc.JSON), &docMap); err != nil {
+		return nil, "", err
+	}
+
+	newVerID := uuid.NewString()
+	docMap["ver_id"] = newVerID
+	docMap["created_at"] = time.Now().UTC().Format(time.RFC3339)
+	docMap["parents"] = []string{currentDoc.VerID}
+	return docMap, newVerID, nil
+}
+
+func (h *WorkspacesHandler) persistWorkspaceVersion(r *http.Request, workspaceID, verID string, docMap map[string]any) error {
+	newDocBytes, err := json.Marshal(docMap)
+	if err != nil {
+		return err
+	}
+	if err := h.validator.Validate(newDocBytes); err != nil {
+		return err
+	}
+	createdAt, _ := docMap["created_at"].(string)
+	return h.store.PutDocument(r.Context(), store.Document{
+		DocType:     "workspace",
+		DocID:       workspaceID,
+		VerID:       verID,
+		WorkspaceID: workspaceID,
+		CreatedAt:   createdAt,
+		JSON:        string(newDocBytes),
+	})
+}
+
+func workspaceDocDeletedFlag(docMap map[string]any) bool {
+	metaMap, ok := docMap["meta"].(map[string]any)
+	if !ok || metaMap == nil {
+		return false
+	}
+	comment, _ := metaMap["comment"].(string)
+	return strings.Contains(comment, "cyaichi.deleted=true")
 }

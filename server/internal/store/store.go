@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -46,6 +47,15 @@ type DocumentListRow struct {
 	CreatedAt string
 	Ref       sql.NullString
 	JSON      string
+}
+
+type WorkspaceListRow struct {
+	WorkspaceID string
+	DocID       string
+	VerID       string
+	CreatedAt   string
+	JSON        string
+	Deleted     bool
 }
 
 func Open(ctx context.Context, dbPath string) (*Store, error) {
@@ -260,4 +270,60 @@ func (s *Store) ListLatestDocumentsByType(ctx context.Context, docType string, l
 		return nil, fmt.Errorf("iterate latest document rows: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Store) ListLatestWorkspaces(ctx context.Context, limit, offset int, includeDeleted bool) ([]WorkspaceListRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT workspace_id, doc_id, ver_id, created_at, json
+		FROM (
+			SELECT workspace_id, doc_id, ver_id, created_at, json,
+			       ROW_NUMBER() OVER (
+			         PARTITION BY workspace_id
+			         ORDER BY created_at DESC, ver_id DESC
+			       ) AS rn
+			FROM documents
+			WHERE doc_type = 'workspace'
+		)
+		WHERE rn = 1
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list latest workspaces: %w", err)
+	}
+	defer rows.Close()
+
+	result := []WorkspaceListRow{}
+	for rows.Next() {
+		var row WorkspaceListRow
+		if err := rows.Scan(&row.WorkspaceID, &row.DocID, &row.VerID, &row.CreatedAt, &row.JSON); err != nil {
+			return nil, fmt.Errorf("scan latest workspace row: %w", err)
+		}
+
+		row.Deleted = workspaceDocDeleted(row.JSON)
+		if row.Deleted && !includeDeleted {
+			continue
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate latest workspace rows: %w", err)
+	}
+	return result, nil
+}
+
+func workspaceDocDeleted(rawJSON string) bool {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &doc); err != nil {
+		return false
+	}
+	meta, ok := doc["meta"].(map[string]any)
+	if !ok {
+		return false
+	}
+	comment, ok := meta["comment"].(string)
+	if !ok {
+		return false
+	}
+	return strings.Contains(comment, "cyaichi.deleted=true")
 }

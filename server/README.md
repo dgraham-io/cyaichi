@@ -121,6 +121,32 @@ curl -i -X POST http://127.0.0.1:8080/v1/workspaces \
   --data-binary '{"name":"Demo Workspace"}'
 ```
 
+List workspaces (latest version per workspace, excluding soft-deleted by default):
+
+```bash
+curl -s http://127.0.0.1:8080/v1/workspaces | jq
+```
+
+Rename a workspace (creates a new workspace document version):
+
+```bash
+curl -i -X PATCH http://127.0.0.1:8080/v1/workspaces/$WS_ID \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"name":"Renamed Workspace"}'
+```
+
+Soft-delete a workspace (creates a new version with `meta.comment=cyaichi.deleted=true`):
+
+```bash
+curl -i -X DELETE http://127.0.0.1:8080/v1/workspaces/$WS_ID
+```
+
+List including deleted workspaces:
+
+```bash
+curl -s 'http://127.0.0.1:8080/v1/workspaces?include_deleted=true' | jq
+```
+
 Set a head:
 
 ```bash

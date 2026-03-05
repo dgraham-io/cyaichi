@@ -1219,28 +1219,30 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               title: const Text('New workspace'),
               content: SizedBox(
                 width: 460,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: controller,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Workspace name',
-                        border: OutlineInputBorder(),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: controller,
+                        autofocus: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Workspace name',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: 10),
-                      ErrorBanner(
-                        title: 'Request error',
-                        message: errorMessage!,
-                        copyText:
-                            'title: Request error\nmessage: ${errorMessage!}',
-                      ),
+                      if (errorMessage != null) ...[
+                        const SizedBox(height: 10),
+                        ErrorBanner(
+                          title: 'Request error',
+                          message: errorMessage!,
+                          copyText:
+                              'title: Request error\nmessage: ${errorMessage!}',
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               actions: [
@@ -1268,6 +1270,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                           try {
                             await _createWorkspace(name);
                             if (mounted && dialogContext.mounted) {
+                              FocusManager.instance.primaryFocus?.unfocus();
                               Navigator.of(dialogContext).pop();
                             }
                           } on ApiError catch (error) {
@@ -1290,7 +1293,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         );
       },
     );
-    controller.dispose();
   }
 
   Future<void> _showRenameWorkspaceDialog() async {
@@ -1311,28 +1313,30 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               title: const Text('Rename workspace'),
               content: SizedBox(
                 width: 460,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: controller,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Workspace name',
-                        border: OutlineInputBorder(),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: controller,
+                        autofocus: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Workspace name',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                    if (errorMessage != null) ...[
-                      const SizedBox(height: 10),
-                      ErrorBanner(
-                        title: 'Request error',
-                        message: errorMessage!,
-                        copyText:
-                            'title: Request error\nmessage: ${errorMessage!}',
-                      ),
+                      if (errorMessage != null) ...[
+                        const SizedBox(height: 10),
+                        ErrorBanner(
+                          title: 'Request error',
+                          message: errorMessage!,
+                          copyText:
+                              'title: Request error\nmessage: ${errorMessage!}',
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               actions: [
@@ -1346,6 +1350,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   onPressed: isSubmitting
                       ? null
                       : () async {
+                          var didCloseDialog = false;
                           final nextName = controller.text.trim();
                           if (nextName.isEmpty) {
                             setDialogState(() {
@@ -1360,14 +1365,26 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                           try {
                             await _renameWorkspace(workspaceID, nextName);
                             if (mounted && dialogContext.mounted) {
+                              FocusManager.instance.primaryFocus?.unfocus();
+                              didCloseDialog = true;
                               Navigator.of(dialogContext).pop();
                             }
                           } on ApiError catch (error) {
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
                             setDialogState(() {
                               errorMessage = _formatApiError(error);
                             });
+                          } catch (error) {
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {
+                              errorMessage = error.toString();
+                            });
                           } finally {
-                            if (dialogContext.mounted) {
+                            if (dialogContext.mounted && !didCloseDialog) {
                               setDialogState(() {
                                 isSubmitting = false;
                               });
@@ -1382,7 +1399,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         );
       },
     );
-    controller.dispose();
   }
 
   Future<void> _showDeleteWorkspaceDialog() async {
@@ -1929,7 +1945,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
     await _loadWorkspaces();
     await _persistSettings();
-    _showSnack('Workspace renamed to "$nextName"');
+    _showSnack('Workspace renamed');
   }
 
   Future<void> _softDeleteWorkspace(String workspaceID) async {

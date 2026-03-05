@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:client/api/api_client.dart';
 import 'package:client/src/flow/connection_validation.dart';
@@ -44,8 +43,7 @@ double clampRightOverlaySidebarWidth(
   double requestedWidth,
   double screenWidth,
 ) {
-  final maxAllowed = math.min(520.0, screenWidth * 0.6);
-  final clampedMax = math.max(280.0, maxAllowed);
+  final clampedMax = (screenWidth * 0.5).clamp(280.0, double.infinity);
   return requestedWidth.clamp(280.0, clampedMax).toDouble();
 }
 

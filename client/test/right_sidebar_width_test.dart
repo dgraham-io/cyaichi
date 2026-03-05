@@ -5,7 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   test('clamps sidebar width to min and max bounds', () {
     expect(clampRightOverlaySidebarWidth(120, 1400), 280);
-    expect(clampRightOverlaySidebarWidth(900, 1400), 520);
+    expect(clampRightOverlaySidebarWidth(900, 1400), 700);
+    expect(clampRightOverlaySidebarWidth(900, 1000), 500);
   });
 
   test('persists and restores sidebar width value', () async {

@@ -13,14 +13,36 @@ import 'package:client/src/io/workspace_root_path.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/src/widgets/error_banner.dart';
 import 'package:client/theme/cyaichi_theme.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:vyuh_node_flow/vyuh_node_flow.dart';
 
+typedef ApiClientFactory =
+    ApiClient Function({
+      required String baseUrl,
+      required int runRequestTimeoutSeconds,
+    });
+
+ApiClient _defaultApiClientFactory({
+  required String baseUrl,
+  required int runRequestTimeoutSeconds,
+}) {
+  return ApiClient(
+    baseUrl: baseUrl,
+    runRequestTimeout: Duration(seconds: runRequestTimeoutSeconds),
+  );
+}
+
 class FlowCanvasScreen extends StatefulWidget {
-  const FlowCanvasScreen({super.key});
+  const FlowCanvasScreen({
+    super.key,
+    this.apiClientFactory = _defaultApiClientFactory,
+  });
+
+  final ApiClientFactory apiClientFactory;
 
   @override
   State<FlowCanvasScreen> createState() => _FlowCanvasScreenState();
@@ -44,6 +66,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefWorkspaceEntries = 'client.workspace_entries.v1';
   static const _prefRunRequestTimeoutSeconds =
       'client.run_request_timeout_seconds';
+  static const _prefLastOpenedFlowWorkspaceId =
+      'client.last_opened_flow.workspace_id';
+  static const _prefLastOpenedFlowDocId = 'client.last_opened_flow.doc_id';
+  static const _prefLastOpenedFlowVerId = 'client.last_opened_flow.ver_id';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   late final TextEditingController _flowTitleController;
@@ -100,6 +126,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   List<String> _currentFlowParents = const <String>[];
   bool _autoSetHeadOnSave = false;
   int _runRequestTimeoutSeconds = _defaultRunRequestTimeoutSeconds;
+  String? _lastOpenedFlowWorkspaceId;
+  String? _lastOpenedFlowDocId;
+  String? _lastOpenedFlowVerId;
+  bool _isLoadingFlow = false;
 
   int _selectedTabIndex = 0;
 
@@ -127,12 +157,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _flowTitleController = TextEditingController(text: 'My Flow');
     _inputFileController = TextEditingController();
     _outputFileController = TextEditingController();
-    _apiClient = ApiClient(
-      baseUrl: _serverBaseUrl,
-      runRequestTimeout: Duration(seconds: _runRequestTimeoutSeconds),
-    );
+    _apiClient = _createApiClient(_serverBaseUrl, _runRequestTimeoutSeconds);
 
     _loadSettings();
+  }
+
+  ApiClient _createApiClient(String baseUrl, int runRequestTimeoutSeconds) {
+    return widget.apiClientFactory(
+      baseUrl: baseUrl,
+      runRequestTimeoutSeconds: runRequestTimeoutSeconds,
+    );
   }
 
   @override
@@ -159,13 +193,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedRunRequestTimeout =
         prefs.getInt(_prefRunRequestTimeoutSeconds) ??
         _defaultRunRequestTimeoutSeconds;
+    final loadedLastOpenedFlowWorkspaceId = prefs.getString(
+      _prefLastOpenedFlowWorkspaceId,
+    );
+    final loadedLastOpenedFlowDocId = prefs.getString(_prefLastOpenedFlowDocId);
+    final loadedLastOpenedFlowVerId = prefs.getString(_prefLastOpenedFlowVerId);
     final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
-    _apiClient = ApiClient(
-      baseUrl: loadedBaseUrl,
-      runRequestTimeout: Duration(seconds: loadedRunRequestTimeout),
-    );
+    _apiClient = _createApiClient(loadedBaseUrl, loadedRunRequestTimeout);
 
     final loadedWorkspaceNames = <String, String>{};
     if (loadedWorkspaceEntries.trim().isNotEmpty) {
@@ -234,6 +270,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _runRequestTimeoutSeconds = loadedRunRequestTimeout < 5
           ? 5
           : loadedRunRequestTimeout;
+      _lastOpenedFlowWorkspaceId = loadedLastOpenedFlowWorkspaceId;
+      _lastOpenedFlowDocId = loadedLastOpenedFlowDocId;
+      _lastOpenedFlowVerId = loadedLastOpenedFlowVerId;
       _nodeTypeRegistry = loadedRegistry;
       _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
@@ -266,6 +305,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       await prefs.remove(_prefSelectedWorkspaceId);
     } else {
       await prefs.setString(_prefSelectedWorkspaceId, _selectedWorkspaceId!);
+    }
+    if (_lastOpenedFlowWorkspaceId == null ||
+        _lastOpenedFlowDocId == null ||
+        _lastOpenedFlowVerId == null) {
+      await prefs.remove(_prefLastOpenedFlowWorkspaceId);
+      await prefs.remove(_prefLastOpenedFlowDocId);
+      await prefs.remove(_prefLastOpenedFlowVerId);
+    } else {
+      await prefs.setString(
+        _prefLastOpenedFlowWorkspaceId,
+        _lastOpenedFlowWorkspaceId!,
+      );
+      await prefs.setString(_prefLastOpenedFlowDocId, _lastOpenedFlowDocId!);
+      await prefs.setString(_prefLastOpenedFlowVerId, _lastOpenedFlowVerId!);
     }
   }
 
@@ -549,6 +602,32 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                       onFit: _controller.fitToView,
                     ),
                   ),
+                  if (_isLoadingFlow)
+                    Positioned.fill(
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        child: Center(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.surface,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              child: Text('Loading flow...'),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -990,10 +1069,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _runRequestTimeoutSeconds = nextRunTimeout;
     });
     _apiClient.close();
-    _apiClient = ApiClient(
-      baseUrl: _serverBaseUrl,
-      runRequestTimeout: Duration(seconds: _runRequestTimeoutSeconds),
-    );
+    _apiClient = _createApiClient(_serverBaseUrl, _runRequestTimeoutSeconds);
     await _refreshNodeTypesFromServer(showFailureSnack: true);
     await _persistSettings();
     await _refreshWorkspaceData();
@@ -1075,9 +1151,77 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _refreshWorkspaceData() async {
-    await _loadFlows();
-    await _loadRuns();
-    await _loadNotes();
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId != null && mounted) {
+      setState(() {
+        _isLoadingFlow = true;
+      });
+    }
+    try {
+      await _loadFlows();
+      await _autoOpenFlowForSelectedWorkspace();
+      await _loadRuns();
+      await _loadNotes();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingFlow = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _autoOpenFlowForSelectedWorkspace() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      return;
+    }
+    if (_flowsError != null) {
+      return;
+    }
+    if (_flows.isEmpty) {
+      _controller.clearGraph();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _currentFlowDocId = null;
+        _currentFlowVerId = null;
+        _currentFlowWorkspaceId = workspaceId;
+        _currentFlowParents = const <String>[];
+        _lastOpenedFlowWorkspaceId = workspaceId;
+        _lastOpenedFlowDocId = null;
+        _lastOpenedFlowVerId = null;
+      });
+      await _persistSettings();
+      return;
+    }
+
+    FlowListItem? selected;
+    if (_lastOpenedFlowWorkspaceId == workspaceId &&
+        _lastOpenedFlowDocId != null &&
+        _lastOpenedFlowVerId != null) {
+      for (final flow in _flows) {
+        if (flow.docId == _lastOpenedFlowDocId &&
+            flow.verId == _lastOpenedFlowVerId) {
+          selected = flow;
+          break;
+        }
+      }
+    }
+    selected ??= _flows.first;
+    if (_currentFlowDocId == selected.docId &&
+        _currentFlowVerId == selected.verId &&
+        _currentFlowWorkspaceId == workspaceId &&
+        _controller.nodes.isNotEmpty) {
+      return;
+    }
+    await _openFlowByListItem(
+      selected,
+      autoOpen: true,
+      showSnack: false,
+      selectFlowTab: false,
+    );
   }
 
   Future<void> _refreshNodeTypesFromServer({
@@ -1481,8 +1625,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _currentFlowParents = previousVerID == null
             ? const <String>[]
             : <String>[previousVerID];
+        _lastOpenedFlowWorkspaceId = workspaceId;
+        _lastOpenedFlowDocId = flowDocId;
+        _lastOpenedFlowVerId = flowVerId;
         _isFlowDirty = false;
       });
+      await _persistSettings();
       await _loadFlows();
       final messenger = ScaffoldMessenger.of(context);
       messenger.hideCurrentSnackBar();
@@ -1558,8 +1706,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _currentFlowVerId = verId;
         _currentFlowWorkspaceId = workspaceId;
         _currentFlowParents = const <String>[];
+        _lastOpenedFlowWorkspaceId = workspaceId;
+        _lastOpenedFlowDocId = docId;
+        _lastOpenedFlowVerId = verId;
         _isFlowDirty = false;
       });
+      await _persistSettings();
       await _loadFlows();
       _showSnack(
         _autoSetHeadOnSave
@@ -2309,26 +2461,59 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _openFlowFromLibrary(FlowListItem flow) async {
+    await _openFlowByListItem(
+      flow,
+      autoOpen: false,
+      showSnack: true,
+      selectFlowTab: true,
+    );
+  }
+
+  Future<void> _openFlowByListItem(
+    FlowListItem flow, {
+    required bool autoOpen,
+    required bool showSnack,
+    required bool selectFlowTab,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _isLoadingFlow = true;
+      });
+    }
     try {
       final document = await _apiClient.getDocument(
         docType: 'flow',
         docId: flow.docId,
         verId: flow.verId,
       );
-      _importFlowDocumentMap(document);
+      _importFlowDocumentMap(document, persistLastOpened: true);
       if (!mounted) {
         return;
       }
       setState(() {
-        _selectedTabIndex = 0;
+        if (selectFlowTab) {
+          _selectedTabIndex = 0;
+        }
       });
-      _showSnack(
-        'Loaded flow ${_shortId(flow.docId)} @ ${_shortId(flow.verId)}',
-      );
+      if (showSnack) {
+        _showSnack(
+          'Loaded flow ${_shortId(flow.docId)} @ ${_shortId(flow.verId)}',
+        );
+      }
     } on ApiError catch (error) {
-      _showSnack(_formatApiError(error));
+      if (showSnack || !autoOpen) {
+        _showSnack(_formatApiError(error));
+      }
     } on FormatException catch (error) {
-      _showSnack('Invalid flow document: ${error.message}');
+      if (showSnack || !autoOpen) {
+        _showSnack('Invalid flow document: ${error.message}');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingFlow = false;
+        });
+      }
     }
   }
 
@@ -2739,10 +2924,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('Top-level JSON must be an object.');
     }
-    _importFlowDocumentMap(decoded);
+    _importFlowDocumentMap(decoded, persistLastOpened: false);
   }
 
-  void _importFlowDocumentMap(Map<String, dynamic> decoded) {
+  void _importFlowDocumentMap(
+    Map<String, dynamic> decoded, {
+    required bool persistLastOpened,
+  }) {
     final parsed = parseFlowDocumentEnvelope(decoded);
 
     if (!_workspaceIds.contains(parsed.workspaceId)) {
@@ -2753,8 +2941,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       () => 'Workspace ${_shortId(parsed.workspaceId)}',
     );
     _selectedWorkspaceId = parsed.workspaceId;
-    _persistSettings();
-    _refreshWorkspaceData();
+    if (persistLastOpened) {
+      _lastOpenedFlowWorkspaceId = parsed.workspaceId;
+      _lastOpenedFlowDocId = parsed.docId;
+      _lastOpenedFlowVerId = parsed.verId;
+    }
+    unawaited(_persistSettings());
 
     if (parsed.title.trim().isNotEmpty) {
       _flowTitleController.text = parsed.title;
@@ -2764,7 +2956,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
     final knownNodeIds = <String>{};
     String? importedPrimaryWriteNodeId;
-    for (final item in parsed.nodes) {
+    for (var index = 0; index < parsed.nodes.length; index++) {
+      final item = parsed.nodes[index];
       final rawConfig = Map<String, dynamic>.from(item.config);
       final ui = rawConfig['ui'];
       final legacyUI = rawConfig['_ui'];
@@ -2782,8 +2975,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 const <FlowPort>[]);
 
       final position = Offset(
-        (uiMap['x'] as num?)?.toDouble() ?? 120,
-        (uiMap['y'] as num?)?.toDouble() ?? 120,
+        (uiMap['x'] as num?)?.toDouble() ??
+            (100 + (index % 4) * 240).toDouble(),
+        (uiMap['y'] as num?)?.toDouble() ??
+            (100 + (index ~/ 4) * 180).toDouble(),
       );
       final size = Size(
         (uiMap['width'] as num?)?.toDouble() ?? 220,
@@ -2847,6 +3042,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _controller.fitToView();
     });
+    if (kDebugMode) {
+      debugPrint(
+        'Loaded flow ${parsed.docId}/${parsed.verId} nodes=${parsed.nodes.length} edges=${parsed.edges.length}',
+      );
+    }
   }
 
   void _addNode(String typeId) {
@@ -3092,6 +3292,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       ),
     );
   }
+
+  @visibleForTesting
+  int get debugCanvasNodeCount => _controller.nodes.length;
+
+  @visibleForTesting
+  int get debugCanvasEdgeCount => _controller.connections.length;
 }
 
 class _TraceErrorDetails {
@@ -3324,38 +3530,40 @@ class _PalettePanel extends StatelessWidget {
       width: 220,
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Nodes', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            ...grouped.entries.expand((entry) sync* {
-              yield Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  entry.key.toUpperCase(),
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-              );
-              for (final nodeType in entry.value) {
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Nodes', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              ...grouped.entries.expand((entry) sync* {
                 yield Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: FilledButton.icon(
-                    key: Key('add-${nodeType.typeId}'),
-                    onPressed: () => onAddNode(nodeType.typeId),
-                    icon: Icon(nodeType.icon),
-                    label: Text(nodeType.displayName),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    entry.key.toUpperCase(),
+                    style: Theme.of(context).textTheme.labelMedium,
                   ),
                 );
-              }
-              yield const SizedBox(height: 6);
-            }),
-            const SizedBox(height: 24),
-            Text(
-              'Drag between ports to create edges. Click a node to edit fields.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
+                for (final nodeType in entry.value) {
+                  yield Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: FilledButton.icon(
+                      key: Key('add-${nodeType.typeId}'),
+                      onPressed: () => onAddNode(nodeType.typeId),
+                      icon: Icon(nodeType.icon),
+                      label: Text(nodeType.displayName),
+                    ),
+                  );
+                }
+                yield const SizedBox(height: 6);
+              }),
+              const SizedBox(height: 24),
+              Text(
+                'Drag between ports to create edges. Click a node to edit fields.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
         ),
       ),
     );

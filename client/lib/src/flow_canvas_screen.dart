@@ -12,6 +12,7 @@ import 'package:client/src/flow/run_preflight.dart';
 import 'package:client/src/flow/run_output_resolver.dart';
 import 'package:client/src/io/workspace_root_path.dart';
 import 'package:client/src/models/server_models.dart';
+import 'package:client/src/workspaces/workspace_state.dart';
 import 'package:client/src/widgets/error_banner.dart';
 import 'package:client/theme/cyaichi_theme.dart';
 import 'package:flutter/foundation.dart';
@@ -129,6 +130,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastOpenedFlowDocId;
   String? _lastOpenedFlowVerId;
   bool _isLoadingFlow = false;
+  bool _isLoadingWorkspaces = false;
   bool _didShowMissingWorkspaceToast = false;
 
   int _selectedTabIndex = 0;
@@ -383,6 +385,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 preferredSize: const Size.fromHeight(74),
                 child: _TopControlsBar(
                   settingsLoaded: _settingsLoaded,
+                  isLoadingWorkspaces: _isLoadingWorkspaces,
                   workspaceIds: _workspaceIds,
                   workspaceNames: _workspaceNames,
                   selectedWorkspaceId: _selectedWorkspaceId,
@@ -1127,8 +1130,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _loadWorkspaces() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingWorkspaces = true;
+      });
+    }
     try {
-      final items = await _apiClient.getWorkspaces();
+      final items = dedupeWorkspaceItemsByID(await _apiClient.getWorkspaces());
       if (!mounted) {
         return;
       }
@@ -1177,6 +1185,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _selectedWorkspaceId = null;
       });
       await _persistSettings();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingWorkspaces = false;
+        });
+      }
     }
   }
 
@@ -3374,6 +3388,7 @@ enum _UnsavedFlowDecision { discard, cancel, save }
 class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
     required this.settingsLoaded,
+    required this.isLoadingWorkspaces,
     required this.workspaceIds,
     required this.workspaceNames,
     required this.selectedWorkspaceId,
@@ -3396,6 +3411,7 @@ class _TopControlsBar extends StatelessWidget {
   });
 
   final bool settingsLoaded;
+  final bool isLoadingWorkspaces;
   final List<String> workspaceIds;
   final Map<String, String> workspaceNames;
   final String? selectedWorkspaceId;
@@ -3418,6 +3434,11 @@ class _TopControlsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedForDropdown = resolveWorkspaceDropdownValue(
+      workspaceIDs: workspaceIds,
+      selectedWorkspaceID: selectedWorkspaceId,
+    );
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       child: Column(
@@ -3439,34 +3460,49 @@ class _TopControlsBar extends StatelessWidget {
                       ),
                     ),
                     child: settingsLoaded
-                        ? DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              isExpanded: true,
-                              value: selectedWorkspaceId,
-                              hint: const Text('Select workspace'),
-                              items: workspaceIds
-                                  .map(
-                                    (id) => DropdownMenuItem<String>(
-                                      value: id,
-                                      child: Builder(
-                                        builder: (context) {
-                                          final short = id.length > 8
-                                              ? id.substring(0, 8)
-                                              : id;
-                                          return Text(
-                                            '${workspaceNames[id] ?? 'Workspace $short'} · $short',
-                                            overflow: TextOverflow.ellipsis,
-                                          );
-                                        },
+                        ? (isLoadingWorkspaces
+                              ? const Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
                                       ),
                                     ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) {
-                                onWorkspaceSelected(value);
-                              },
-                            ),
-                          )
+                                    SizedBox(width: 8),
+                                    Text('Loading workspaces...'),
+                                  ],
+                                )
+                              : DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    isExpanded: true,
+                                    value: selectedForDropdown,
+                                    hint: const Text('Select workspace'),
+                                    items: workspaceIds
+                                        .map(
+                                          (id) => DropdownMenuItem<String>(
+                                            value: id,
+                                            child: Builder(
+                                              builder: (context) {
+                                                final short = id.length > 8
+                                                    ? id.substring(0, 8)
+                                                    : id;
+                                                return Text(
+                                                  '${workspaceNames[id] ?? 'Workspace $short'} · $short',
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                    onChanged: (value) {
+                                      onWorkspaceSelected(value);
+                                    },
+                                  ),
+                                ))
                         : const Text('Loading...'),
                   ),
                 ),
@@ -3650,7 +3686,7 @@ class _InspectorPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (selectedNode == null && selectedConnection == null) {
-      return Padding(
+      return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Text(
           'Inspector\n\nSelect a node on the canvas.',
@@ -3661,7 +3697,7 @@ class _InspectorPanel extends StatelessWidget {
 
     if (selectedNode == null && selectedConnection != null) {
       final connection = selectedConnection!;
-      return Padding(
+      return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

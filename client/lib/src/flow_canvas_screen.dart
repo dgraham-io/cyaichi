@@ -802,16 +802,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                     },
                                   ),
                                 ),
-                                Positioned(
-                                  left: 12,
-                                  bottom: 12,
-                                  child: _CanvasZoomControls(
-                                    onZoomIn: () => _controller.zoomBy(0.1),
-                                    onZoomOut: () => _controller.zoomBy(-0.1),
-                                    onReset: () => _controller.zoomTo(1.0),
-                                    onFit: _controller.fitToView,
-                                  ),
-                                ),
                                 AnimatedPositioned(
                                   duration: const Duration(milliseconds: 220),
                                   curve: Curves.easeOutCubic,
@@ -837,6 +827,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                         ),
                                       ),
                                     ),
+                                  ),
+                                ),
+                                AnimatedPositioned(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutCubic,
+                                  top: 62,
+                                  right: toggleRight,
+                                  child: _CanvasZoomControls(
+                                    onZoomIn: () => _controller.zoomBy(0.1),
+                                    onZoomOut: () => _controller.zoomBy(-0.1),
+                                    onReset: () => _controller.zoomTo(1.0),
                                   ),
                                 ),
                                 if (_isLoadingFlow)
@@ -5140,13 +5141,11 @@ class _CanvasZoomControls extends StatelessWidget {
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onReset,
-    required this.onFit,
   });
 
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onReset;
-  final VoidCallback onFit;
 
   @override
   Widget build(BuildContext context) {
@@ -5158,8 +5157,8 @@ class _CanvasZoomControls extends StatelessWidget {
       color: scheme.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Tooltip(
@@ -5178,13 +5177,10 @@ class _CanvasZoomControls extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(
-              height: 24,
-              child: VerticalDivider(
-                width: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.8),
-              ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.7),
             ),
             Tooltip(
               key: const Key('canvas-zoom-out-tooltip'),
@@ -5202,13 +5198,10 @@ class _CanvasZoomControls extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(
-              height: 24,
-              child: VerticalDivider(
-                width: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.8),
-              ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.7),
             ),
             Tooltip(
               key: const Key('canvas-zoom-reset-tooltip'),
@@ -5218,30 +5211,6 @@ class _CanvasZoomControls extends StatelessWidget {
                 tooltip: null,
                 onPressed: onReset,
                 icon: const Icon(Icons.center_focus_strong_outlined),
-                iconSize: 20,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
-                ),
-              ),
-            ),
-            SizedBox(
-              height: 24,
-              child: VerticalDivider(
-                width: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.8),
-              ),
-            ),
-            Tooltip(
-              key: const Key('canvas-zoom-fit-tooltip'),
-              message: 'Fit to content',
-              child: IconButton(
-                key: const Key('canvas-zoom-fit-button'),
-                tooltip: null,
-                onPressed: onFit,
-                icon: const Icon(Icons.fit_screen),
                 iconSize: 20,
                 visualDensity: VisualDensity.compact,
                 constraints: const BoxConstraints.tightFor(

@@ -119,7 +119,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final runButton = tester.widget<IconButton>(
-      find.byKey(const Key('canvas-run-button')),
+      find.byKey(const Key('flow-title-run-button')),
     );
     expect(runButton.onPressed, isNull);
   });

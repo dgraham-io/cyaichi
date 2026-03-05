@@ -251,7 +251,7 @@ void main() {
     expect(updateItem.onPressed, isNull);
   });
 
-  testWidgets('floating toolbar renders with validate/run and tooltips', (
+  testWidgets('flow overlay contains run button and divider', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -270,11 +270,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('canvas-floating-toolbar')), findsOneWidget);
-    expect(find.byKey(const Key('canvas-run-button')), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-overlay')), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-run-divider')), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-run-button')), findsOneWidget);
 
     final runTooltip = tester.widget<Tooltip>(
-      find.byKey(const Key('canvas-run-tooltip')),
+      find.byKey(const Key('flow-title-run-tooltip')),
     );
     expect(runTooltip.message, startsWith('Run'));
   });
@@ -300,12 +302,12 @@ void main() {
     await tester.pumpAndSettle();
 
     final runButton = tester.widget<IconButton>(
-      find.byKey(const Key('canvas-run-button')),
+      find.byKey(const Key('flow-title-run-button')),
     );
     expect(runButton.onPressed, isNull);
 
     final runTooltip = tester.widget<Tooltip>(
-      find.byKey(const Key('canvas-run-tooltip')),
+      find.byKey(const Key('flow-title-run-tooltip')),
     );
     expect(runTooltip.message, 'Run (select a workspace)');
   });
@@ -330,10 +332,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final runButton = tester.widget<IconButton>(
-      find.byKey(const Key('canvas-run-button')),
+      find.byKey(const Key('flow-title-run-button')),
     );
     expect(runButton.onPressed, isNull);
-    expect(find.byKey(const Key('canvas-run-blocked-overlay')), findsOneWidget);
+    expect(
+      find.byKey(const Key('flow-title-run-blocked-overlay')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('valid flow enables run and hides blocked overlay', (
@@ -420,10 +425,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final runButton = tester.widget<IconButton>(
-      find.byKey(const Key('canvas-run-button')),
+      find.byKey(const Key('flow-title-run-button')),
     );
     expect(runButton.onPressed, isNotNull);
-    expect(find.byKey(const Key('canvas-run-blocked-overlay')), findsNothing);
+    expect(
+      find.byKey(const Key('flow-title-run-blocked-overlay')),
+      findsNothing,
+    );
   });
 
   testWidgets('zoom panel renders with zoom icons', (

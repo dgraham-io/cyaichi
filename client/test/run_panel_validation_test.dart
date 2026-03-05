@@ -115,11 +115,11 @@ void main() {
       expect(find.textContaining('output_file is required'), findsNothing);
 
       final runButton = tester.widget<IconButton>(
-        find.byKey(const Key('canvas-run-button')),
+        find.byKey(const Key('flow-title-run-button')),
       );
       expect(runButton.onPressed, isNull);
       expect(
-        find.byKey(const Key('canvas-run-blocked-overlay')),
+        find.byKey(const Key('flow-title-run-blocked-overlay')),
         findsOneWidget,
       );
     },

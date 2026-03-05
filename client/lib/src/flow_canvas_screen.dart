@@ -516,22 +516,19 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
     final hasFlowErrors = _flowValidationErrors.isNotEmpty;
     final hasOtherFlowBlockers =
-        runGuard.blockers.isNotEmpty &&
-        hasWorkspaceSelected &&
-        !_isRunning &&
-        !hasFlowErrors;
-    final showRunBlockedOverlay = hasFlowErrors || hasOtherFlowBlockers;
+        runGuard.blockers.isNotEmpty && hasWorkspaceSelected && !hasFlowErrors;
+    final runDisabledNoWorkspace = !hasWorkspaceSelected;
+    final runDisabledInvalid = hasFlowErrors || hasOtherFlowBlockers;
+    final runDisabledRunning = _isRunning;
     final runEnabled =
-        hasWorkspaceSelected &&
-        !showRunBlockedOverlay &&
-        runGuard.canRun &&
-        !_isRunning;
+        !runDisabledNoWorkspace && !runDisabledInvalid && !runDisabledRunning;
+    final showRunBlockedOverlay = !runEnabled;
     final firstValidationIssue = hasFlowErrors
         ? _flowValidationErrors.first
         : (hasOtherFlowBlockers ? runGuard.blockers.first : null);
-    final runTooltip = _isRunning
-        ? 'Run (in progress)'
-        : !hasWorkspaceSelected
+    final runTooltip = runDisabledRunning
+        ? 'Running...'
+        : runDisabledNoWorkspace
         ? 'Run (select a workspace)'
         : runEnabled
         ? 'Run'
@@ -683,21 +680,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                 onSetHead: () {
                                   unawaited(_setCurrentFlowAsHead());
                                 },
-                              ),
-                            ),
-                            Align(
-                              alignment: Alignment.topCenter,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 12),
-                                child: _CanvasFloatingToolbar(
-                                  runEnabled: runEnabled,
-                                  isRunning: _isRunning,
-                                  runTooltip: runTooltip,
-                                  showBlockedOverlay: showRunBlockedOverlay,
-                                  onRun: () {
-                                    unawaited(_runFlow());
-                                  },
-                                ),
+                                runEnabled: runEnabled,
+                                showRunBlockedOverlay: showRunBlockedOverlay,
+                                isRunning: _isRunning,
+                                runTooltip: runTooltip,
+                                onRun: () {
+                                  unawaited(_runFlow());
+                                },
                               ),
                             ),
                             Positioned(
@@ -4022,6 +4011,11 @@ class _FlowTitleOverlay extends StatelessWidget {
     required this.onUpdate,
     required this.onDuplicate,
     required this.onSetHead,
+    required this.runEnabled,
+    required this.showRunBlockedOverlay,
+    required this.isRunning,
+    required this.runTooltip,
+    required this.onRun,
   });
 
   final String title;
@@ -4032,6 +4026,11 @@ class _FlowTitleOverlay extends StatelessWidget {
   final VoidCallback onUpdate;
   final VoidCallback onDuplicate;
   final VoidCallback onSetHead;
+  final bool runEnabled;
+  final bool showRunBlockedOverlay;
+  final bool isRunning;
+  final String runTooltip;
+  final VoidCallback onRun;
 
   @override
   Widget build(BuildContext context) {
@@ -4119,79 +4118,68 @@ class _FlowTitleOverlay extends StatelessWidget {
                   );
                 },
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CanvasFloatingToolbar extends StatelessWidget {
-  const _CanvasFloatingToolbar({
-    required this.runEnabled,
-    required this.isRunning,
-    required this.runTooltip,
-    required this.showBlockedOverlay,
-    required this.onRun,
-  });
-
-  final bool runEnabled;
-  final bool isRunning;
-  final String runTooltip;
-  final bool showBlockedOverlay;
-  final VoidCallback onRun;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      key: const Key('canvas-floating-toolbar'),
-      margin: EdgeInsets.zero,
-      elevation: 3,
-      color: scheme.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Tooltip(
-          key: const Key('canvas-run-tooltip'),
-          message: runTooltip,
-          child: IconButton(
-            key: const Key('canvas-run-button'),
-            tooltip: null,
-            onPressed: runEnabled ? onRun : null,
-            icon: SizedBox(
-              width: 22,
-              height: 22,
-              child: isRunning
-                  ? const Center(
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        const Center(child: Icon(Icons.play_arrow_rounded)),
-                        if (showBlockedOverlay)
-                          Positioned(
-                            right: -2,
-                            top: -2,
-                            child: Icon(
-                              Icons.block,
-                              key: const Key('canvas-run-blocked-overlay'),
-                              size: 13,
-                              color: scheme.error.withValues(alpha: 0.8),
+              SizedBox(
+                key: const Key('flow-title-run-divider'),
+                height: 24,
+                child: VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outlineVariant.withValues(alpha: 0.8),
+                ),
+              ),
+              Tooltip(
+                key: const Key('flow-title-run-tooltip'),
+                message: runTooltip,
+                child: IconButton(
+                  key: const Key('flow-title-run-button'),
+                  tooltip: null,
+                  onPressed: runEnabled ? onRun : null,
+                  icon: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: isRunning
+                        ? const Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
+                          )
+                        : Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              const Center(
+                                child: Icon(Icons.play_arrow_rounded),
+                              ),
+                              if (showRunBlockedOverlay)
+                                Positioned(
+                                  right: -2,
+                                  top: -2,
+                                  child: Icon(
+                                    Icons.block,
+                                    key: const Key(
+                                      'flow-title-run-blocked-overlay',
+                                    ),
+                                    size: 13,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.error.withValues(alpha: 0.8),
+                                  ),
+                                ),
+                            ],
                           ),
-                      ],
-                    ),
-            ),
-            iconSize: 20,
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+                  ),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

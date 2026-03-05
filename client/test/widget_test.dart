@@ -200,4 +200,55 @@ void main() {
     expect(find.byKey(const Key('add-file.read')), findsOneWidget);
     expect(find.byKey(const Key('add-file.write')), findsOneWidget);
   });
+
+  testWidgets('left sidebar collapses and expands', (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sidebarFinder = find.byKey(const Key('left-sidebar'));
+    final canvasFinder = find.byKey(const Key('flow-canvas-pane'));
+    expect(sidebarFinder, findsOneWidget);
+    expect(canvasFinder, findsOneWidget);
+    expect(
+      tester.getTopLeft(sidebarFinder).dx < tester.getTopLeft(canvasFinder).dx,
+      isTrue,
+    );
+    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
+
+    final expandedWidth = tester.getSize(sidebarFinder).width;
+    await tester.tap(find.byKey(const Key('left-sidebar-collapse-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    final collapsedWidth = tester.getSize(sidebarFinder).width;
+    expect(collapsedWidth < expandedWidth, isTrue);
+    expect(find.byKey(const Key('left-sidebar-expand-button')), findsOneWidget);
+    expect(find.byKey(const Key('node-palette-search-field')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('left-sidebar-expand-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+
+    expect(
+      tester.getSize(sidebarFinder).width > collapsedWidth,
+      isTrue,
+    );
+    expect(find.byKey(const Key('node-palette-search-field')), findsOneWidget);
+  });
 }

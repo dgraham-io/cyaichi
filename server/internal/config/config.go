@@ -8,8 +8,8 @@ import (
 const (
 	defaultHTTPAddr      = ":8080"
 	defaultLogLevel      = "info"
-	defaultDBPath        = "/tmp/cyaichi.db"
-	defaultWorkspaceRoot = "./workspace-data"
+	defaultDBPath        = "./.local/cyaichi.db"
+	defaultWorkspaceRoot = "./.local/workspace-data"
 	defaultLLMModel      = "gpt-oss120:b"
 	defaultVLLMTimeout   = 120
 )

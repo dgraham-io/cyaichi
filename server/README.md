@@ -17,15 +17,21 @@ Optional environment variables:
 
 - `CYAI_HTTP_ADDR` (default `:8080`)
 - `CYAI_LOG_LEVEL` (default `info`)
-- `CYAI_DB_PATH` (default `/tmp/cyaichi.db`)
-- `CYAI_WORKSPACE_ROOT` (default `./workspace-data`)
+- `CYAI_DB_PATH` (default `./.local/cyaichi.db`)
+- `CYAI_WORKSPACE_ROOT` (default `./.local/workspace-data`)
 - `CYAI_VLLM_BASE_URL` (required for `llm.chat`, example `http://192.168.1.92:8000`)
 - `VLLM_KEY` (required for `llm.chat`, sent as `Authorization: Bearer ...`)
 - `CYAI_LLM_MODEL` (default `gpt-oss120:b`)
 - `CYAI_VLLM_TIMEOUT_SECONDS` (default `120`, clamped to `5..900`)
 
-By default, SQLite data is created at `/tmp/cyaichi.db`.
-On startup, the server logs the resolved absolute `CYAI_WORKSPACE_ROOT`.
+On startup, the server creates any missing runtime directories and logs resolved absolute paths for:
+- `CYAI_DB_PATH`
+- `CYAI_WORKSPACE_ROOT`
+
+For production, prefer paths under `/var/lib/cyaichi`, for example:
+- `CYAI_DB_PATH=/var/lib/cyaichi/cyaichi.db`
+- `CYAI_WORKSPACE_ROOT=/var/lib/cyaichi/workspace-data`
+
 When creating a workspace, the server also creates
 `{CYAI_WORKSPACE_ROOT}/{workspace_id}/`.
 
@@ -144,8 +150,8 @@ curl -i http://127.0.0.1:8080/v1/workspaces/11111111-1111-1111-1111-111111111111
 Export environment variables:
 
 ```bash
-export CYAI_DB_PATH="/tmp/cyaichi.db"
-export CYAI_WORKSPACE_ROOT="./workspace-data"
+export CYAI_DB_PATH="./.local/cyaichi.db"
+export CYAI_WORKSPACE_ROOT="./.local/workspace-data"
 export CYAI_VLLM_BASE_URL="http://192.168.1.92:8000"
 export VLLM_KEY="replace-with-real-key"
 export CYAI_LLM_MODEL="gpt-oss120:b"
@@ -208,8 +214,8 @@ curl -i -X PUT "http://127.0.0.1:8080/v1/workspaces/$WS_ID/heads/$FLOW_ID" \
 Write input file under the workspace root:
 
 ```bash
-mkdir -p "workspace-data/$WS_ID"
-printf 'hello from file.read\n' > "workspace-data/$WS_ID/input.txt"
+mkdir -p ".local/workspace-data/$WS_ID"
+printf 'hello from file.read\n' > ".local/workspace-data/$WS_ID/input.txt"
 ```
 
 Create a run:
@@ -236,7 +242,7 @@ curl -i "http://127.0.0.1:8080/v1/docs/run/$RUN_ID/$RUN_VER"
 Show that output file was written:
 
 ```bash
-cat "workspace-data/$WS_ID/output.txt"
+cat ".local/workspace-data/$WS_ID/output.txt"
 ```
 
 Fetch the final output artifact (from `run.body.outputs[0]`):

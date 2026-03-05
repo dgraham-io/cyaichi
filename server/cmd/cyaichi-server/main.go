@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,11 +21,12 @@ import (
 
 func main() {
 	cfg := config.FromEnv()
-	workspaceRootAbs, err := filepath.Abs(cfg.WorkspaceRoot)
+	workspaceRootAbs, dbPathAbs, err := prepareRuntimePaths(cfg)
 	if err != nil {
-		log.Fatalf("failed to resolve workspace root %q: %v", cfg.WorkspaceRoot, err)
+		log.Fatalf("failed to prepare runtime paths: %v", err)
 	}
 	log.Printf("workspace root: %s", workspaceRootAbs)
+	log.Printf("db path: %s", dbPathAbs)
 
 	dbStore, err := store.Open(context.Background(), cfg.DBPath)
 	if err != nil {
@@ -82,4 +85,42 @@ func main() {
 	}
 
 	log.Printf("server stopped")
+}
+
+func prepareRuntimePaths(cfg config.Config) (workspaceRootAbs, dbPathAbs string, err error) {
+	workspaceRootAbs, err = filepath.Abs(cfg.WorkspaceRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workspace root %q: %w", cfg.WorkspaceRoot, err)
+	}
+	if err := os.MkdirAll(workspaceRootAbs, 0o755); err != nil {
+		return "", "", fmt.Errorf("create workspace root %q: %w", workspaceRootAbs, err)
+	}
+
+	if isSQLiteFilePath(cfg.DBPath) {
+		dbPathAbs, err = filepath.Abs(cfg.DBPath)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve db path %q: %w", cfg.DBPath, err)
+		}
+		dbDir := filepath.Dir(dbPathAbs)
+		if err := os.MkdirAll(dbDir, 0o755); err != nil {
+			return "", "", fmt.Errorf("create db dir %q: %w", dbDir, err)
+		}
+		return workspaceRootAbs, dbPathAbs, nil
+	}
+
+	return workspaceRootAbs, cfg.DBPath, nil
+}
+
+func isSQLiteFilePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	trimmed := strings.TrimSpace(path)
+	if trimmed == ":memory:" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "file:") {
+		return false
+	}
+	return true
 }

@@ -11,6 +11,7 @@ import 'package:client/src/flow/run_request_builder.dart';
 import 'package:client/src/flow/run_preflight.dart';
 import 'package:client/src/flow/run_output_resolver.dart';
 import 'package:client/src/io/workspace_root_path.dart';
+import 'package:client/messages/message_center.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/src/workspaces/workspace_state.dart';
 import 'package:client/src/widgets/error_banner.dart';
@@ -45,6 +46,12 @@ double clampRightOverlaySidebarWidth(
 ) {
   final clampedMax = (screenWidth * 0.5).clamp(280.0, double.infinity);
   return requestedWidth.clamp(280.0, clampedMax).toDouble();
+}
+
+@visibleForTesting
+double clampMessageDrawerHeight(double requestedHeight, double screenHeight) {
+  final clampedMax = (screenHeight * 0.5).clamp(120.0, double.infinity);
+  return requestedHeight.clamp(120.0, clampedMax).toDouble();
 }
 
 class FlowCanvasScreen extends StatefulWidget {
@@ -84,6 +91,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       'client.right_overlay_sidebar_open';
   static const _prefRightOverlaySidebarWidth =
       'client.right_overlay_sidebar_width';
+  static const _prefMessageDrawerOpen = 'client.message_drawer_open';
+  static const _prefMessageDrawerHeight = 'client.message_drawer_height';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   late final TextEditingController _flowTitleController;
@@ -172,6 +181,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isRightOverlaySidebarOpen = true;
   double _rightOverlaySidebarWidth = 360;
   double _canvasZoomLevel = 1.0;
+  final MessageCenter _messageCenter = MessageCenter.instance;
+  bool _isMessageDrawerOpen = false;
+  double _messageDrawerHeight = 220;
 
   @override
   void initState() {
@@ -186,6 +198,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _outputFileController = TextEditingController();
     _nodePaletteSearchController = TextEditingController();
     _apiClient = _createApiClient(_serverBaseUrl, _runRequestTimeoutSeconds);
+    _messageCenter.addListener(_handleMessageCenterChanged);
     _scheduleFlowValidation(immediate: true);
 
     _loadSettings();
@@ -207,6 +220,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _inputFileController.dispose();
     _outputFileController.dispose();
     _nodePaletteSearchController.dispose();
+    _messageCenter.removeListener(_handleMessageCenterChanged);
     _apiClient.close();
     super.dispose();
   }
@@ -234,6 +248,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     });
   }
 
+  void _handleMessageCenterChanged() {
+    if (!mounted) {
+      return;
+    }
+    if (_isMessageDrawerOpen && _messageCenter.unreadCount > 0) {
+      _messageCenter.markAllRead();
+      return;
+    }
+    setState(() {});
+  }
+
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final loadedBaseUrl =
@@ -257,6 +282,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedRightOverlaySidebarWidth =
         prefs.getDouble(_prefRightOverlaySidebarWidth) ??
         (prefs.getInt(_prefRightOverlaySidebarWidth)?.toDouble() ?? 360);
+    final loadedMessageDrawerOpen =
+        prefs.getBool(_prefMessageDrawerOpen) ?? false;
+    final loadedMessageDrawerHeight =
+        prefs.getDouble(_prefMessageDrawerHeight) ??
+        (prefs.getInt(_prefMessageDrawerHeight)?.toDouble() ?? 220);
     final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
@@ -307,6 +337,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastOpenedFlowVerId = loadedLastOpenedFlowVerId;
       _isRightOverlaySidebarOpen = loadedRightOverlaySidebarOpen;
       _rightOverlaySidebarWidth = loadedRightOverlaySidebarWidth;
+      _isMessageDrawerOpen = loadedMessageDrawerOpen;
+      _messageDrawerHeight = loadedMessageDrawerHeight;
       _nodeTypeRegistry = loadedRegistry;
       _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
@@ -358,6 +390,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _prefRightOverlaySidebarWidth,
       _rightOverlaySidebarWidth,
     );
+    await prefs.setBool(_prefMessageDrawerOpen, _isMessageDrawerOpen);
+    await prefs.setDouble(_prefMessageDrawerHeight, _messageDrawerHeight);
   }
 
   void _toggleRightOverlaySidebar() {
@@ -400,6 +434,32 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
     setState(() {
       _rightOverlaySidebarWidth = nextWidth;
+    });
+  }
+
+  void _toggleMessageDrawer({bool? open}) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isMessageDrawerOpen = open ?? !_isMessageDrawerOpen;
+      if (_isMessageDrawerOpen) {
+        _messageCenter.markAllRead();
+      }
+    });
+    unawaited(_persistSettings());
+  }
+
+  void _resizeMessageDrawer(double deltaY, double screenHeight) {
+    final nextHeight = clampMessageDrawerHeight(
+      _messageDrawerHeight - deltaY,
+      screenHeight,
+    );
+    if (!mounted || (nextHeight - _messageDrawerHeight).abs() < 0.01) {
+      return;
+    }
+    setState(() {
+      _messageDrawerHeight = nextHeight;
     });
   }
 
@@ -743,6 +803,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     final toggleRight = _isRightOverlaySidebarOpen
                         ? panelWidth + 12
                         : 12.0;
+                    final drawerWidth =
+                        constraints.maxWidth -
+                        (_isRightOverlaySidebarOpen ? panelWidth : 0);
+                    final drawerHeight = clampMessageDrawerHeight(
+                      _messageDrawerHeight,
+                      constraints.maxHeight,
+                    );
+                    final messageButtonBottom = _isMessageDrawerOpen
+                        ? drawerHeight + 12
+                        : 12.0;
                     return Stack(
                       children: [
                         KeyedSubtree(
@@ -908,6 +978,114 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             ),
                           ),
                         ),
+                        if (_isMessageDrawerOpen)
+                          Positioned(
+                            left: 0,
+                            bottom: 0,
+                            width: drawerWidth,
+                            height: drawerHeight,
+                            child: _MessageDrawerPanel(
+                              messages: _messageCenter.messages,
+                              onClose: () => _toggleMessageDrawer(open: false),
+                              onClear: _messageCenter.clear,
+                              onResizeUpdate: (deltaY) {
+                                _resizeMessageDrawer(
+                                  deltaY,
+                                  constraints.maxHeight,
+                                );
+                              },
+                              onResizeEnd: () {
+                                unawaited(_persistSettings());
+                              },
+                            ),
+                          ),
+                        if (!_isMessageDrawerOpen)
+                          Positioned(
+                            left: 12,
+                            bottom: 12,
+                            child: Card(
+                              key: const Key('message-drawer-handle'),
+                              margin: EdgeInsets.zero,
+                              elevation: 3,
+                              child: InkWell(
+                                onTap: () => _toggleMessageDrawer(open: true),
+                                borderRadius: BorderRadius.circular(14),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 8,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(
+                                        Icons.message_outlined,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Messages (${_messageCenter.unreadCount})',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          right: toggleRight,
+                          bottom: messageButtonBottom,
+                          child: Tooltip(
+                            message: _isMessageDrawerOpen
+                                ? 'Hide messages'
+                                : 'Show messages',
+                            child: FilledButton.tonalIcon(
+                              key: const Key('message-drawer-toggle-button'),
+                              onPressed: () => _toggleMessageDrawer(),
+                              icon: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  const Icon(Icons.message_outlined),
+                                  if (_messageCenter.unreadCount > 0)
+                                    Positioned(
+                                      right: -10,
+                                      top: -10,
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.error,
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 5,
+                                            vertical: 1,
+                                          ),
+                                          child: Text(
+                                            _messageCenter.unreadCount > 99
+                                                ? '99+'
+                                                : '${_messageCenter.unreadCount}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  color: Theme.of(
+                                                    context,
+                                                  ).colorScheme.onError,
+                                                ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              label: const Text('Messages'),
+                            ),
+                          ),
+                        ),
                         AnimatedPositioned(
                           key: const Key('right-overlay-sidebar-position'),
                           duration: const Duration(milliseconds: 220),
@@ -1058,6 +1236,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                               onRefreshRuns: _loadRuns,
                                               onOpenOutputFileFromTimeout:
                                                   _openKnownOutputFileFromRunPanel,
+                                              onNotify: _showSnack,
                                             ),
                                           ],
                                         ),
@@ -2601,18 +2780,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       });
       await _persistSettings();
       await _loadFlows();
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Saved new version: $flowVerId'),
-          action: SnackBarAction(
-            label: 'Set Head',
-            onPressed: () {
-              _setCurrentFlowAsHead();
-            },
-          ),
-        ),
+      _messageCenter.log(
+        level: AppMessageLevel.success,
+        source: AppMessageSource.app,
+        title: 'Flow updated',
+        message: 'Saved new version: $flowVerId',
       );
       return true;
     } on ApiError catch (error) {
@@ -3806,11 +3978,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 if (!dialogContext.mounted) {
                   return;
                 }
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Flow JSON copied to clipboard'),
-                  ),
-                );
+                _showSnack('Flow JSON copied to clipboard');
               },
               child: const Text('Copy'),
             ),
@@ -4217,29 +4385,23 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    _messageCenter.log(
+      level: AppMessageLevel.info,
+      source: AppMessageSource.app,
+      message: message,
+    );
   }
 
   void _showCopyableErrorSnack({
     required String message,
     required String copyText,
   }) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        action: SnackBarAction(
-          label: 'Copy',
-          onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: copyText));
-            if (!mounted) {
-              return;
-            }
-            _showSnack('Copied');
-          },
-        ),
-      ),
+    _messageCenter.log(
+      level: AppMessageLevel.error,
+      source: AppMessageSource.network,
+      title: 'Error',
+      message: message,
+      details: <String, dynamic>{'copy_text': copyText},
     );
   }
 
@@ -4786,6 +4948,7 @@ class _RunPanel extends StatelessWidget {
     required this.onOpenRunDetails,
     required this.onRefreshRuns,
     required this.onOpenOutputFileFromTimeout,
+    required this.onNotify,
   });
 
   final TextEditingController inputFileController;
@@ -4819,6 +4982,7 @@ class _RunPanel extends StatelessWidget {
   final Future<void> Function() onOpenRunDetails;
   final Future<void> Function() onRefreshRuns;
   final Future<void> Function() onOpenOutputFileFromTimeout;
+  final ValueChanged<String> onNotify;
 
   @override
   Widget build(BuildContext context) {
@@ -5039,11 +5203,7 @@ class _RunPanel extends StatelessWidget {
                           ClipboardData(text: outputContent!),
                         );
                         if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Output copied to clipboard'),
-                            ),
-                          );
+                          onNotify('Output copied to clipboard');
                         }
                       },
                       icon: const Icon(Icons.copy),
@@ -5056,11 +5216,7 @@ class _RunPanel extends StatelessWidget {
                             ClipboardData(text: outputPath!),
                           );
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Output path copied'),
-                              ),
-                            );
+                            onNotify('Output path copied');
                           }
                         },
                         icon: const Icon(Icons.copy_all),
@@ -5221,6 +5377,205 @@ class _ErrorState extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _MessageDrawerPanel extends StatelessWidget {
+  const _MessageDrawerPanel({
+    required this.messages,
+    required this.onClose,
+    required this.onClear,
+    required this.onResizeUpdate,
+    required this.onResizeEnd,
+  });
+
+  final List<AppMessage> messages;
+  final VoidCallback onClose;
+  final VoidCallback onClear;
+  final ValueChanged<double> onResizeUpdate;
+  final VoidCallback onResizeEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      key: const Key('message-drawer-panel'),
+      elevation: 8,
+      color: colorScheme.surface,
+      child: Column(
+        children: [
+          GestureDetector(
+            key: const Key('message-drawer-resize-handle'),
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragUpdate: (details) => onResizeUpdate(details.delta.dy),
+            onVerticalDragEnd: (_) => onResizeEnd(),
+            child: SizedBox(
+              height: 8,
+              child: Center(
+                child: Container(
+                  width: 56,
+                  height: 2,
+                  decoration: BoxDecoration(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              children: [
+                Text('Messages', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Clear messages',
+                  onPressed: onClear,
+                  icon: const Icon(Icons.clear_all),
+                ),
+                IconButton(
+                  tooltip: 'Close drawer',
+                  onPressed: onClose,
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: messages.isEmpty
+                ? Center(
+                    child: Text(
+                      'No messages',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.all(10),
+                    itemCount: messages.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final item = messages[index];
+                      return _MessageDrawerItem(message: item);
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageDrawerItem extends StatelessWidget {
+  const _MessageDrawerItem({required this.message});
+
+  final AppMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final levelColor = switch (message.level) {
+      AppMessageLevel.error => colorScheme.error,
+      AppMessageLevel.warn => Colors.orange,
+      AppMessageLevel.success => Colors.green,
+      AppMessageLevel.info => colorScheme.primary,
+    };
+    final detailsJson = message.details == null
+        ? null
+        : const JsonEncoder.withIndent('  ').convert(message.details);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.circle, size: 10, color: levelColor),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    message.title ?? _labelForLevel(message.level),
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+                Text(
+                  _formatTimestamp(message.timestamp),
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            SelectableText(
+              message.message,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: message.message),
+                    );
+                    MessageCenter.instance.log(
+                      level: AppMessageLevel.info,
+                      source: AppMessageSource.app,
+                      message: 'Message copied',
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copy'),
+                ),
+                if (detailsJson != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: const Text('Details'),
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.4),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: SelectableText(detailsJson),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _labelForLevel(AppMessageLevel level) {
+    return switch (level) {
+      AppMessageLevel.info => 'Info',
+      AppMessageLevel.warn => 'Warning',
+      AppMessageLevel.error => 'Error',
+      AppMessageLevel.success => 'Success',
+    };
+  }
+
+  static String _formatTimestamp(DateTime ts) {
+    final hour = ts.hour.toString().padLeft(2, '0');
+    final minute = ts.minute.toString().padLeft(2, '0');
+    final second = ts.second.toString().padLeft(2, '0');
+    return '$hour:$minute:$second';
   }
 }
 

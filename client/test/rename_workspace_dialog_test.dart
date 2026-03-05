@@ -1,4 +1,5 @@
 import 'package:client/api/api_client.dart';
+import 'package:client/messages/message_center.dart';
 import 'package:client/src/flow_canvas_screen.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:flutter/material.dart';
@@ -67,6 +68,10 @@ class _RenameWorkspaceApiClient extends ApiClient {
 }
 
 void main() {
+  setUp(() {
+    MessageCenter.instance.clear();
+  });
+
   testWidgets('rename workspace save completes without dialog crash', (
     WidgetTester tester,
   ) async {
@@ -98,6 +103,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Workspace renamed'), findsOneWidget);
+    expect(
+      MessageCenter.instance.messages.any(
+        (m) => m.message == 'Workspace renamed',
+      ),
+      isTrue,
+    );
   });
 }

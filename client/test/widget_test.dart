@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:client/api/api_client.dart';
+import 'package:client/messages/message_center.dart';
 import 'package:client/src/flow_canvas_screen.dart';
 import 'package:client/src/models/server_models.dart';
 
@@ -90,6 +91,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    MessageCenter.instance.clear();
   });
 
   testWidgets('renders canvas and adds file.read node', (
@@ -270,5 +272,58 @@ void main() {
 
     final widenedWidth = tester.getSize(sidebarFinder).width;
     expect(widenedWidth, greaterThan(initialWidth));
+  });
+
+  testWidgets('message drawer handle, open state, and width adaptation', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+      'client.message_drawer_open': false,
+    });
+
+    MessageCenter.instance.log(
+      level: AppMessageLevel.info,
+      source: AppMessageSource.app,
+      message: 'Drawer test message',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('message-drawer-handle')), findsOneWidget);
+    expect(find.textContaining('Messages (1)'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('message-drawer-handle')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('message-drawer-panel')), findsOneWidget);
+    expect(find.byType(SelectableText), findsWidgets);
+    expect(find.text('Drawer test message'), findsOneWidget);
+
+    final panelFinder = find.byKey(const Key('message-drawer-panel'));
+    final sidebarFinder = find.byKey(const Key('right-overlay-sidebar'));
+    final openSidebarPanelWidth = tester.getSize(panelFinder).width;
+    final sidebarWidth = tester.getSize(sidebarFinder).width;
+    expect(openSidebarPanelWidth, closeTo(1600 - sidebarWidth, 2));
+
+    await tester.tap(find.byKey(const Key('right-sidebar-toggle')));
+    await tester.pumpAndSettle();
+
+    final closedSidebarPanelWidth = tester.getSize(panelFinder).width;
+    expect(closedSidebarPanelWidth, greaterThan(openSidebarPanelWidth));
   });
 }

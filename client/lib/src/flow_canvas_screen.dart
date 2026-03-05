@@ -8,7 +8,7 @@ import 'package:client/src/flow/flow_validation.dart';
 import 'package:client/src/flow/node_registry.dart';
 import 'package:client/src/flow/primary_output.dart';
 import 'package:client/src/flow/run_request_builder.dart';
-import 'package:client/src/io/local_file_reader.dart';
+import 'package:client/src/flow/run_output_resolver.dart';
 import 'package:client/src/io/workspace_root_path.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:client/src/widgets/error_banner.dart';
@@ -46,8 +46,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       'client.run_request_timeout_seconds';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
-  final LocalFileReader _localFileReader = createLocalFileReader();
-
   late final TextEditingController _flowTitleController;
   late final TextEditingController _inputFileController;
   late final TextEditingController _outputFileController;
@@ -1758,7 +1756,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final runBody = runDoc['body'] as Map<String, dynamic>?;
       final status = runBody?['status'] as String? ?? 'succeeded';
       final traceError = _traceErrorDetails(runBody);
-      final outputArtifactRef = _extractOutputArtifactRef(runBody);
       final invocations = _invocationSummaries(runBody);
 
       String? outputPath;
@@ -1767,33 +1764,41 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       String? outputArtifactSummary;
       String? runError = traceError?.message;
       if (status == 'succeeded') {
-        if (outputArtifactRef != null) {
-          final artifact = await _apiClient.getDocument(
-            docType: 'artifact',
-            docId: outputArtifactRef.$1,
-            verId: outputArtifactRef.$2,
-          );
-          if (!_isRunRequestActive(runToken)) {
-            return;
-          }
-          final artifactInfo = _outputArtifactInfo(artifact);
-          outputArtifactSummary = artifactInfo?.summary;
-          outputPath = artifactInfo?.path != null
-              ? _joinPath(_workspaceDataRoot, workspaceId, artifactInfo!.path!)
-              : null;
-        }
-        outputPath ??= _joinPath(
-          _workspaceDataRoot,
-          workspaceId,
-          params.outputFile,
+        final resolution = await resolveRunOutputs(
+          runBody: runBody,
+          fetchArtifactDocument:
+              ({required String docId, required String verId}) {
+                return _apiClient.getDocument(
+                  docType: 'artifact',
+                  docId: docId,
+                  verId: verId,
+                );
+              },
         );
-        try {
-          outputContentFull = await _localFileReader.readText(outputPath);
+        if (!_isRunRequestActive(runToken)) {
+          return;
+        }
+        if (resolution.outputArtifacts.isNotEmpty) {
+          outputArtifactSummary = resolution.outputArtifacts
+              .map((item) => item.summary)
+              .join(' | ');
+          outputPath = resolution.outputArtifacts
+              .map((item) => item.path)
+              .whereType<String>()
+              .firstWhere((path) => path.trim().isNotEmpty, orElse: () => '');
+          if (outputPath != null && outputPath!.trim().isEmpty) {
+            outputPath = null;
+          }
+        }
+        if (resolution.previewText != null &&
+            resolution.previewText!.trim().isNotEmpty) {
+          outputContentFull = resolution.previewText!;
           outputContent = outputContentFull.length > _outputPreviewLimit
               ? '${outputContentFull.substring(0, _outputPreviewLimit)}...'
               : outputContentFull;
-        } catch (error) {
-          runError = 'Run succeeded, but failed to read output file: $error';
+        } else if (resolution.fallbackMessage != null &&
+            resolution.fallbackMessage!.trim().isNotEmpty) {
+          runError = resolution.fallbackMessage!;
         }
       }
 
@@ -1878,11 +1883,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
 
       final timeoutSeconds = error.timeoutSeconds ?? _runRequestTimeoutSeconds;
-      final timeoutOutputPath = _joinPath(
-        _workspaceDataRoot,
-        workspaceId,
-        params.outputFile,
-      );
+      final timeoutOutputPath = params.outputFile;
       final displayErrorMessage = isRunCreateTimeout
           ? 'Run request timed out after ${timeoutSeconds}s. The run may have completed. Check Runs tab.'
           : (traceError?.message ?? _formatApiError(error));
@@ -1958,62 +1959,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         .where((node) => node.type == 'file.read')
         .map((node) => (_readConfig(node.data)['input_file'] as String?) ?? '')
         .toList(growable: false);
-  }
-
-  (String docId, String verId)? _extractOutputArtifactRef(
-    Map<String, dynamic>? runBody,
-  ) {
-    if (runBody == null) {
-      return null;
-    }
-    final outputs = runBody['outputs'];
-    if (outputs is! List<dynamic> || outputs.isEmpty) {
-      return null;
-    }
-    final first = outputs.first;
-    if (first is! Map<String, dynamic>) {
-      return null;
-    }
-    final artifactRefRaw = first['artifact_ref'];
-    final artifactRef = artifactRefRaw is Map<String, dynamic>
-        ? artifactRefRaw
-        : first;
-    final docId = artifactRef['doc_id'];
-    final verId = artifactRef['ver_id'];
-    if (docId is String &&
-        docId.isNotEmpty &&
-        verId is String &&
-        verId.isNotEmpty) {
-      return (docId, verId);
-    }
-    return null;
-  }
-
-  _OutputArtifactInfo? _outputArtifactInfo(Map<String, dynamic> artifactDoc) {
-    final body = artifactDoc['body'];
-    if (body is! Map<String, dynamic>) {
-      return null;
-    }
-    final schema = body['schema'] as String? ?? '';
-    final payload = body['payload'];
-    if (payload is! Map<String, dynamic>) {
-      return null;
-    }
-    final path = payload['path'] as String?;
-    final bytes = payload['bytes'];
-    final bytesInt = bytes is int
-        ? bytes
-        : (bytes is num ? bytes.toInt() : null);
-
-    final summaryBuffer = StringBuffer(schema.isEmpty ? 'artifact' : schema);
-    if (path != null && path.isNotEmpty) {
-      summaryBuffer.write(' • path=$path');
-    }
-    if (bytesInt != null) {
-      summaryBuffer.write(' • bytes=$bytesInt');
-    }
-
-    return _OutputArtifactInfo(path: path, summary: summaryBuffer.toString());
   }
 
   List<String> _invocationSummaries(Map<String, dynamic>? runBody) {
@@ -2293,11 +2238,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       MaterialPageRoute<void>(
         builder: (context) => _RunDetailsScreen(
           apiClient: _apiClient,
-          localFileReader: _localFileReader,
-          workspaceId: workspaceId,
-          workspaceDataRoot: _workspaceDataRoot,
           runItem: item,
-          pathJoin: _joinPath,
           friendlyDate: _friendlyDate,
         ),
       ),
@@ -2322,27 +2263,48 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _openKnownOutputFileFromRunPanel() async {
-    final outputPath = _lastOutputPath;
-    if (outputPath == null || outputPath.trim().isEmpty) {
-      _showSnack('Output path is not available yet.');
+    final runId = _lastRunId;
+    final runVerId = _lastRunVerId;
+    if (runId == null || runVerId == null) {
+      _showSnack('Run details are not available yet.');
       return;
     }
     try {
-      final fullContent = await _localFileReader.readText(outputPath);
+      final runDoc = await _apiClient.getRun(docId: runId, verId: runVerId);
+      final runBody = runDoc['body'] as Map<String, dynamic>?;
+      final resolution = await resolveRunOutputs(
+        runBody: runBody,
+        fetchArtifactDocument:
+            ({required String docId, required String verId}) {
+              return _apiClient.getDocument(
+                docType: 'artifact',
+                docId: docId,
+                verId: verId,
+              );
+            },
+      );
       if (!mounted) {
         return;
       }
       setState(() {
-        _lastOutputContentFull = fullContent;
-        _lastOutputContent = fullContent.length > _outputPreviewLimit
-            ? '${fullContent.substring(0, _outputPreviewLimit)}...'
-            : fullContent;
+        final preview = resolution.previewText;
+        if (preview != null && preview.trim().isNotEmpty) {
+          _lastOutputContentFull = preview;
+          _lastOutputContent = preview.length > _outputPreviewLimit
+              ? '${preview.substring(0, _outputPreviewLimit)}...'
+              : preview;
+          _lastRunError = null;
+        } else {
+          _lastRunError =
+              resolution.fallbackMessage ??
+              'Output file created on server. Client cannot read server filesystem.';
+        }
       });
     } catch (error) {
       if (!mounted) {
         return;
       }
-      _showSnack('Failed to open output file: $error');
+      _showSnack('Failed to request file preview: $error');
     }
   }
 
@@ -3140,13 +3102,6 @@ class _TraceErrorDetails {
   final String? nodeId;
 }
 
-class _OutputArtifactInfo {
-  const _OutputArtifactInfo({this.path, required this.summary});
-
-  final String? path;
-  final String summary;
-}
-
 class _RunGuardResult {
   const _RunGuardResult({required this.canRun, required this.blockers});
 
@@ -3774,7 +3729,7 @@ class _RunPanel extends StatelessWidget {
                       FilledButton.tonalIcon(
                         onPressed: onOpenOutputFileFromTimeout,
                         icon: const Icon(Icons.file_open),
-                        label: const Text('Open output file'),
+                        label: const Text('Request file preview'),
                       ),
                   ],
                 ),
@@ -4056,20 +4011,12 @@ class _CanvasZoomControls extends StatelessWidget {
 class _RunDetailsScreen extends StatefulWidget {
   const _RunDetailsScreen({
     required this.apiClient,
-    required this.localFileReader,
-    required this.workspaceId,
-    required this.workspaceDataRoot,
     required this.runItem,
-    required this.pathJoin,
     required this.friendlyDate,
   });
 
   final ApiClient apiClient;
-  final LocalFileReader localFileReader;
-  final String workspaceId;
-  final String workspaceDataRoot;
   final RunListItem runItem;
-  final String Function(String first, String second, String third) pathJoin;
   final String Function(String raw) friendlyDate;
 
   @override
@@ -4135,38 +4082,44 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
     });
 
     try {
-      final artifact = await widget.apiClient.getDocument(
-        docType: 'artifact',
-        docId: outputDocId,
-        verId: outputVerId,
+      final runBody = _runDoc?['body'] as Map<String, dynamic>?;
+      final resolution = await resolveRunOutputs(
+        runBody: runBody,
+        fetchArtifactDocument:
+            ({required String docId, required String verId}) {
+              return widget.apiClient.getDocument(
+                docType: 'artifact',
+                docId: docId,
+                verId: verId,
+              );
+            },
       );
-      final body = artifact['body'];
-      if (body is! Map<String, dynamic>) {
-        throw const FormatException('artifact body missing');
-      }
-      final payload = body['payload'];
-      if (payload is! Map<String, dynamic>) {
-        throw const FormatException('artifact payload missing');
-      }
-      final path = payload['path'];
-      if (path is! String || path.trim().isEmpty) {
-        throw const FormatException('artifact payload.path missing');
-      }
-
-      final fullPath = widget.pathJoin(
-        widget.workspaceDataRoot,
-        widget.workspaceId,
-        path,
+      final selectedOutput = resolution.outputArtifacts.firstWhere(
+        (item) =>
+            item.ref.docId == outputDocId && item.ref.verId == outputVerId,
+        orElse: () => ResolvedRunOutputArtifact(
+          ref: ArtifactRefId(docId: outputDocId, verId: outputVerId),
+          schema: '',
+          path: null,
+          bytes: null,
+        ),
       );
-      final contents = await widget.localFileReader.readText(fullPath);
       if (!mounted) {
         return;
       }
       setState(() {
-        _outputPath = fullPath;
-        _outputPreview = contents.length > 2000
-            ? '${contents.substring(0, 2000)}...'
-            : contents;
+        _outputPath = selectedOutput.path;
+        final preview = resolution.previewText;
+        if (preview != null && preview.trim().isNotEmpty) {
+          _outputPreview = preview.length > 2000
+              ? '${preview.substring(0, 2000)}...'
+              : preview;
+        } else {
+          _outputPreview = null;
+          _outputPreviewError =
+              resolution.fallbackMessage ??
+              'Output file created on server. Client cannot read server filesystem.';
+        }
       });
     } on ApiError catch (error) {
       if (!mounted) {
@@ -4270,8 +4223,12 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
                 const SizedBox(height: 8),
                 if (outputList.isEmpty) const Text('(none)'),
                 ...outputList.map((outputRef) {
-                  final docId = outputRef['doc_id'] as String? ?? '';
-                  final verId = outputRef['ver_id'] as String? ?? '';
+                  final artifactRefRaw = outputRef['artifact_ref'];
+                  final artifactRef = artifactRefRaw is Map<String, dynamic>
+                      ? artifactRefRaw
+                      : outputRef;
+                  final docId = artifactRef['doc_id'] as String? ?? '';
+                  final verId = artifactRef['ver_id'] as String? ?? '';
                   return Card(
                     margin: const EdgeInsets.only(bottom: 8),
                     child: Padding(
@@ -4285,7 +4242,7 @@ class _RunDetailsScreenState extends State<_RunDetailsScreen> {
                             onPressed: docId.isEmpty || verId.isEmpty
                                 ? null
                                 : () => _openOutputFile(docId, verId, context),
-                            child: const Text('Open output file'),
+                            child: const Text('Request file preview'),
                           ),
                         ],
                       ),

@@ -66,7 +66,7 @@ flutter run
 
 - A flow identity is `doc_id`.
 - Every save creates a new `ver_id`.
-- **Save New Version** keeps `doc_id` and sets `parents` to `[current_ver_id]`.
+- **Update** keeps `doc_id` and sets `parents` to `[current_ver_id]`.
 - **Duplicate** creates a new `doc_id` + new `ver_id` with empty `parents`.
 - **Set Head** maps workspace head for a flow `doc_id` to a specific `ver_id`.
 
@@ -162,7 +162,7 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 7. Open **Flows** tab and verify the flow appears in the list.
 8. Click a flow in **Flows** tab to load/re-hydrate it into the canvas.
 9. In **Flow** tab:
-   - click **Save New Version** to create a new `ver_id`
+   - click **Update** to create a new `ver_id`
    - click **Duplicate** to create a new `doc_id`
    - click **Set Head** to pin workspace head to current flow version
 10. Click **Run**.
@@ -185,7 +185,7 @@ Flow layout persistence:
 - Set `file.write` primary output when multiple writes exist; Run prompts if missing.
 - Keep an eye on dirty state:
   - app title shows `•` when flow has unsaved changes.
-  - leaving Flow tab prompts: **Discard / Cancel / Save new version**.
+  - leaving Flow tab prompts: **Discard / Cancel / Update**.
 - Run feedback:
   - `Running...` state with client-side **Cancel** wait.
   - completion summary includes status, duration, output path.

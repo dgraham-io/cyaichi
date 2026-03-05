@@ -339,7 +339,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         return AlertDialog(
           title: const Text('Unsaved changes'),
           content: const Text(
-            'You have unsaved flow changes. Save before leaving the Flow editor?',
+            'You have unsaved flow changes. Update before leaving the Flow editor?',
           ),
           actions: [
             TextButton(
@@ -355,7 +355,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             FilledButton(
               onPressed: () =>
                   Navigator.of(dialogContext).pop(_UnsavedFlowDecision.save),
-              child: const Text('Save new version'),
+              child: const Text('Update'),
             ),
           ],
         );
@@ -3933,18 +3933,21 @@ class _TopControlsBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: isSavingToServer || !saveEnabled
-                      ? null
-                      : onSaveToServer,
-                  icon: isSavingToServer
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.cloud_upload),
-                  label: const Text('Save New Version'),
+                Tooltip(
+                  message: 'Update creates a new version (keeps history).',
+                  child: FilledButton.icon(
+                    onPressed: isSavingToServer || !saveEnabled
+                        ? null
+                        : onSaveToServer,
+                    icon: isSavingToServer
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_upload),
+                    label: const Text('Update'),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.icon(

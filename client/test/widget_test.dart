@@ -104,4 +104,38 @@ void main() {
 
     expect(find.text('File Read 1'), findsWidgets);
   });
+
+  testWidgets('top nav group renders and switches tabs', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('top-nav-group')), findsOneWidget);
+    expect(find.text('Flow'), findsOneWidget);
+    expect(find.text('Flows'), findsOneWidget);
+    expect(find.text('Runs'), findsOneWidget);
+    expect(find.text('Notes'), findsOneWidget);
+
+    await tester.tap(find.text('Runs'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No runs found for this workspace.'), findsOneWidget);
+  });
 }

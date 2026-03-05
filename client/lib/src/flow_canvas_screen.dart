@@ -370,71 +370,151 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     return result ?? _UnsavedFlowDecision.cancel;
   }
 
+  Future<void> _onTopNavSelected(int index) async {
+    if (!await _handleTabChange(index)) {
+      return;
+    }
+    if (index == 1) {
+      await _loadFlows();
+    }
+    if (index == 2) {
+      await _loadRuns();
+    }
+    if (index == 3) {
+      await _loadNotes();
+    }
+  }
+
+  Widget _buildTopNavGroup() {
+    return Card(
+      key: const Key('top-nav-group'),
+      margin: EdgeInsets.zero,
+      elevation: 3,
+      color: Theme.of(context).colorScheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SegmentedButton<int>(
+            showSelectedIcon: false,
+            style: ButtonStyle(
+              minimumSize: WidgetStateProperty.all(const Size(0, 46)),
+              visualDensity: VisualDensity.standard,
+              textStyle: WidgetStateProperty.all(
+                Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            segments: const <ButtonSegment<int>>[
+              ButtonSegment<int>(
+                value: 0,
+                icon: Icon(Icons.edit_outlined, size: 20),
+                label: Text('Flow'),
+              ),
+              ButtonSegment<int>(
+                value: 1,
+                icon: Icon(Icons.account_tree_outlined, size: 20),
+                label: Text('Flows'),
+              ),
+              ButtonSegment<int>(
+                value: 2,
+                icon: Icon(Icons.history, size: 20),
+                label: Text('Runs'),
+              ),
+              ButtonSegment<int>(
+                value: 3,
+                icon: Icon(Icons.sticky_note_2_outlined, size: 20),
+                label: Text('Notes'),
+              ),
+            ],
+            selected: <int>{_selectedTabIndex},
+            onSelectionChanged: (selection) {
+              if (selection.isEmpty) {
+                return;
+              }
+              unawaited(_onTopNavSelected(selection.first));
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasSelectedWorkspace = _selectedWorkspaceId != null;
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            const Icon(Icons.hub),
-            const SizedBox(width: 8),
-            Text('cyaichi${_isFlowDirty ? ' •' : ''}'),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Align(
+        title: SizedBox(
+          height: 52,
+          child: Stack(
+            children: [
+              Align(
                 alignment: Alignment.centerLeft,
                 child: Row(
-                  key: const Key('workspace-title-row'),
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_isLoadingWorkspaces) ...[
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(width: 6),
-                    ],
-                    Flexible(
-                      child: Text(
-                        key: const Key('workspace-title-label'),
-                        _currentWorkspaceLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: hasSelectedWorkspace
-                            ? null
-                            : Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    SizedBox(
-                      width: 32,
-                      height: 32,
-                      child: PopupMenuButton<_WorkspaceMenuAction>(
-                        key: const Key('workspace-actions-button'),
-                        tooltip: 'Workspace actions',
-                        iconSize: 18,
-                        padding: EdgeInsets.zero,
-                        icon: const Icon(Icons.edit_outlined),
-                        onSelected: _openWorkspaceMenuAction,
-                        itemBuilder: (context) => _buildWorkspaceMenuItems(
-                          context,
-                          hasSelectedWorkspace: hasSelectedWorkspace,
-                        ),
-                      ),
-                    ),
+                    const Icon(Icons.hub),
+                    const SizedBox(width: 8),
+                    Text('cyaichi${_isFlowDirty ? ' •' : ''}'),
                   ],
                 ),
               ),
-            ),
-          ],
+              Center(child: _buildTopNavGroup()),
+            ],
+          ),
         ),
         actions: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Row(
+              key: const Key('workspace-title-row'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_isLoadingWorkspaces) ...[
+                  const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Flexible(
+                  child: Text(
+                    key: const Key('workspace-title-label'),
+                    _currentWorkspaceLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: hasSelectedWorkspace
+                        ? null
+                        : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: PopupMenuButton<_WorkspaceMenuAction>(
+                    key: const Key('workspace-actions-button'),
+                    tooltip: 'Workspace actions',
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.edit_outlined),
+                    onSelected: _openWorkspaceMenuAction,
+                    itemBuilder: (context) => _buildWorkspaceMenuItems(
+                      context,
+                      hasSelectedWorkspace: hasSelectedWorkspace,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
+          ),
           if (_selectedTabIndex == 0) ...[
             IconButton(
               tooltip: 'Export JSON',
@@ -462,32 +542,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _buildFlowsTab(),
           _buildRunsTab(),
           _buildNotesTab(),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedTabIndex,
-        onDestinationSelected: (index) async {
-          if (!await _handleTabChange(index)) {
-            return;
-          }
-          if (index == 1) {
-            await _loadFlows();
-          }
-          if (index == 2) {
-            await _loadRuns();
-          }
-          if (index == 3) {
-            await _loadNotes();
-          }
-        },
-        destinations: const <NavigationDestination>[
-          NavigationDestination(icon: Icon(Icons.account_tree), label: 'Flow'),
-          NavigationDestination(
-            icon: Icon(Icons.library_books),
-            label: 'Flows',
-          ),
-          NavigationDestination(icon: Icon(Icons.play_circle), label: 'Runs'),
-          NavigationDestination(icon: Icon(Icons.note_alt), label: 'Notes'),
         ],
       ),
       floatingActionButton: _selectedTabIndex == 3

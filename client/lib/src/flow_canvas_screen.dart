@@ -999,90 +999,50 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                               },
                             ),
                           ),
-                        if (!_isMessageDrawerOpen)
-                          Positioned(
-                            left: 12,
-                            bottom: 12,
-                            child: Card(
-                              key: const Key('message-drawer-handle'),
-                              margin: EdgeInsets.zero,
-                              elevation: 3,
-                              child: InkWell(
-                                onTap: () => _toggleMessageDrawer(open: true),
-                                borderRadius: BorderRadius.circular(14),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 8,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        Icons.message_outlined,
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'Messages (${_messageCenter.unreadCount})',
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
                         Positioned(
                           right: toggleRight,
                           bottom: messageButtonBottom,
-                          child: Tooltip(
-                            message: _isMessageDrawerOpen
-                                ? 'Hide messages'
-                                : 'Show messages',
-                            child: FilledButton.tonalIcon(
-                              key: const Key('message-drawer-toggle-button'),
-                              onPressed: () => _toggleMessageDrawer(),
-                              icon: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  const Icon(Icons.message_outlined),
-                                  if (_messageCenter.unreadCount > 0)
-                                    Positioned(
-                                      right: -10,
-                                      top: -10,
-                                      child: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.error,
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                        ),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 5,
-                                            vertical: 1,
-                                          ),
-                                          child: Text(
-                                            _messageCenter.unreadCount > 99
-                                                ? '99+'
-                                                : '${_messageCenter.unreadCount}',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .labelSmall
-                                                ?.copyWith(
-                                                  color: Theme.of(
-                                                    context,
-                                                  ).colorScheme.onError,
-                                                ),
-                                          ),
-                                        ),
-                                      ),
+                          child: Card(
+                            key: const Key('message-drawer-toggle-button'),
+                            margin: EdgeInsets.zero,
+                            elevation: 3,
+                            child: InkWell(
+                              onTap: () => _toggleMessageDrawer(),
+                              borderRadius: BorderRadius.circular(14),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.message_outlined,
+                                      size: 18,
                                     ),
-                                ],
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Messages (${_messageCenter.unreadCount})',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelMedium
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      _isMessageDrawerOpen
+                                          ? Icons.keyboard_arrow_down
+                                          : Icons.keyboard_arrow_up,
+                                      size: 18,
+                                    ),
+                                  ],
+                                ),
                               ),
-                              label: const Text('Messages'),
                             ),
                           ),
                         ),

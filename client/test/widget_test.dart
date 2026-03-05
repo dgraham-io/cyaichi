@@ -274,7 +274,7 @@ void main() {
     expect(widenedWidth, greaterThan(initialWidth));
   });
 
-  testWidgets('message drawer handle, open state, and width adaptation', (
+  testWidgets('single right message indicator toggles with arrow + count', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -304,15 +304,33 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('message-drawer-handle')), findsOneWidget);
+    expect(find.byKey(const Key('message-drawer-handle')), findsNothing);
+    expect(
+      find.byKey(const Key('message-drawer-toggle-button')),
+      findsOneWidget,
+    );
     expect(find.textContaining('Messages (1)'), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_arrow_up), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('message-drawer-handle')));
+    await tester.tap(find.byKey(const Key('message-drawer-toggle-button')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('message-drawer-panel')), findsOneWidget);
     expect(find.byType(SelectableText), findsWidgets);
     expect(find.text('Drawer test message'), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+
+    final labelText = tester.widget<Text>(find.text('Messages (0)'));
+    final color = labelText.style?.color;
+    expect(color, isNotNull);
+    expect(
+      color,
+      isNot(
+        equals(
+          Theme.of(tester.element(find.text('Messages (0)'))).colorScheme.error,
+        ),
+      ),
+    );
 
     final panelFinder = find.byKey(const Key('message-drawer-panel'));
     final sidebarFinder = find.byKey(const Key('right-overlay-sidebar'));

@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultWorkspaceRoot = "./workspace-data"
-	defaultLLMModel      = "gpt-oss120:b"
+	defaultLLMModel      = "openai/gpt-oss-120b"
 	defaultLLMTimeoutSec = 120
 	minLLMTimeoutSec     = 5
 	maxLLMTimeoutSec     = 900

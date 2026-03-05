@@ -21,7 +21,7 @@ Optional environment variables:
 - `CYAI_WORKSPACE_ROOT` (default `./.local/workspace-data`)
 - `CYAI_VLLM_BASE_URL` (required for `llm.chat`, example `http://192.168.1.92:8000`)
 - `VLLM_KEY` (required for `llm.chat`, sent as `Authorization: Bearer ...`)
-- `CYAI_LLM_MODEL` (default `gpt-oss120:b`)
+- `CYAI_LLM_MODEL` (default `openai/gpt-oss-120b`)
 - `CYAI_VLLM_TIMEOUT_SECONDS` (default `120`, clamped to `5..900`)
 
 On startup, the server creates any missing runtime directories and logs resolved absolute paths for:
@@ -154,7 +154,7 @@ export CYAI_DB_PATH="./.local/cyaichi.db"
 export CYAI_WORKSPACE_ROOT="./.local/workspace-data"
 export CYAI_VLLM_BASE_URL="http://192.168.1.92:8000"
 export VLLM_KEY="replace-with-real-key"
-export CYAI_LLM_MODEL="gpt-oss120:b"
+export CYAI_LLM_MODEL="openai/gpt-oss-120b"
 export CYAI_VLLM_TIMEOUT_SECONDS=120
 ```
 

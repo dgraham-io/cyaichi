@@ -10,7 +10,7 @@ const (
 	defaultLogLevel      = "info"
 	defaultDBPath        = "./.local/cyaichi.db"
 	defaultWorkspaceRoot = "./.local/workspace-data"
-	defaultLLMModel      = "gpt-oss120:b"
+	defaultLLMModel      = "openai/gpt-oss-120b"
 	defaultVLLMTimeout   = 120
 )
 

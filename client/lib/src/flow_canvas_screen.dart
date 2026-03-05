@@ -5209,11 +5209,7 @@ class _CanvasControlGroup extends StatelessWidget {
                   ),
                 ),
               ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.7),
-              ),
+              const SizedBox(height: 2),
               Tooltip(
                 key: const Key('canvas-zoom-out-tooltip'),
                 message: 'Zoom out',
@@ -5230,11 +5226,7 @@ class _CanvasControlGroup extends StatelessWidget {
                   ),
                 ),
               ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.7),
-              ),
+              const SizedBox(height: 2),
               SizedBox(
                 width: 40,
                 height: 40,
@@ -5248,11 +5240,7 @@ class _CanvasControlGroup extends StatelessWidget {
                   ),
                 ),
               ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.7),
-              ),
+              const SizedBox(height: 2),
               Tooltip(
                 key: const Key('canvas-zoom-reset-tooltip'),
                 message: 'Reset zoom',

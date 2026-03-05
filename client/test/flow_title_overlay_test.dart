@@ -196,7 +196,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
+      expect(
+        find.byKey(const Key('flow-title-actions-button')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const Key('flow-title-actions-button')));
       await tester.pumpAndSettle();
@@ -452,24 +455,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('canvas-zoom-toolbar')), findsOneWidget);
+    expect(find.byKey(const Key('canvas-control-group')), findsOneWidget);
+    expect(find.byKey(const Key('right-sidebar-toggle')), findsOneWidget);
+    expect(find.byKey(const Key('canvas-zoom-percent-label')), findsOneWidget);
+    expect(find.text('100%'), findsOneWidget);
     expect(
       find.descendant(
-        of: find.byKey(const Key('canvas-zoom-toolbar')),
+        of: find.byKey(const Key('canvas-control-group')),
         matching: find.byIcon(Icons.add),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: find.byKey(const Key('canvas-zoom-toolbar')),
+        of: find.byKey(const Key('canvas-control-group')),
         matching: find.byIcon(Icons.remove),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: find.byKey(const Key('canvas-zoom-toolbar')),
+        of: find.byKey(const Key('canvas-control-group')),
         matching: find.byIcon(Icons.center_focus_strong_outlined),
       ),
       findsOneWidget,

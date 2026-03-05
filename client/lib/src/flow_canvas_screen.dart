@@ -159,6 +159,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String _nodePaletteSearchQuery = '';
   Timer? _nodePaletteSearchDebounce;
   bool _isRightOverlaySidebarOpen = true;
+  double _canvasZoomLevel = 1.0;
 
   @override
   void initState() {
@@ -347,6 +348,26 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _isRightOverlaySidebarOpen = !_isRightOverlaySidebarOpen;
     });
     unawaited(_persistSettings());
+  }
+
+  void _zoomCanvasBy(double delta) {
+    _controller.zoomBy(delta);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _canvasZoomLevel = (_canvasZoomLevel + delta).clamp(0.1, 4.0);
+    });
+  }
+
+  void _resetCanvasZoom() {
+    _controller.zoomTo(1.0);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _canvasZoomLevel = 1.0;
+    });
   }
 
   Future<void> _onWorkspaceSelected(String? workspaceId) async {
@@ -807,37 +828,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                   curve: Curves.easeOutCubic,
                                   top: 12,
                                   right: toggleRight,
-                                  child: Card(
-                                    margin: EdgeInsets.zero,
-                                    elevation: 4,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    child: Tooltip(
-                                      message: _isRightOverlaySidebarOpen
-                                          ? 'Hide panel'
-                                          : 'Show panel',
-                                      child: IconButton(
-                                        key: const Key('right-sidebar-toggle'),
-                                        onPressed: _toggleRightOverlaySidebar,
-                                        icon: Icon(
-                                          _isRightOverlaySidebarOpen
-                                              ? Icons.chevron_right
-                                              : Icons.chevron_left,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                AnimatedPositioned(
-                                  duration: const Duration(milliseconds: 220),
-                                  curve: Curves.easeOutCubic,
-                                  top: 62,
-                                  right: toggleRight,
-                                  child: _CanvasZoomControls(
-                                    onZoomIn: () => _controller.zoomBy(0.1),
-                                    onZoomOut: () => _controller.zoomBy(-0.1),
-                                    onReset: () => _controller.zoomTo(1.0),
+                                  child: _CanvasControlGroup(
+                                    panelOpen: _isRightOverlaySidebarOpen,
+                                    onTogglePanel: _toggleRightOverlaySidebar,
+                                    onZoomIn: () => _zoomCanvasBy(0.1),
+                                    onZoomOut: () => _zoomCanvasBy(-0.1),
+                                    onResetZoom: _resetCanvasZoom,
+                                    zoomPercent: (_canvasZoomLevel * 100)
+                                        .round(),
                                   ),
                                 ),
                                 if (_isLoadingFlow)
@@ -5136,22 +5134,28 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-class _CanvasZoomControls extends StatelessWidget {
-  const _CanvasZoomControls({
+class _CanvasControlGroup extends StatelessWidget {
+  const _CanvasControlGroup({
+    required this.panelOpen,
+    required this.onTogglePanel,
     required this.onZoomIn,
     required this.onZoomOut,
-    required this.onReset,
+    required this.onResetZoom,
+    required this.zoomPercent,
   });
 
+  final bool panelOpen;
+  final VoidCallback onTogglePanel;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
-  final VoidCallback onReset;
+  final VoidCallback onResetZoom;
+  final int zoomPercent;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Card(
-      key: const Key('canvas-zoom-toolbar'),
+      key: const Key('canvas-control-group'),
       margin: EdgeInsets.zero,
       elevation: 3,
       color: scheme.surface,
@@ -5161,6 +5165,28 @@ class _CanvasZoomControls extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Tooltip(
+              message: panelOpen ? 'Hide panel' : 'Show panel',
+              child: IconButton(
+                key: const Key('right-sidebar-toggle'),
+                tooltip: null,
+                onPressed: onTogglePanel,
+                icon: Icon(
+                  panelOpen ? Icons.chevron_right : Icons.chevron_left,
+                ),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
+                ),
+              ),
+            ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.7),
+            ),
             Tooltip(
               key: const Key('canvas-zoom-in-tooltip'),
               message: 'Zoom in',
@@ -5203,13 +5229,31 @@ class _CanvasZoomControls extends StatelessWidget {
               thickness: 1,
               color: scheme.outlineVariant.withValues(alpha: 0.7),
             ),
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: Text(
+                  key: const Key('canvas-zoom-percent-label'),
+                  '$zoomPercent%',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.7),
+            ),
             Tooltip(
               key: const Key('canvas-zoom-reset-tooltip'),
               message: 'Reset zoom',
               child: IconButton(
                 key: const Key('canvas-zoom-reset-button'),
                 tooltip: null,
-                onPressed: onReset,
+                onPressed: onResetZoom,
                 icon: const Icon(Icons.center_focus_strong_outlined),
                 iconSize: 20,
                 visualDensity: VisualDensity.compact,

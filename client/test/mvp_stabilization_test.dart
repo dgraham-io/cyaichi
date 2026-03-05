@@ -118,8 +118,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final runButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Run'),
+    final runButton = tester.widget<IconButton>(
+      find.byKey(const Key('canvas-run-button')),
     );
     expect(runButton.onPressed, isNull);
   });

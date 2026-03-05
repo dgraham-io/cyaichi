@@ -1,5 +1,6 @@
 import 'package:client/src/app.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,9 +22,9 @@ void main() {
 
     expect(find.text('Run blocked'), findsNothing);
 
-    final runButton = find.widgetWithText(FilledButton, 'Run');
-    await tester.ensureVisible(runButton);
-    await tester.tap(runButton);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pumpAndSettle();
 
     expect(find.text('Run blocked'), findsOneWidget);

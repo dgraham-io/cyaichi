@@ -368,7 +368,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final runGuard = _computeRunGuard();
     final hasSelectedWorkspace = _selectedWorkspaceId != null;
     return Scaffold(
       appBar: AppBar(
@@ -451,23 +450,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ),
           const SizedBox(width: 8),
         ],
-        bottom: _selectedTabIndex == 0
-            ? PreferredSize(
-                preferredSize: const Size.fromHeight(74),
-                child: _TopControlsBar(
-                  isSavingToServer: _isSavingToServer,
-                  isRunning: _isRunning,
-                  onValidateFlow: _validateFlow,
-                  onRun: _runFlow,
-                  onRunBlockedAttempt: _onRunBlockedAttempt,
-                  onCancelRun: _cancelRunWait,
-                  runEnabled: runGuard.canRun && !_isRunning,
-                  runDisabledHint: runGuard.blockers.isEmpty
-                      ? null
-                      : runGuard.blockers.first,
-                ),
-              )
-            : null,
       ),
       body: IndexedStack(
         index: _selectedTabIndex,
@@ -528,276 +510,353 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         : _controller.getConnection(_selectedConnectionId!);
     final canvasTheme = NodeFlowTheme.dark;
 
-    return Focus(
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            (event.logicalKey == LogicalKeyboardKey.delete ||
-                event.logicalKey == LogicalKeyboardKey.backspace)) {
-          _deleteSelected();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
+    final runEnabled = hasWorkspaceSelected && runGuard.canRun && !_isRunning;
+    final runTooltip = _isRunning
+        ? 'Run (in progress)'
+        : !hasWorkspaceSelected
+        ? 'Run (select a workspace)'
+        : runEnabled
+        ? 'Run'
+        : 'Run (fix validation errors)';
+
+    return Shortcuts(
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.enter, control: true):
+            _RunFlowIntent(),
+        SingleActivator(LogicalKeyboardKey.enter, meta: true): _RunFlowIntent(),
+        SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true):
+            _ValidateFlowIntent(),
+        SingleActivator(LogicalKeyboardKey.keyV, meta: true, shift: true):
+            _ValidateFlowIntent(),
       },
-      child: Stack(
-        children: [
-          AbsorbPointer(
-            absorbing: !hasWorkspaceSelected,
-            child: Row(
-              children: [
-                DecoratedBox(
-                  decoration: const BoxDecoration(color: CyaichiTheme.surface),
-                  child: _PalettePanel(
-                    nodeTypes: _nodeTypeRegistry.all,
-                    onAddNode: _addNode,
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          CyaichiTheme.background,
-                          CyaichiTheme.surface,
-                          CyaichiTheme.outline.withValues(alpha: 0.45),
-                        ],
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _RunFlowIntent: CallbackAction<_RunFlowIntent>(
+            onInvoke: (_) {
+              final shortcutGuard = _computeRunGuard(forRunAttempt: true);
+              if (_isRunning) {
+                return null;
+              }
+              if (_selectedWorkspaceId != null && shortcutGuard.canRun) {
+                unawaited(_runFlow());
+              } else {
+                _onRunBlockedAttempt();
+              }
+              return null;
+            },
+          ),
+          _ValidateFlowIntent: CallbackAction<_ValidateFlowIntent>(
+            onInvoke: (_) {
+              unawaited(_validateFlow());
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent &&
+                (event.logicalKey == LogicalKeyboardKey.delete ||
+                    event.logicalKey == LogicalKeyboardKey.backspace)) {
+              _deleteSelected();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Stack(
+            children: [
+              AbsorbPointer(
+                absorbing: !hasWorkspaceSelected,
+                child: Row(
+                  children: [
+                    DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: CyaichiTheme.surface,
+                      ),
+                      child: _PalettePanel(
+                        nodeTypes: _nodeTypeRegistry.all,
+                        onAddNode: _addNode,
                       ),
                     ),
-                    child: Stack(
-                      children: [
-                        NodeFlowEditor<Map<String, dynamic>, dynamic>(
-                          controller: _controller,
-                          theme: canvasTheme,
-                          nodeBuilder: _buildNodeCard,
-                          behavior: NodeFlowBehavior.design,
-                          events: NodeFlowEvents<Map<String, dynamic>, dynamic>(
-                            node: NodeEvents(
-                              onSelected: (node) {
-                                setState(() {
-                                  _selectedNodeId = node?.id;
-                                });
-                              },
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              CyaichiTheme.background,
+                              CyaichiTheme.surface,
+                              CyaichiTheme.outline.withValues(alpha: 0.45),
+                            ],
+                          ),
+                        ),
+                        child: Stack(
+                          children: [
+                            NodeFlowEditor<Map<String, dynamic>, dynamic>(
+                              controller: _controller,
+                              theme: canvasTheme,
+                              nodeBuilder: _buildNodeCard,
+                              behavior: NodeFlowBehavior.design,
+                              events:
+                                  NodeFlowEvents<Map<String, dynamic>, dynamic>(
+                                    node: NodeEvents(
+                                      onSelected: (node) {
+                                        setState(() {
+                                          _selectedNodeId = node?.id;
+                                        });
+                                      },
+                                    ),
+                                    connection:
+                                        ConnectionEvents<
+                                          Map<String, dynamic>,
+                                          dynamic
+                                        >(
+                                          onBeforeComplete:
+                                              _validateConnectionBeforeComplete,
+                                          onCreated: (_) {
+                                            _markFlowDirty();
+                                          },
+                                          onDeleted: (_) {
+                                            _markFlowDirty();
+                                          },
+                                          onSelected: (connection) {
+                                            setState(() {
+                                              _selectedConnectionId =
+                                                  connection?.id;
+                                            });
+                                          },
+                                          onConnectEnd: (_, __, ___) {
+                                            final reason =
+                                                _connectionRejectReason;
+                                            if (reason != null && mounted) {
+                                              _showSnack(reason);
+                                              _connectionRejectReason = null;
+                                            }
+                                          },
+                                        ),
+                                    onSelectionChange: (selection) {
+                                      setState(() {
+                                        _selectedNodeId =
+                                            selection.nodes.isEmpty
+                                            ? null
+                                            : selection.nodes.first.id;
+                                        _selectedConnectionId =
+                                            selection.connections.isEmpty
+                                            ? null
+                                            : selection.connections.first.id;
+                                      });
+                                    },
+                                  ),
                             ),
-                            connection:
-                                ConnectionEvents<Map<String, dynamic>, dynamic>(
-                                  onBeforeComplete:
-                                      _validateConnectionBeforeComplete,
-                                  onCreated: (_) {
-                                    _markFlowDirty();
+                            Positioned(
+                              left: 12,
+                              top: 12,
+                              child: _FlowTitleOverlay(
+                                title: _flowTitleController.text,
+                                isEditing: _isEditingFlowTitle,
+                                draftTitle: _flowTitleDraft,
+                                canUpdate:
+                                    !_isSavingToServer &&
+                                    _selectedWorkspaceId != null &&
+                                    _isFlowDirty,
+                                canDuplicate: !_isSavingToServer,
+                                canSetHead:
+                                    !_isSavingToServer &&
+                                    _selectedWorkspaceId != null,
+                                onBeginEdit: _beginFlowTitleEdit,
+                                onDraftChanged: (value) {
+                                  setState(() {
+                                    _flowTitleDraft = value;
+                                  });
+                                },
+                                onSave: _saveFlowTitleEdit,
+                                onCancel: _cancelFlowTitleEdit,
+                                onUpdate: () {
+                                  unawaited(_saveNewFlowVersionToServer());
+                                },
+                                onDuplicate: () {
+                                  unawaited(_duplicateCurrentFlow());
+                                },
+                                onSetHead: () {
+                                  unawaited(_setCurrentFlowAsHead());
+                                },
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.topCenter,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: _CanvasFloatingToolbar(
+                                  validateEnabled: !_isSavingToServer,
+                                  runEnabled: runEnabled,
+                                  isRunning: _isRunning,
+                                  runTooltip: runTooltip,
+                                  onValidate: () {
+                                    unawaited(_validateFlow());
                                   },
-                                  onDeleted: (_) {
-                                    _markFlowDirty();
+                                  onRun: () {
+                                    unawaited(_runFlow());
                                   },
-                                  onSelected: (connection) {
-                                    setState(() {
-                                      _selectedConnectionId = connection?.id;
-                                    });
-                                  },
-                                  onConnectEnd: (_, __, ___) {
-                                    final reason = _connectionRejectReason;
-                                    if (reason != null && mounted) {
-                                      _showSnack(reason);
-                                      _connectionRejectReason = null;
-                                    }
-                                  },
-                                ),
-                            onSelectionChange: (selection) {
-                              setState(() {
-                                _selectedNodeId = selection.nodes.isEmpty
-                                    ? null
-                                    : selection.nodes.first.id;
-                                _selectedConnectionId =
-                                    selection.connections.isEmpty
-                                    ? null
-                                    : selection.connections.first.id;
-                              });
-                            },
-                          ),
-                        ),
-                        Positioned(
-                          left: 12,
-                          top: 12,
-                          child: _FlowTitleOverlay(
-                            title: _flowTitleController.text,
-                            isEditing: _isEditingFlowTitle,
-                            draftTitle: _flowTitleDraft,
-                            canUpdate:
-                                !_isSavingToServer &&
-                                _selectedWorkspaceId != null &&
-                                _isFlowDirty,
-                            canDuplicate: !_isSavingToServer,
-                            canSetHead:
-                                !_isSavingToServer &&
-                                _selectedWorkspaceId != null,
-                            onBeginEdit: _beginFlowTitleEdit,
-                            onDraftChanged: (value) {
-                              setState(() {
-                                _flowTitleDraft = value;
-                              });
-                            },
-                            onSave: _saveFlowTitleEdit,
-                            onCancel: _cancelFlowTitleEdit,
-                            onUpdate: () {
-                              unawaited(_saveNewFlowVersionToServer());
-                            },
-                            onDuplicate: () {
-                              unawaited(_duplicateCurrentFlow());
-                            },
-                            onSetHead: () {
-                              unawaited(_setCurrentFlowAsHead());
-                            },
-                          ),
-                        ),
-                        Positioned(
-                          left: 12,
-                          bottom: 12,
-                          child: _CanvasZoomControls(
-                            onZoomIn: () => _controller.zoomBy(0.1),
-                            onZoomOut: () => _controller.zoomBy(-0.1),
-                            onReset: () => _controller.zoomTo(1.0),
-                            onFit: _controller.fitToView,
-                          ),
-                        ),
-                        if (_isLoadingFlow)
-                          Positioned.fill(
-                            child: ColoredBox(
-                              color: Colors.black.withValues(alpha: 0.28),
-                              child: Center(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.outlineVariant,
-                                    ),
-                                  ),
-                                  child: const Padding(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
-                                    ),
-                                    child: Text('Loading flow...'),
-                                  ),
+                                  onRunBlockedAttempt: _onRunBlockedAttempt,
                                 ),
                               ),
                             ),
-                          ),
-                      ],
+                            Positioned(
+                              left: 12,
+                              bottom: 12,
+                              child: _CanvasZoomControls(
+                                onZoomIn: () => _controller.zoomBy(0.1),
+                                onZoomOut: () => _controller.zoomBy(-0.1),
+                                onReset: () => _controller.zoomTo(1.0),
+                                onFit: _controller.fitToView,
+                              ),
+                            ),
+                            if (_isLoadingFlow)
+                              Positioned.fill(
+                                child: ColoredBox(
+                                  color: Colors.black.withValues(alpha: 0.28),
+                                  child: Center(
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.surface,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.outlineVariant,
+                                        ),
+                                      ),
+                                      child: const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 10,
+                                        ),
+                                        child: Text('Loading flow...'),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
+                    const VerticalDivider(width: 1),
+                    SizedBox(
+                      width: 380,
+                      child: DecoratedBox(
+                        decoration: const BoxDecoration(
+                          color: CyaichiTheme.surface,
+                        ),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: _InspectorPanel(
+                                selectedNode: selectedNode,
+                                selectedConnection: selectedConnection,
+                                isPrimaryWriteNode:
+                                    selectedNode != null &&
+                                    selectedNode.type == 'file.write' &&
+                                    _isPrimaryWriteNode(selectedNode.id),
+                                nodeType: selectedNode == null
+                                    ? null
+                                    : _nodeTypeRegistry.byType(
+                                        selectedNode.type,
+                                      ),
+                                onTitleChanged: (value) =>
+                                    _updateNodeTitle(selectedNode, value),
+                                onConfigChanged: (key, value) =>
+                                    _updateNodeConfig(selectedNode, key, value),
+                                onDeleteNode: _deleteSelectedNode,
+                                onDeleteConnection: _deleteSelectedConnection,
+                                onSetPrimaryOutput: selectedNode == null
+                                    ? null
+                                    : () => _setPrimaryOutputNode(
+                                        selectedNode.id,
+                                      ),
+                              ),
+                            ),
+                            const Divider(height: 1),
+                            _RunPanel(
+                              inputFileController: _inputFileController,
+                              outputFileController: _outputFileController,
+                              inputFileHint: _defaultRunInputFile,
+                              outputFileHint: _defaultRunOutputFile,
+                              status: _lastRunStatus,
+                              blockers: runGuard.blockers,
+                              showBlockers: _hasAttemptedRun,
+                              subtleHint:
+                                  !_hasAttemptedRun &&
+                                      runGuard.blockers.isNotEmpty
+                                  ? runGuard.blockers.first
+                                  : null,
+                              showEmptyHint: nodes.isEmpty,
+                              validationError: _runValidationError,
+                              runId: _lastRunId,
+                              runVerId: _lastRunVerId,
+                              error: _lastRunError,
+                              errorKind: _lastRunErrorKind,
+                              errorNodeId: _lastRunErrorNodeId,
+                              errorCopyText: _lastRunErrorCopyText,
+                              errorCopyJson: _lastRunErrorCopyJson,
+                              invocations: _lastRunInvocations,
+                              outputArtifactSummary: _lastOutputArtifactSummary,
+                              outputPath: _lastOutputPath,
+                              outputContent: _lastOutputContent,
+                              outputContentFull: _lastOutputContentFull,
+                              isRunning: _isRunning,
+                              duration: _lastRunDuration,
+                              retryable: _lastRunRetryable,
+                              runTimedOut: _lastRunTimedOut,
+                              onRetry: _runFlow,
+                              onCancel: _cancelRunWait,
+                              onOpenRunDetails: _openLatestRunDetailsFromPanel,
+                              onRefreshRuns: _loadRuns,
+                              onOpenOutputFileFromTimeout:
+                                  _openKnownOutputFileFromRunPanel,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const VerticalDivider(width: 1),
-                SizedBox(
-                  width: 380,
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(
-                      color: CyaichiTheme.surface,
-                    ),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: _InspectorPanel(
-                            selectedNode: selectedNode,
-                            selectedConnection: selectedConnection,
-                            isPrimaryWriteNode:
-                                selectedNode != null &&
-                                selectedNode.type == 'file.write' &&
-                                _isPrimaryWriteNode(selectedNode.id),
-                            nodeType: selectedNode == null
-                                ? null
-                                : _nodeTypeRegistry.byType(selectedNode.type),
-                            onTitleChanged: (value) =>
-                                _updateNodeTitle(selectedNode, value),
-                            onConfigChanged: (key, value) =>
-                                _updateNodeConfig(selectedNode, key, value),
-                            onDeleteNode: _deleteSelectedNode,
-                            onDeleteConnection: _deleteSelectedConnection,
-                            onSetPrimaryOutput: selectedNode == null
-                                ? null
-                                : () => _setPrimaryOutputNode(selectedNode.id),
+              ),
+              if (!hasWorkspaceSelected)
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: 0.24),
+                    child: Center(
+                      child: Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'No workspace selected',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 10),
+                              FilledButton.icon(
+                                onPressed: _showSelectWorkspaceDialog,
+                                icon: const Icon(Icons.workspaces_outlined),
+                                label: const Text('Select workspace'),
+                              ),
+                            ],
                           ),
                         ),
-                        const Divider(height: 1),
-                        _RunPanel(
-                          inputFileController: _inputFileController,
-                          outputFileController: _outputFileController,
-                          inputFileHint: _defaultRunInputFile,
-                          outputFileHint: _defaultRunOutputFile,
-                          status: _lastRunStatus,
-                          blockers: runGuard.blockers,
-                          showBlockers: _hasAttemptedRun,
-                          subtleHint:
-                              !_hasAttemptedRun && runGuard.blockers.isNotEmpty
-                              ? runGuard.blockers.first
-                              : null,
-                          showEmptyHint: nodes.isEmpty,
-                          validationError: _runValidationError,
-                          runId: _lastRunId,
-                          runVerId: _lastRunVerId,
-                          error: _lastRunError,
-                          errorKind: _lastRunErrorKind,
-                          errorNodeId: _lastRunErrorNodeId,
-                          errorCopyText: _lastRunErrorCopyText,
-                          errorCopyJson: _lastRunErrorCopyJson,
-                          invocations: _lastRunInvocations,
-                          outputArtifactSummary: _lastOutputArtifactSummary,
-                          outputPath: _lastOutputPath,
-                          outputContent: _lastOutputContent,
-                          outputContentFull: _lastOutputContentFull,
-                          isRunning: _isRunning,
-                          duration: _lastRunDuration,
-                          retryable: _lastRunRetryable,
-                          runTimedOut: _lastRunTimedOut,
-                          onRetry: _runFlow,
-                          onCancel: _cancelRunWait,
-                          onOpenRunDetails: _openLatestRunDetailsFromPanel,
-                          onRefreshRuns: _loadRuns,
-                          onOpenOutputFileFromTimeout:
-                              _openKnownOutputFileFromRunPanel,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (!hasWorkspaceSelected)
-            Positioned.fill(
-              child: ColoredBox(
-                color: Colors.black.withValues(alpha: 0.24),
-                child: Center(
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'No workspace selected',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 10),
-                          FilledButton.icon(
-                            onPressed: _showSelectWorkspaceDialog,
-                            icon: const Icon(Icons.workspaces_outlined),
-                            label: const Text('Select workspace'),
-                          ),
-                        ],
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3943,6 +4002,14 @@ enum _UnsavedFlowDecision { discard, cancel, save }
 
 enum _WorkspaceMenuAction { rename, select, create, delete }
 
+class _RunFlowIntent extends Intent {
+  const _RunFlowIntent();
+}
+
+class _ValidateFlowIntent extends Intent {
+  const _ValidateFlowIntent();
+}
+
 class _FlowTitleOverlay extends StatelessWidget {
   const _FlowTitleOverlay({
     required this.title,
@@ -4118,78 +4185,91 @@ class _FlowTitleOverlay extends StatelessWidget {
   }
 }
 
-class _TopControlsBar extends StatelessWidget {
-  const _TopControlsBar({
-    required this.isSavingToServer,
+class _CanvasFloatingToolbar extends StatelessWidget {
+  const _CanvasFloatingToolbar({
+    required this.validateEnabled,
+    required this.runEnabled,
     required this.isRunning,
-    required this.onValidateFlow,
+    required this.runTooltip,
+    required this.onValidate,
     required this.onRun,
     required this.onRunBlockedAttempt,
-    required this.onCancelRun,
-    required this.runEnabled,
-    required this.runDisabledHint,
   });
 
-  final bool isSavingToServer;
-  final bool isRunning;
-  final Future<void> Function() onValidateFlow;
-  final Future<void> Function() onRun;
-  final VoidCallback onRunBlockedAttempt;
-  final VoidCallback onCancelRun;
+  final bool validateEnabled;
   final bool runEnabled;
-  final String? runDisabledHint;
+  final bool isRunning;
+  final String runTooltip;
+  final VoidCallback onValidate;
+  final VoidCallback onRun;
+  final VoidCallback onRunBlockedAttempt;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                FilledButton.icon(
-                  onPressed: isSavingToServer ? null : onValidateFlow,
-                  icon: const Icon(Icons.rule),
-                  label: const Text('Validate Flow'),
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      key: const Key('canvas-floating-toolbar'),
+      margin: EdgeInsets.zero,
+      elevation: 3,
+      color: scheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Tooltip(
+              key: const Key('canvas-validate-tooltip'),
+              message: 'Validate',
+              child: IconButton(
+                key: const Key('canvas-validate-button'),
+                tooltip: null,
+                onPressed: validateEnabled ? onValidate : null,
+                icon: const Icon(Icons.fact_check_outlined),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
                 ),
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: runEnabled
-                      ? 'Run flow'
-                      : (runDisabledHint == null
-                            ? 'Run unavailable'
-                            : 'Run unavailable: $runDisabledHint'),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: runEnabled ? null : onRunBlockedAttempt,
-                    child: FilledButton.icon(
-                      onPressed: runEnabled ? onRun : null,
-                      icon: isRunning
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.play_arrow),
-                      label: const Text('Run'),
-                    ),
-                  ),
-                ),
-                if (isRunning) ...[
-                  const SizedBox(width: 8),
-                  FilledButton.tonalIcon(
-                    onPressed: onCancelRun,
-                    icon: const Icon(Icons.cancel),
-                    label: const Text('Cancel'),
-                  ),
-                ],
-              ],
+              ),
             ),
-          ),
-        ],
+            SizedBox(
+              height: 24,
+              child: VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.8),
+              ),
+            ),
+            Tooltip(
+              key: const Key('canvas-run-tooltip'),
+              message: runTooltip,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: !runEnabled && !isRunning ? onRunBlockedAttempt : null,
+                child: IconButton(
+                  key: const Key('canvas-run-button'),
+                  tooltip: null,
+                  onPressed: runEnabled ? onRun : null,
+                  icon: isRunning
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.play_arrow_rounded),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

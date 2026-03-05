@@ -114,7 +114,7 @@ void main() {
 
       expect(find.textContaining('output_file is required'), findsNothing);
 
-      final runButton = find.widgetWithText(FilledButton, 'Run');
+      final runButton = find.byKey(const Key('canvas-run-button'));
       await tester.ensureVisible(runButton);
       await tester.tap(runButton);
       await tester.pumpAndSettle();

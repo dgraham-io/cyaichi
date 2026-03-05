@@ -150,4 +150,69 @@ void main() {
     );
     expect(updateItem.onPressed, isNull);
   });
+
+  testWidgets('floating toolbar renders with validate/run and tooltips', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _FlowTitleTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('canvas-floating-toolbar')), findsOneWidget);
+    expect(find.byKey(const Key('canvas-validate-button')), findsOneWidget);
+    expect(find.byKey(const Key('canvas-run-button')), findsOneWidget);
+
+    final validateTooltip = tester.widget<Tooltip>(
+      find.byKey(const Key('canvas-validate-tooltip')),
+    );
+    expect(validateTooltip.message, 'Validate');
+
+    final runTooltip = tester.widget<Tooltip>(
+      find.byKey(const Key('canvas-run-tooltip')),
+    );
+    expect(runTooltip.message, startsWith('Run'));
+  });
+
+  testWidgets('floating toolbar run is disabled with no workspace selected', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _FlowTitleTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final runButton = tester.widget<IconButton>(
+      find.byKey(const Key('canvas-run-button')),
+    );
+    expect(runButton.onPressed, isNull);
+
+    final runTooltip = tester.widget<Tooltip>(
+      find.byKey(const Key('canvas-run-tooltip')),
+    );
+    expect(runTooltip.message, 'Run (select a workspace)');
+  });
 }

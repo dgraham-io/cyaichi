@@ -96,8 +96,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   int _nodeCounter = 1;
   bool _isFlowDirty = false;
   bool _hasAttemptedRun = false;
-  bool _isEditingFlowTitle = false;
-  String _flowTitleDraft = '';
 
   bool _isCreatingWorkspace = false;
   bool _isSavingToServer = false;
@@ -656,8 +654,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                               top: 12,
                               child: _FlowTitleOverlay(
                                 title: _flowTitleController.text,
-                                isEditing: _isEditingFlowTitle,
-                                draftTitle: _flowTitleDraft,
                                 canUpdate:
                                     !_isSavingToServer &&
                                     _selectedWorkspaceId != null &&
@@ -666,14 +662,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                 canSetHead:
                                     !_isSavingToServer &&
                                     _selectedWorkspaceId != null,
-                                onBeginEdit: _beginFlowTitleEdit,
-                                onDraftChanged: (value) {
-                                  setState(() {
-                                    _flowTitleDraft = value;
-                                  });
-                                },
-                                onSave: _saveFlowTitleEdit,
-                                onCancel: _cancelFlowTitleEdit,
+                                onRename: _showRenameFlowDialog,
                                 onUpdate: () {
                                   unawaited(_saveNewFlowVersionToServer());
                                 },
@@ -1966,38 +1955,53 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     });
   }
 
-  void _beginFlowTitleEdit() {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _flowTitleDraft = _flowTitleController.text;
-      _isEditingFlowTitle = true;
-    });
-  }
+  Future<void> _showRenameFlowDialog() async {
+    var draftTitle = _flowTitleController.text;
+    final nextTitle = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Rename flow'),
+          content: TextFormField(
+            autofocus: true,
+            initialValue: draftTitle,
+            onChanged: (value) {
+              draftTitle = value;
+            },
+            decoration: const InputDecoration(
+              labelText: 'Flow title',
+              border: OutlineInputBorder(),
+            ),
+            onFieldSubmitted: (_) =>
+                Navigator.of(dialogContext).pop(draftTitle.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(draftTitle.trim()),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
 
-  void _cancelFlowTitleEdit() {
-    if (!mounted) {
+    if (nextTitle == null) {
       return;
     }
-    setState(() {
-      _isEditingFlowTitle = false;
-      _flowTitleDraft = _flowTitleController.text;
-    });
-  }
-
-  void _saveFlowTitleEdit() {
-    final next = _flowTitleDraft;
-    final current = _flowTitleController.text;
-    if (next != current) {
-      _flowTitleController.text = next;
-      _markFlowDirty();
+    if (nextTitle == _flowTitleController.text) {
+      return;
     }
     if (!mounted) {
       return;
     }
     setState(() {
-      _isEditingFlowTitle = false;
+      _flowTitleController.text = nextTitle;
+      _isFlowDirty = true;
     });
   }
 
@@ -4014,30 +4018,20 @@ class _ValidateFlowIntent extends Intent {
 class _FlowTitleOverlay extends StatelessWidget {
   const _FlowTitleOverlay({
     required this.title,
-    required this.isEditing,
-    required this.draftTitle,
     required this.canUpdate,
     required this.canDuplicate,
     required this.canSetHead,
-    required this.onBeginEdit,
-    required this.onDraftChanged,
-    required this.onSave,
-    required this.onCancel,
+    required this.onRename,
     required this.onUpdate,
     required this.onDuplicate,
     required this.onSetHead,
   });
 
   final String title;
-  final bool isEditing;
-  final String draftTitle;
   final bool canUpdate;
   final bool canDuplicate;
   final bool canSetHead;
-  final VoidCallback onBeginEdit;
-  final ValueChanged<String> onDraftChanged;
-  final VoidCallback onSave;
-  final VoidCallback onCancel;
+  final VoidCallback onRename;
   final VoidCallback onUpdate;
   final VoidCallback onDuplicate;
   final VoidCallback onSetHead;
@@ -4045,86 +4039,37 @@ class _FlowTitleOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final displayTitle = title.trim().isEmpty ? '(untitled flow)' : title;
-    return Material(
+    return Card(
       key: const Key('flow-title-overlay'),
+      margin: EdgeInsets.zero,
       elevation: 3,
-      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.93),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: Theme.of(context).colorScheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Flexible(
-                child: isEditing
-                    ? Focus(
-                        onKeyEvent: (_, event) {
-                          if (event is KeyDownEvent &&
-                              event.logicalKey == LogicalKeyboardKey.escape) {
-                            onCancel();
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: TextFormField(
-                                key: const Key('flow-title-editor'),
-                                autofocus: true,
-                                initialValue: draftTitle,
-                                onChanged: onDraftChanged,
-                                onFieldSubmitted: (_) => onSave(),
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  hintText: 'Flow title',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              key: const Key('flow-title-save'),
-                              tooltip: 'Save title',
-                              onPressed: onSave,
-                              icon: const Icon(Icons.check),
-                            ),
-                            IconButton(
-                              key: const Key('flow-title-cancel'),
-                              tooltip: 'Cancel title edit',
-                              onPressed: onCancel,
-                              icon: const Icon(Icons.close),
-                            ),
-                          ],
-                        ),
-                      )
-                    : InkWell(
-                        key: const Key('flow-title-display'),
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: onBeginEdit,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                displayTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleSmall,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.edit, size: 18),
-                          ],
-                        ),
-                      ),
+                child: Text(
+                  key: const Key('flow-title-display'),
+                  displayTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               MenuAnchor(
                 menuChildren: [
+                  MenuItemButton(
+                    key: const Key('flow-title-edit-menu-rename'),
+                    leadingIcon: const Icon(Icons.drive_file_rename_outline),
+                    onPressed: onRename,
+                    child: const Text('Rename flow'),
+                  ),
                   MenuItemButton(
                     key: const Key('flow-title-edit-menu-update'),
                     leadingIcon: const Icon(Icons.system_update_alt),
@@ -4155,9 +4100,10 @@ class _FlowTitleOverlay extends StatelessWidget {
                 ],
                 builder: (context, controller, child) {
                   return Tooltip(
-                    message: 'Flow edit actions',
-                    child: FilledButton.tonalIcon(
-                      key: const Key('flow-title-edit-menu-button'),
+                    message: 'Flow actions',
+                    child: IconButton(
+                      key: const Key('flow-title-actions-button'),
+                      tooltip: null,
                       onPressed: () {
                         if (controller.isOpen) {
                           controller.close();
@@ -4165,15 +4111,13 @@ class _FlowTitleOverlay extends StatelessWidget {
                         }
                         controller.open();
                       },
-                      style: FilledButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
+                      icon: const Icon(Icons.more_vert),
+                      iconSize: 20,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
                       ),
-                      icon: const Icon(Icons.edit_outlined, size: 18),
-                      label: const Text('Edit'),
                     ),
                   );
                 },

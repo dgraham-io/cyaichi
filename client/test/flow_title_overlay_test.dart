@@ -67,7 +67,7 @@ void main() {
     });
   });
 
-  testWidgets('flow title overlay renders and editing marks flow dirty', (
+  testWidgets('rename flow action updates title and marks flow dirty', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -88,27 +88,63 @@ void main() {
 
     expect(find.byKey(const Key('flow-title-overlay')), findsOneWidget);
     expect(find.byKey(const Key('flow-title-display')), findsOneWidget);
-    expect(
-      find.byKey(const Key('flow-title-edit-menu-button')),
-      findsOneWidget,
-    );
+    expect(find.byIcon(Icons.more_vert), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
     expect(find.text('My Flow'), findsOneWidget);
     expect(find.textContaining('•'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('flow-title-display')));
+    await tester.tap(find.byKey(const Key('flow-title-actions-button')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('flow-title-editor')), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('flow-title-editor')),
-      'Renamed Flow',
+    expect(
+      find.byKey(const Key('flow-title-edit-menu-rename')),
+      findsOneWidget,
     );
-    await tester.tap(find.byKey(const Key('flow-title-save')));
+    await tester.tap(find.byKey(const Key('flow-title-edit-menu-rename')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Rename flow'), findsOneWidget);
+    final renameField = find.byType(TextFormField);
+    expect(renameField, findsOneWidget);
+    await tester.enterText(renameField, 'Renamed Flow');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
     expect(find.text('Renamed Flow'), findsOneWidget);
     expect(find.textContaining('•'), findsOneWidget);
   });
+
+  testWidgets(
+    'flow title overlay has one actions icon and menu includes Rename flow',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1600, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlowCanvasScreen(
+            apiClientFactory:
+                ({
+                  required String baseUrl,
+                  required int runRequestTimeoutSeconds,
+                }) => _FlowTitleTestApiClient(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.more_vert), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('flow-title-actions-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('flow-title-edit-menu-rename')),
+        findsOneWidget,
+      );
+      expect(find.text('Rename flow'), findsOneWidget);
+    },
+  );
 
   testWidgets('edit menu shows update, duplicate, and set head actions', (
     WidgetTester tester,
@@ -129,7 +165,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('flow-title-edit-menu-button')));
+    await tester.tap(find.byKey(const Key('flow-title-actions-button')));
     await tester.pumpAndSettle();
 
     expect(

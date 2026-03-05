@@ -5162,111 +5162,115 @@ class _CanvasControlGroup extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Tooltip(
-              message: panelOpen ? 'Hide panel' : 'Show panel',
-              child: IconButton(
-                key: const Key('right-sidebar-toggle'),
-                tooltip: null,
-                onPressed: onTogglePanel,
-                icon: Icon(
-                  panelOpen ? Icons.chevron_right : Icons.chevron_left,
-                ),
-                iconSize: 20,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              child: Divider(
-                height: 8,
-                thickness: 1,
-                color: scheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ),
-            Tooltip(
-              key: const Key('canvas-zoom-in-tooltip'),
-              message: 'Zoom in',
-              child: IconButton(
-                key: const Key('canvas-zoom-in-button'),
-                tooltip: null,
-                onPressed: onZoomIn,
-                icon: const Icon(Icons.add),
-                iconSize: 20,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
-                ),
-              ),
-            ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: scheme.outlineVariant.withValues(alpha: 0.7),
-            ),
-            Tooltip(
-              key: const Key('canvas-zoom-out-tooltip'),
-              message: 'Zoom out',
-              child: IconButton(
-                key: const Key('canvas-zoom-out-button'),
-                tooltip: null,
-                onPressed: onZoomOut,
-                icon: const Icon(Icons.remove),
-                iconSize: 20,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
-                ),
-              ),
-            ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: scheme.outlineVariant.withValues(alpha: 0.7),
-            ),
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: Center(
-                child: Text(
-                  key: const Key('canvas-zoom-percent-label'),
-                  '$zoomPercent%',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
+        child: SizedBox(
+          width: 52,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: panelOpen ? 'Hide panel' : 'Show panel',
+                child: IconButton(
+                  key: const Key('right-sidebar-toggle'),
+                  tooltip: null,
+                  onPressed: onTogglePanel,
+                  icon: Icon(
+                    panelOpen ? Icons.chevron_right : Icons.chevron_left,
+                  ),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
                   ),
                 ),
               ),
-            ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: scheme.outlineVariant.withValues(alpha: 0.7),
-            ),
-            Tooltip(
-              key: const Key('canvas-zoom-reset-tooltip'),
-              message: 'Reset zoom',
-              child: IconButton(
-                key: const Key('canvas-zoom-reset-button'),
-                tooltip: null,
-                onPressed: onResetZoom,
-                icon: const Icon(Icons.center_focus_strong_outlined),
-                iconSize: 20,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 40,
-                  height: 40,
+              SizedBox(
+                width: double.infinity,
+                child: Container(
+                  key: const Key('canvas-toggle-zoom-divider'),
+                  height: 1,
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  color: scheme.outlineVariant.withValues(alpha: 0.6),
                 ),
               ),
-            ),
-          ],
+              Tooltip(
+                key: const Key('canvas-zoom-in-tooltip'),
+                message: 'Zoom in',
+                child: IconButton(
+                  key: const Key('canvas-zoom-in-button'),
+                  tooltip: null,
+                  onPressed: onZoomIn,
+                  icon: const Icon(Icons.add),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                ),
+              ),
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.7),
+              ),
+              Tooltip(
+                key: const Key('canvas-zoom-out-tooltip'),
+                message: 'Zoom out',
+                child: IconButton(
+                  key: const Key('canvas-zoom-out-button'),
+                  tooltip: null,
+                  onPressed: onZoomOut,
+                  icon: const Icon(Icons.remove),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                ),
+              ),
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.7),
+              ),
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: Center(
+                  child: Text(
+                    key: const Key('canvas-zoom-percent-label'),
+                    '$zoomPercent%',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.7),
+              ),
+              Tooltip(
+                key: const Key('canvas-zoom-reset-tooltip'),
+                message: 'Reset zoom',
+                child: IconButton(
+                  key: const Key('canvas-zoom-reset-button'),
+                  tooltip: null,
+                  onPressed: onResetZoom,
+                  icon: const Icon(Icons.center_focus_strong_outlined),
+                  iconSize: 20,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

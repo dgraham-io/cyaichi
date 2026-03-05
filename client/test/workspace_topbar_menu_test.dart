@@ -129,7 +129,7 @@ void main() {
 
     expect(find.text('No workspace'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.tap(find.byKey(const Key('workspace-actions-button')));
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.swap_horiz));
     await tester.pumpAndSettle();

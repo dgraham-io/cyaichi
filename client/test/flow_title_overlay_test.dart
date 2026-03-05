@@ -88,6 +88,10 @@ void main() {
 
     expect(find.byKey(const Key('flow-title-overlay')), findsOneWidget);
     expect(find.byKey(const Key('flow-title-display')), findsOneWidget);
+    expect(
+      find.byKey(const Key('flow-title-edit-menu-button')),
+      findsOneWidget,
+    );
     expect(find.text('My Flow'), findsOneWidget);
     expect(find.textContaining('•'), findsNothing);
 
@@ -104,5 +108,46 @@ void main() {
 
     expect(find.text('Renamed Flow'), findsOneWidget);
     expect(find.textContaining('•'), findsOneWidget);
+  });
+
+  testWidgets('edit menu shows update, duplicate, and set head actions', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _FlowTitleTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('flow-title-edit-menu-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('flow-title-edit-menu-update')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('flow-title-edit-menu-duplicate')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('flow-title-edit-menu-set-head')),
+      findsOneWidget,
+    );
+
+    final updateItem = tester.widget<MenuItemButton>(
+      find.byKey(const Key('flow-title-edit-menu-update')),
+    );
+    expect(updateItem.onPressed, isNull);
   });
 }

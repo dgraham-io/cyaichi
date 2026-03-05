@@ -455,17 +455,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(74),
                 child: _TopControlsBar(
-                  hasWorkspaceSelected: _selectedWorkspaceId != null,
                   isSavingToServer: _isSavingToServer,
                   isRunning: _isRunning,
-                  onSaveToServer: _saveNewFlowVersionToServer,
-                  onSetHead: _setCurrentFlowAsHead,
-                  onDuplicate: _duplicateCurrentFlow,
                   onValidateFlow: _validateFlow,
                   onRun: _runFlow,
                   onRunBlockedAttempt: _onRunBlockedAttempt,
                   onCancelRun: _cancelRunWait,
-                  saveEnabled: _selectedWorkspaceId != null,
                   runEnabled: runGuard.canRun && !_isRunning,
                   runDisabledHint: runGuard.blockers.isEmpty
                       ? null
@@ -629,6 +624,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             title: _flowTitleController.text,
                             isEditing: _isEditingFlowTitle,
                             draftTitle: _flowTitleDraft,
+                            canUpdate:
+                                !_isSavingToServer &&
+                                _selectedWorkspaceId != null &&
+                                _isFlowDirty,
+                            canDuplicate: !_isSavingToServer,
+                            canSetHead:
+                                !_isSavingToServer &&
+                                _selectedWorkspaceId != null,
                             onBeginEdit: _beginFlowTitleEdit,
                             onDraftChanged: (value) {
                               setState(() {
@@ -637,6 +640,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                             },
                             onSave: _saveFlowTitleEdit,
                             onCancel: _cancelFlowTitleEdit,
+                            onUpdate: () {
+                              unawaited(_saveNewFlowVersionToServer());
+                            },
+                            onDuplicate: () {
+                              unawaited(_duplicateCurrentFlow());
+                            },
+                            onSetHead: () {
+                              unawaited(_setCurrentFlowAsHead());
+                            },
                           ),
                         ),
                         Positioned(
@@ -3936,19 +3948,31 @@ class _FlowTitleOverlay extends StatelessWidget {
     required this.title,
     required this.isEditing,
     required this.draftTitle,
+    required this.canUpdate,
+    required this.canDuplicate,
+    required this.canSetHead,
     required this.onBeginEdit,
     required this.onDraftChanged,
     required this.onSave,
     required this.onCancel,
+    required this.onUpdate,
+    required this.onDuplicate,
+    required this.onSetHead,
   });
 
   final String title;
   final bool isEditing;
   final String draftTitle;
+  final bool canUpdate;
+  final bool canDuplicate;
+  final bool canSetHead;
   final VoidCallback onBeginEdit;
   final ValueChanged<String> onDraftChanged;
   final VoidCallback onSave;
   final VoidCallback onCancel;
+  final VoidCallback onUpdate;
+  final VoidCallback onDuplicate;
+  final VoidCallback onSetHead;
 
   @override
   Widget build(BuildContext context) {
@@ -3959,72 +3983,135 @@ class _FlowTitleOverlay extends StatelessWidget {
       color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.93),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 320),
+        constraints: const BoxConstraints(maxWidth: 520),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: isEditing
-              ? Focus(
-                  onKeyEvent: (_, event) {
-                    if (event is KeyDownEvent &&
-                        event.logicalKey == LogicalKeyboardKey.escape) {
-                      onCancel();
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
-                  },
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: TextFormField(
-                          key: const Key('flow-title-editor'),
-                          autofocus: true,
-                          initialValue: draftTitle,
-                          onChanged: onDraftChanged,
-                          onFieldSubmitted: (_) => onSave(),
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            hintText: 'Flow title',
-                            border: OutlineInputBorder(),
-                          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: isEditing
+                    ? Focus(
+                        onKeyEvent: (_, event) {
+                          if (event is KeyDownEvent &&
+                              event.logicalKey == LogicalKeyboardKey.escape) {
+                            onCancel();
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: TextFormField(
+                                key: const Key('flow-title-editor'),
+                                autofocus: true,
+                                initialValue: draftTitle,
+                                onChanged: onDraftChanged,
+                                onFieldSubmitted: (_) => onSave(),
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  hintText: 'Flow title',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              key: const Key('flow-title-save'),
+                              tooltip: 'Save title',
+                              onPressed: onSave,
+                              icon: const Icon(Icons.check),
+                            ),
+                            IconButton(
+                              key: const Key('flow-title-cancel'),
+                              tooltip: 'Cancel title edit',
+                              onPressed: onCancel,
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                      )
+                    : InkWell(
+                        key: const Key('flow-title-display'),
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: onBeginEdit,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                displayTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.edit, size: 18),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        key: const Key('flow-title-save'),
-                        tooltip: 'Save title',
-                        onPressed: onSave,
-                        icon: const Icon(Icons.check),
-                      ),
-                      IconButton(
-                        key: const Key('flow-title-cancel'),
-                        tooltip: 'Cancel title edit',
-                        onPressed: onCancel,
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
+              ),
+              const SizedBox(width: 8),
+              MenuAnchor(
+                menuChildren: [
+                  MenuItemButton(
+                    key: const Key('flow-title-edit-menu-update'),
+                    leadingIcon: const Icon(Icons.system_update_alt),
+                    onPressed: canUpdate ? onUpdate : null,
+                    child: const Tooltip(
+                      message: 'Save as new flow version',
+                      child: Text('Update'),
+                    ),
                   ),
-                )
-              : InkWell(
-                  key: const Key('flow-title-display'),
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: onBeginEdit,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          displayTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleSmall,
+                  MenuItemButton(
+                    key: const Key('flow-title-edit-menu-duplicate'),
+                    leadingIcon: const Icon(Icons.content_copy_outlined),
+                    onPressed: canDuplicate ? onDuplicate : null,
+                    child: const Tooltip(
+                      message: 'Duplicate this flow',
+                      child: Text('Duplicate'),
+                    ),
+                  ),
+                  MenuItemButton(
+                    key: const Key('flow-title-edit-menu-set-head'),
+                    leadingIcon: const Icon(Icons.push_pin_outlined),
+                    onPressed: canSetHead ? onSetHead : null,
+                    child: const Tooltip(
+                      message: 'Set workspace head to current flow',
+                      child: Text('Set head'),
+                    ),
+                  ),
+                ],
+                builder: (context, controller, child) {
+                  return Tooltip(
+                    message: 'Flow edit actions',
+                    child: FilledButton.tonalIcon(
+                      key: const Key('flow-title-edit-menu-button'),
+                      onPressed: () {
+                        if (controller.isOpen) {
+                          controller.close();
+                          return;
+                        }
+                        controller.open();
+                      },
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.edit, size: 18),
-                    ],
-                  ),
-                ),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Edit'),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -4033,32 +4120,22 @@ class _FlowTitleOverlay extends StatelessWidget {
 
 class _TopControlsBar extends StatelessWidget {
   const _TopControlsBar({
-    required this.hasWorkspaceSelected,
     required this.isSavingToServer,
     required this.isRunning,
-    required this.onSaveToServer,
-    required this.onSetHead,
-    required this.onDuplicate,
     required this.onValidateFlow,
     required this.onRun,
     required this.onRunBlockedAttempt,
     required this.onCancelRun,
-    required this.saveEnabled,
     required this.runEnabled,
     required this.runDisabledHint,
   });
 
-  final bool hasWorkspaceSelected;
   final bool isSavingToServer;
   final bool isRunning;
-  final Future<bool> Function() onSaveToServer;
-  final Future<void> Function() onSetHead;
-  final Future<void> Function() onDuplicate;
   final Future<void> Function() onValidateFlow;
   final Future<void> Function() onRun;
   final VoidCallback onRunBlockedAttempt;
   final VoidCallback onCancelRun;
-  final bool saveEnabled;
   final bool runEnabled;
   final String? runDisabledHint;
 
@@ -4073,37 +4150,6 @@ class _TopControlsBar extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                Tooltip(
-                  message: 'Update creates a new version (keeps history).',
-                  child: FilledButton.icon(
-                    onPressed: isSavingToServer || !saveEnabled
-                        ? null
-                        : onSaveToServer,
-                    icon: isSavingToServer
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cloud_upload),
-                    label: const Text('Update'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: isSavingToServer ? null : onDuplicate,
-                  icon: const Icon(Icons.copy_all),
-                  label: const Text('Duplicate'),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: isSavingToServer || !hasWorkspaceSelected
-                      ? null
-                      : onSetHead,
-                  icon: const Icon(Icons.push_pin),
-                  label: const Text('Set Head'),
-                ),
-                const SizedBox(width: 8),
                 FilledButton.icon(
                   onPressed: isSavingToServer ? null : onValidateFlow,
                   icon: const Icon(Icons.rule),

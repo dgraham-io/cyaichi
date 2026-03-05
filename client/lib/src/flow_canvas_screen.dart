@@ -54,6 +54,30 @@ double clampMessageDrawerHeight(double requestedHeight, double screenHeight) {
   return requestedHeight.clamp(120.0, clampedMax).toDouble();
 }
 
+@visibleForTesting
+List<AppMessage> filterDrawerMessages(List<AppMessage> messages, String query) {
+  final normalized = query.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return messages;
+  }
+  return messages
+      .where((message) {
+        final title = (message.title ?? '').toLowerCase();
+        final body = message.message.toLowerCase();
+        final level = message.level.name.toLowerCase();
+        final source = message.source.name.toLowerCase();
+        final details = message.details == null
+            ? ''
+            : jsonEncode(message.details).toLowerCase();
+        return title.contains(normalized) ||
+            body.contains(normalized) ||
+            level.contains(normalized) ||
+            source.contains(normalized) ||
+            details.contains(normalized);
+      })
+      .toList(growable: false);
+}
+
 class FlowCanvasScreen extends StatefulWidget {
   const FlowCanvasScreen({
     super.key,
@@ -5340,7 +5364,7 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-class _MessageDrawerPanel extends StatelessWidget {
+class _MessageDrawerPanel extends StatefulWidget {
   const _MessageDrawerPanel({
     required this.messages,
     required this.onClose,
@@ -5356,8 +5380,57 @@ class _MessageDrawerPanel extends StatelessWidget {
   final VoidCallback onResizeEnd;
 
   @override
+  State<_MessageDrawerPanel> createState() => _MessageDrawerPanelState();
+}
+
+class _MessageDrawerPanelState extends State<_MessageDrawerPanel> {
+  late final TextEditingController _searchController;
+  Timer? _searchDebounce;
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _searchQuery = value;
+      });
+    });
+  }
+
+  void _clearSearch() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _searchQuery = '';
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final filteredMessages = filterDrawerMessages(
+      widget.messages,
+      _searchQuery,
+    );
     return Material(
       key: const Key('message-drawer-panel'),
       elevation: 8,
@@ -5367,8 +5440,9 @@ class _MessageDrawerPanel extends StatelessWidget {
           GestureDetector(
             key: const Key('message-drawer-resize-handle'),
             behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: (details) => onResizeUpdate(details.delta.dy),
-            onVerticalDragEnd: (_) => onResizeEnd(),
+            onVerticalDragUpdate: (details) =>
+                widget.onResizeUpdate(details.delta.dy),
+            onVerticalDragEnd: (_) => widget.onResizeEnd(),
             child: SizedBox(
               height: 8,
               child: Center(
@@ -5388,15 +5462,39 @@ class _MessageDrawerPanel extends StatelessWidget {
             child: Row(
               children: [
                 Text('Messages', style: Theme.of(context).textTheme.titleSmall),
-                const Spacer(),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    key: const Key('message-drawer-search-field'),
+                    controller: _searchController,
+                    onChanged: _onSearchChanged,
+                    decoration: InputDecoration(
+                      hintText: 'Search messages…',
+                      isDense: true,
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      suffixIcon: _searchQuery.trim().isEmpty
+                          ? null
+                          : IconButton(
+                              key: const Key('message-drawer-search-clear'),
+                              tooltip: 'Clear search',
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: _clearSearch,
+                            ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 IconButton(
                   tooltip: 'Clear messages',
-                  onPressed: onClear,
+                  onPressed: widget.onClear,
                   icon: const Icon(Icons.clear_all),
                 ),
                 IconButton(
                   tooltip: 'Close drawer',
-                  onPressed: onClose,
+                  onPressed: widget.onClose,
                   icon: const Icon(Icons.close),
                 ),
               ],
@@ -5404,10 +5502,12 @@ class _MessageDrawerPanel extends StatelessWidget {
           ),
           const Divider(height: 1),
           Expanded(
-            child: messages.isEmpty
+            child: filteredMessages.isEmpty
                 ? Center(
                     child: Text(
-                      'No messages',
+                      _searchQuery.trim().isEmpty
+                          ? 'No messages'
+                          : 'No matching messages',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   )
@@ -5416,10 +5516,10 @@ class _MessageDrawerPanel extends StatelessWidget {
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    itemCount: messages.length,
+                    itemCount: filteredMessages.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
-                      final item = messages[index];
+                      final item = filteredMessages[index];
                       return _MessageDrawerItem(message: item);
                     },
                   ),

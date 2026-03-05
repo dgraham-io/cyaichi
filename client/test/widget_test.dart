@@ -319,6 +319,10 @@ void main() {
     expect(find.text('Drawer test message'), findsOneWidget);
     expect(find.text('INFO'), findsOneWidget);
     expect(
+      find.byKey(const Key('message-drawer-search-field')),
+      findsOneWidget,
+    );
+    expect(
       find.descendant(
         of: find.byKey(const Key('message-drawer-panel')),
         matching: find.byIcon(Icons.copy_outlined),
@@ -359,5 +363,27 @@ void main() {
     );
     await tester.pump();
     expect(tester.takeException(), isNull);
+
+    MessageCenter.instance.log(
+      level: AppMessageLevel.warn,
+      source: AppMessageSource.server,
+      message: 'Another warning',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Another warning'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const Key('message-drawer-search-field')),
+      'another',
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(find.text('Another warning'), findsOneWidget);
+    expect(find.text('Drawer test message'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('message-drawer-search-clear')));
+    await tester.pumpAndSettle();
+    expect(find.text('Another warning'), findsOneWidget);
+    expect(find.text('Drawer test message'), findsOneWidget);
   });
 }

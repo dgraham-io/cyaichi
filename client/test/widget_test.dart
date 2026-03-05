@@ -274,7 +274,7 @@ void main() {
     expect(widenedWidth, greaterThan(initialWidth));
   });
 
-  testWidgets('single right message indicator toggles with arrow + count', (
+  testWidgets('message drawer log row renders and copy action works', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -316,8 +316,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('message-drawer-panel')), findsOneWidget);
-    expect(find.byType(SelectableText), findsWidgets);
     expect(find.text('Drawer test message'), findsOneWidget);
+    expect(find.text('INFO'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('message-drawer-panel')),
+        matching: find.byIcon(Icons.copy_outlined),
+      ),
+      findsOneWidget,
+    );
     expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
 
     final labelText = tester.widget<Text>(find.text('Messages (0)'));
@@ -343,5 +350,14 @@ void main() {
 
     final closedSidebarPanelWidth = tester.getSize(panelFinder).width;
     expect(closedSidebarPanelWidth, greaterThan(openSidebarPanelWidth));
+
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('message-drawer-panel')),
+        matching: find.byIcon(Icons.copy_outlined),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 }

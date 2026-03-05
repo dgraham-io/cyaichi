@@ -5412,9 +5412,12 @@ class _MessageDrawerPanel extends StatelessWidget {
                     ),
                   )
                 : ListView.separated(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     itemCount: messages.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final item = messages[index];
                       return _MessageDrawerItem(message: item);
@@ -5427,108 +5430,133 @@ class _MessageDrawerPanel extends StatelessWidget {
   }
 }
 
-class _MessageDrawerItem extends StatelessWidget {
+class _MessageDrawerItem extends StatefulWidget {
   const _MessageDrawerItem({required this.message});
 
   final AppMessage message;
 
   @override
+  State<_MessageDrawerItem> createState() => _MessageDrawerItemState();
+}
+
+class _MessageDrawerItemState extends State<_MessageDrawerItem> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final message = widget.message;
     final colorScheme = Theme.of(context).colorScheme;
-    final levelColor = switch (message.level) {
-      AppMessageLevel.error => colorScheme.error,
-      AppMessageLevel.warn => Colors.orange,
-      AppMessageLevel.success => Colors.green,
-      AppMessageLevel.info => colorScheme.primary,
-    };
     final detailsJson = message.details == null
         ? null
         : const JsonEncoder.withIndent('  ').convert(message.details);
+    final copyPayload = _normalizedMessageForCopy(message, detailsJson);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.circle, size: 10, color: levelColor),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    message.title ?? _labelForLevel(message.level),
-                    style: Theme.of(context).textTheme.labelLarge,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                _expanded = !_expanded;
+              });
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Text(
+                    _formatTimestamp(message.timestamp),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-                Text(
-                  _formatTimestamp(message.timestamp),
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            SelectableText(
-              message.message,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                FilledButton.tonalIcon(
-                  onPressed: () async {
-                    await Clipboard.setData(
-                      ClipboardData(text: message.message),
-                    );
-                    MessageCenter.instance.log(
-                      level: AppMessageLevel.info,
-                      source: AppMessageSource.app,
-                      message: 'Message copied',
-                    );
-                  },
-                  icon: const Icon(Icons.copy, size: 16),
-                  label: const Text('Copy'),
-                ),
-                if (detailsJson != null) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    _labelForLevel(message.level),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: _typeColor(context, message.level),
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: const Text('Details'),
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainerHighest
-                                .withValues(alpha: 0.4),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: SelectableText(detailsJson),
-                        ),
-                      ],
+                    child: Text(
+                      message.message,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: 'Copy',
+                    child: IconButton(
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: copyPayload),
+                        );
+                        if (!context.mounted) {
+                          return;
+                        }
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(const SnackBar(content: Text('Copied')));
+                      },
+                      icon: const Icon(Icons.copy_outlined, size: 18),
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
                     ),
                   ),
                 ],
-              ],
+              ),
             ),
+          ),
+          if (_expanded) ...[
+            const SizedBox(height: 4),
+            SelectableText(message.message),
+            if (detailsJson != null) ...[
+              const SizedBox(height: 6),
+              SelectableText(detailsJson),
+            ],
           ],
-        ),
+        ],
       ),
     );
   }
 
+  static Color _typeColor(BuildContext context, AppMessageLevel level) {
+    final scheme = Theme.of(context).colorScheme;
+    return switch (level) {
+      AppMessageLevel.info => scheme.onSurfaceVariant,
+      AppMessageLevel.warn => Colors.orange.shade700,
+      AppMessageLevel.error => scheme.error.withValues(alpha: 0.9),
+      AppMessageLevel.success => Colors.green.shade700,
+    };
+  }
+
   static String _labelForLevel(AppMessageLevel level) {
     return switch (level) {
-      AppMessageLevel.info => 'Info',
-      AppMessageLevel.warn => 'Warning',
-      AppMessageLevel.error => 'Error',
-      AppMessageLevel.success => 'Success',
+      AppMessageLevel.info => 'INFO',
+      AppMessageLevel.warn => 'WARN',
+      AppMessageLevel.error => 'ERROR',
+      AppMessageLevel.success => 'SUCCESS',
     };
+  }
+
+  static String _normalizedMessageForCopy(AppMessage message, String? details) {
+    final buffer = StringBuffer()
+      ..writeln(_formatTimestamp(message.timestamp))
+      ..writeln(_labelForLevel(message.level))
+      ..writeln(message.message);
+    if (details != null) {
+      buffer.writeln(details);
+    }
+    return buffer.toString().trim();
   }
 
   static String _formatTimestamp(DateTime ts) {

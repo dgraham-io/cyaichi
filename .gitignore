@@ -60,4 +60,4 @@ client/.flutter-plugins
 client/.flutter-plugins-dependencies
 client/.packages
 
-local_chat/
+.local/

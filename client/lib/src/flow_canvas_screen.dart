@@ -158,7 +158,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     super.initState();
 
     _controller = NodeFlowController<Map<String, dynamic>, dynamic>(
-      config: NodeFlowConfig(scrollToZoom: false),
+      // Use official API toggle from vyuh_node_flow to hide attribution.
+      config: NodeFlowConfig(scrollToZoom: false, showAttribution: false),
     );
     _flowTitleController = TextEditingController(text: 'My Flow');
     _inputFileController = TextEditingController();

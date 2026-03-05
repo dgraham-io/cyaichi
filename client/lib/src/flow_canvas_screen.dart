@@ -5182,10 +5182,13 @@ class _CanvasControlGroup extends StatelessWidget {
                 ),
               ),
             ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: scheme.outlineVariant.withValues(alpha: 0.7),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Divider(
+                height: 8,
+                thickness: 1,
+                color: scheme.outlineVariant.withValues(alpha: 0.5),
+              ),
             ),
             Tooltip(
               key: const Key('canvas-zoom-in-tooltip'),

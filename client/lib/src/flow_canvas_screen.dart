@@ -30,6 +30,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _uuid = Uuid();
 
   static const _defaultServerBaseUrl = 'http://localhost:8080';
+  static const _defaultRunRequestTimeoutSeconds = 300;
   static const _defaultRunInputFile = 'input.txt';
   static const _defaultRunOutputFile = 'output.txt';
   static const _outputPreviewLimit = 4000;
@@ -41,6 +42,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
   static const _prefNodeTypesCache = 'client.node_types.cache.v1';
   static const _prefWorkspaceEntries = 'client.workspace_entries.v1';
+  static const _prefRunRequestTimeoutSeconds =
+      'client.run_request_timeout_seconds';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
   final LocalFileReader _localFileReader = createLocalFileReader();
@@ -88,6 +91,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _lastOutputArtifactSummary;
   List<String> _lastRunInvocations = const <String>[];
   bool _lastRunRetryable = false;
+  bool _lastRunTimedOut = false;
   Duration? _lastRunDuration;
   int _runRequestToken = 0;
   bool _runWaitCancelled = false;
@@ -97,6 +101,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _currentFlowWorkspaceId;
   List<String> _currentFlowParents = const <String>[];
   bool _autoSetHeadOnSave = false;
+  int _runRequestTimeoutSeconds = _defaultRunRequestTimeoutSeconds;
 
   int _selectedTabIndex = 0;
 
@@ -124,7 +129,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _flowTitleController = TextEditingController(text: 'My Flow');
     _inputFileController = TextEditingController();
     _outputFileController = TextEditingController();
-    _apiClient = ApiClient(baseUrl: _serverBaseUrl);
+    _apiClient = ApiClient(
+      baseUrl: _serverBaseUrl,
+      runRequestTimeout: Duration(seconds: _runRequestTimeoutSeconds),
+    );
 
     _loadSettings();
   }
@@ -150,10 +158,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedWorkspaceEntries = prefs.getString(_prefWorkspaceEntries) ?? '';
     final loadedSelectedWorkspace = prefs.getString(_prefSelectedWorkspaceId);
     final loadedAutoSetHead = prefs.getBool(_prefAutoSetHeadOnSave) ?? false;
+    final loadedRunRequestTimeout =
+        prefs.getInt(_prefRunRequestTimeoutSeconds) ??
+        _defaultRunRequestTimeoutSeconds;
     final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
 
     _apiClient.close();
-    _apiClient = ApiClient(baseUrl: loadedBaseUrl);
+    _apiClient = ApiClient(
+      baseUrl: loadedBaseUrl,
+      runRequestTimeout: Duration(seconds: loadedRunRequestTimeout),
+    );
 
     final loadedWorkspaceNames = <String, String>{};
     if (loadedWorkspaceEntries.trim().isNotEmpty) {
@@ -219,6 +233,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           ? loadedSelectedWorkspace
           : null;
       _autoSetHeadOnSave = loadedAutoSetHead;
+      _runRequestTimeoutSeconds = loadedRunRequestTimeout < 5
+          ? 5
+          : loadedRunRequestTimeout;
       _nodeTypeRegistry = loadedRegistry;
       _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
@@ -233,6 +250,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     await prefs.setString(_prefServerBaseUrl, _serverBaseUrl);
     await prefs.setString(_prefWorkspaceDataRoot, _workspaceDataRoot);
     await prefs.setBool(_prefAutoSetHeadOnSave, _autoSetHeadOnSave);
+    await prefs.setInt(
+      _prefRunRequestTimeoutSeconds,
+      _runRequestTimeoutSeconds,
+    );
     await prefs.setStringList(_prefWorkspaceIds, _workspaceIds);
     final entries = _workspaceIds
         .map(
@@ -593,9 +614,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     isRunning: _isRunning,
                     duration: _lastRunDuration,
                     retryable: _lastRunRetryable,
+                    runTimedOut: _lastRunTimedOut,
                     onRetry: _runFlow,
                     onCancel: _cancelRunWait,
                     onOpenRunDetails: _openLatestRunDetailsFromPanel,
+                    onRefreshRuns: _loadRuns,
+                    onOpenOutputFileFromTimeout:
+                        _openKnownOutputFileFromRunPanel,
                   ),
                 ],
               ),
@@ -839,6 +864,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final workspaceRootController = TextEditingController(
       text: _workspaceDataRoot,
     );
+    final runTimeoutController = TextEditingController(
+      text: _runRequestTimeoutSeconds.toString(),
+    );
     var autoSetHeadOnSave = _autoSetHeadOnSave;
 
     final result = await showDialog<bool>(
@@ -882,6 +910,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    TextField(
+                      controller: runTimeoutController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Run request timeout (seconds)',
+                        hintText: '300',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Auto-set head on save'),
@@ -922,13 +960,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     if (result != true) {
       baseUrlController.dispose();
       workspaceRootController.dispose();
+      runTimeoutController.dispose();
       return;
     }
 
     final nextBaseUrl = baseUrlController.text.trim();
     final nextWorkspaceRoot = workspaceRootController.text.trim();
+    final nextRunTimeoutRaw = runTimeoutController.text.trim();
+    final nextRunTimeout = int.tryParse(nextRunTimeoutRaw);
     baseUrlController.dispose();
     workspaceRootController.dispose();
+    runTimeoutController.dispose();
 
     if (nextBaseUrl.isEmpty || Uri.tryParse(nextBaseUrl) == null) {
       _showSnack('Invalid server URL');
@@ -938,14 +980,22 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _showSnack('Workspace data root cannot be empty');
       return;
     }
+    if (nextRunTimeout == null || nextRunTimeout < 5) {
+      _showSnack('Run request timeout must be an integer >= 5');
+      return;
+    }
 
     setState(() {
       _serverBaseUrl = nextBaseUrl;
       _workspaceDataRoot = nextWorkspaceRoot;
       _autoSetHeadOnSave = autoSetHeadOnSave;
+      _runRequestTimeoutSeconds = nextRunTimeout;
     });
     _apiClient.close();
-    _apiClient = ApiClient(baseUrl: _serverBaseUrl);
+    _apiClient = ApiClient(
+      baseUrl: _serverBaseUrl,
+      runRequestTimeout: Duration(seconds: _runRequestTimeoutSeconds),
+    );
     await _refreshNodeTypesFromServer(showFailureSnack: true);
     await _persistSettings();
     await _refreshWorkspaceData();
@@ -1650,6 +1700,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastOutputArtifactSummary = null;
       _lastRunInvocations = const <String>[];
       _lastRunRetryable = false;
+      _lastRunTimedOut = false;
       _lastRunDuration = null;
     });
 
@@ -1671,6 +1722,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             flowVerId: _currentFlowVerId,
           );
           _lastRunErrorCopyJson = null;
+          _lastRunTimedOut = false;
         });
       }
       return;
@@ -1775,6 +1827,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastOutputContentFull = outputContentFull;
         _lastOutputArtifactSummary = outputArtifactSummary;
         _lastRunInvocations = invocations;
+        _lastRunTimedOut = false;
         _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
     } on ApiError catch (error) {
@@ -1785,6 +1838,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       List<String> invocationSummaries = const <String>[];
 
       final body = error.responseBody;
+      final isRunCreateTimeout =
+          error.isTimeout &&
+          error.method == 'POST' &&
+          error.endpoint == '/v1/runs';
       final isRetryable = error.isNetwork || error.statusCode == 502;
       if (body != null) {
         final valueRunId = body['run_id'];
@@ -1820,16 +1877,26 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         return;
       }
 
+      final timeoutSeconds = error.timeoutSeconds ?? _runRequestTimeoutSeconds;
+      final timeoutOutputPath = _joinPath(
+        _workspaceDataRoot,
+        workspaceId,
+        params.outputFile,
+      );
+      final displayErrorMessage = isRunCreateTimeout
+          ? 'Run request timed out after ${timeoutSeconds}s. The run may have completed. Check Runs tab.'
+          : (traceError?.message ?? _formatApiError(error));
+
       setState(() {
-        _lastRunStatus = status;
+        _lastRunStatus = isRunCreateTimeout ? 'timed_out' : status;
         _lastRunId = runId;
         _lastRunVerId = runVerId;
-        _lastRunError = traceError?.message ?? _formatApiError(error);
+        _lastRunError = displayErrorMessage;
         _lastRunErrorKind = traceError?.kind;
         _lastRunErrorNodeId = traceError?.nodeId;
         _lastRunErrorCopyText = _buildRunErrorCopyText(
           title: 'Run failed',
-          message: traceError?.message ?? _formatApiError(error),
+          message: displayErrorMessage,
           kind: traceError?.kind,
           nodeId: traceError?.nodeId,
           runId: runId,
@@ -1841,10 +1908,20 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         );
         _lastRunErrorCopyJson = body == null ? null : jsonEncode(body);
         _lastRunInvocations = invocationSummaries;
-        _lastRunRetryable = isRetryable;
+        _lastRunRetryable = isRunCreateTimeout ? false : isRetryable;
+        _lastRunTimedOut = isRunCreateTimeout;
+        if (isRunCreateTimeout) {
+          _lastOutputPath = timeoutOutputPath;
+        }
         _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
-      _showSnack(_formatApiError(error));
+      if (isRunCreateTimeout) {
+        _showSnack(
+          'Run request timed out after ${timeoutSeconds}s. The run may have completed.',
+        );
+      } else {
+        _showSnack(_formatApiError(error));
+      }
     } finally {
       if (mounted && _isRunRequestActive(runToken)) {
         setState(() {
@@ -2242,6 +2319,31 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       mode: 'hybrid',
     );
     await _openRunDetails(runItem);
+  }
+
+  Future<void> _openKnownOutputFileFromRunPanel() async {
+    final outputPath = _lastOutputPath;
+    if (outputPath == null || outputPath.trim().isEmpty) {
+      _showSnack('Output path is not available yet.');
+      return;
+    }
+    try {
+      final fullContent = await _localFileReader.readText(outputPath);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _lastOutputContentFull = fullContent;
+        _lastOutputContent = fullContent.length > _outputPreviewLimit
+            ? '${fullContent.substring(0, _outputPreviewLimit)}...'
+            : fullContent;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Failed to open output file: $error');
+    }
   }
 
   Future<void> _openFlowFromLibrary(FlowListItem flow) async {
@@ -3482,9 +3584,12 @@ class _RunPanel extends StatelessWidget {
     required this.isRunning,
     required this.duration,
     required this.retryable,
+    required this.runTimedOut,
     required this.onRetry,
     required this.onCancel,
     required this.onOpenRunDetails,
+    required this.onRefreshRuns,
+    required this.onOpenOutputFileFromTimeout,
   });
 
   final TextEditingController inputFileController;
@@ -3512,9 +3617,12 @@ class _RunPanel extends StatelessWidget {
   final bool isRunning;
   final Duration? duration;
   final bool retryable;
+  final bool runTimedOut;
   final Future<void> Function() onRetry;
   final VoidCallback onCancel;
   final Future<void> Function() onOpenRunDetails;
+  final Future<void> Function() onRefreshRuns;
+  final Future<void> Function() onOpenOutputFileFromTimeout;
 
   @override
   Widget build(BuildContext context) {
@@ -3650,6 +3758,27 @@ class _RunPanel extends StatelessWidget {
                   label: const Text('Open run details'),
                 ),
               ),
+            if (runTimedOut)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.tonalIcon(
+                      onPressed: onRefreshRuns,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh Runs'),
+                    ),
+                    if (outputPath != null && outputPath!.trim().isNotEmpty)
+                      FilledButton.tonalIcon(
+                        onPressed: onOpenOutputFileFromTimeout,
+                        icon: const Icon(Icons.file_open),
+                        label: const Text('Open output file'),
+                      ),
+                  ],
+                ),
+              ),
             if ((retryable || isRunning) && !isRunning)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -3777,6 +3906,9 @@ class _RunStatusChip extends StatelessWidget {
         color = Colors.green;
         break;
       case 'failed':
+        color = Theme.of(context).colorScheme.error;
+        break;
+      case 'timed_out':
         color = Theme.of(context).colorScheme.error;
         break;
       case 'running':

@@ -9,6 +9,8 @@ class ApiError implements Exception {
     required this.message,
     this.statusCode,
     this.isNetwork = false,
+    this.isTimeout = false,
+    this.timeoutSeconds,
     this.responseBody,
     this.method,
     this.endpoint,
@@ -17,6 +19,8 @@ class ApiError implements Exception {
   final String message;
   final int? statusCode;
   final bool isNetwork;
+  final bool isTimeout;
+  final int? timeoutSeconds;
   final Map<String, dynamic>? responseBody;
   final String? method;
   final String? endpoint;
@@ -64,10 +68,12 @@ class ApiClient {
     required this.baseUrl,
     http.Client? httpClient,
     this.timeout = const Duration(seconds: 15),
+    this.runRequestTimeout = const Duration(seconds: 300),
   }) : _httpClient = httpClient ?? http.Client();
 
   final String baseUrl;
   final Duration timeout;
+  final Duration runRequestTimeout;
   final http.Client _httpClient;
 
   void close() {
@@ -84,6 +90,7 @@ class ApiClient {
     String method,
     String path, {
     Map<String, dynamic>? body,
+    Duration? requestTimeout,
   }) async {
     final uri = _uri(path);
     final request = http.Request(method, uri)
@@ -94,11 +101,16 @@ class ApiClient {
 
     http.StreamedResponse streamed;
     try {
-      streamed = await _httpClient.send(request).timeout(timeout);
+      streamed = await _httpClient
+          .send(request)
+          .timeout(requestTimeout ?? timeout);
     } on TimeoutException {
+      final timeoutDuration = requestTimeout ?? timeout;
       throw ApiError(
-        message: 'server not reachable (request timeout)',
+        message: 'request timed out after ${timeoutDuration.inSeconds}s',
         isNetwork: true,
+        isTimeout: true,
+        timeoutSeconds: timeoutDuration.inSeconds,
         method: method,
         endpoint: path,
       );
@@ -220,6 +232,7 @@ class ApiClient {
           'output_file': outputFile,
         },
       },
+      requestTimeout: runRequestTimeout,
     );
 
     final flow = json['flow'];

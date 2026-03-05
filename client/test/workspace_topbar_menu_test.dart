@@ -86,13 +86,15 @@ void main() {
       ),
       findsOneWidget,
     );
-    final editButton = find.byKey(const Key('workspace-actions-button'));
-    expect(editButton, findsOneWidget);
-    final popup = tester.widget<PopupMenuButton<dynamic>>(editButton);
-    expect(popup.iconSize, 18);
+    final actionsButton = find.byKey(const Key('workspace-actions-button'));
+    expect(actionsButton, findsOneWidget);
+    final popup = tester.widget<PopupMenuButton<dynamic>>(actionsButton);
+    expect(popup.iconSize, 20);
+    final icon = popup.icon as Icon;
+    expect(icon.icon, Icons.more_vert);
     expect(find.byIcon(Icons.workspaces), findsNothing);
 
-    await tester.tap(editButton);
+    await tester.tap(actionsButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Rename workspace'), findsOneWidget);

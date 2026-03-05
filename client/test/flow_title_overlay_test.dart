@@ -152,7 +152,6 @@ void main() {
 
     expect(find.byKey(const Key('flow-title-overlay')), findsOneWidget);
     expect(find.byKey(const Key('flow-title-display')), findsOneWidget);
-    expect(find.byIcon(Icons.more_vert), findsOneWidget);
     expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
     expect(find.text('My Flow'), findsOneWidget);
     expect(find.textContaining('•'), findsNothing);
@@ -197,7 +196,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.more_vert), findsOneWidget);
+      expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('flow-title-actions-button')));
       await tester.pumpAndSettle();

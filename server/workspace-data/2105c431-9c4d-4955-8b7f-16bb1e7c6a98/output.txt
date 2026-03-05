@@ -1,1 +1,0 @@
-The MVP reads a file, sends its contents to an LLM chat, and then writes the LLM’s response back to a file.

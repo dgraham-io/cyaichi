@@ -28,7 +28,36 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Runtime workspace data
+workspace-data/
+server/workspace-data/
+client/workspace-data/
+
+# SQLite db files and journals
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Server temp/log output
+server/tmp/
+*.log
+
+# Flutter/Client build/tool artifacts
+client/build/
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/.packages
 
 local_chat/

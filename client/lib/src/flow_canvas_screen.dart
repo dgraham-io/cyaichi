@@ -5161,9 +5161,9 @@ class _CanvasControlGroup extends StatelessWidget {
       color: scheme.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
         child: SizedBox(
-          width: 52,
+          width: 40,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

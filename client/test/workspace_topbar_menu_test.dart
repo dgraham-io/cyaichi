@@ -77,8 +77,19 @@ void main() {
 
     expect(find.text('No workspace'), findsOneWidget);
 
-    final editButton = find.widgetWithIcon(IconButton, Icons.edit_outlined);
+    final titleRow = find.byKey(const Key('workspace-title-row'));
+    expect(titleRow, findsOneWidget);
+    expect(
+      find.descendant(
+        of: titleRow,
+        matching: find.byKey(const Key('workspace-title-label')),
+      ),
+      findsOneWidget,
+    );
+    final editButton = find.byKey(const Key('workspace-actions-button'));
     expect(editButton, findsOneWidget);
+    final popup = tester.widget<PopupMenuButton<dynamic>>(editButton);
+    expect(popup.iconSize, 18);
     expect(find.byIcon(Icons.workspaces), findsNothing);
 
     await tester.tap(editButton);

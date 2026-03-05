@@ -377,39 +377,54 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             Text('cyaichi${_isFlowDirty ? ' •' : ''}'),
             const SizedBox(width: 16),
             Expanded(
-              child: Row(
-                children: [
-                  if (_isLoadingWorkspaces) ...[
-                    const SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  key: const Key('workspace-title-row'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isLoadingWorkspaces) ...[
+                      const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Flexible(
+                      child: Text(
+                        key: const Key('workspace-title-label'),
+                        _currentWorkspaceLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: hasSelectedWorkspace
+                            ? null
+                            : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                      ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 4),
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: PopupMenuButton<_WorkspaceMenuAction>(
+                        key: const Key('workspace-actions-button'),
+                        tooltip: 'Workspace actions',
+                        iconSize: 18,
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.edit_outlined),
+                        onSelected: _openWorkspaceMenuAction,
+                        itemBuilder: (context) => _buildWorkspaceMenuItems(
+                          context,
+                          hasSelectedWorkspace: hasSelectedWorkspace,
+                        ),
+                      ),
+                    ),
                   ],
-                  Expanded(
-                    child: Text(
-                      _currentWorkspaceLabel,
-                      overflow: TextOverflow.ellipsis,
-                      style: hasSelectedWorkspace
-                          ? null
-                          : Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                    ),
-                  ),
-                  PopupMenuButton<_WorkspaceMenuAction>(
-                    tooltip: 'Workspace actions',
-                    icon: const Icon(Icons.edit_outlined),
-                    onSelected: _openWorkspaceMenuAction,
-                    itemBuilder: (context) => _buildWorkspaceMenuItems(
-                      context,
-                      hasSelectedWorkspace: hasSelectedWorkspace,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ],

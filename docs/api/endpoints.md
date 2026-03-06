@@ -12,11 +12,17 @@ Authoritative server HTTP endpoints.
 | --- | --- | --- | --- | --- |
 | GET | `/v1/health` | Service health check. | No body. | 200 JSON { ok, service }. |
 
-## Node Types
+## Processor Types
 
 | Method | Path | Purpose | Request | Response |
 | --- | --- | --- | --- | --- |
-| GET | `/v1/node-types` | List supported node type definitions. | No body. | 200 JSON { items: [...] }. |
+| GET | `/v1/processor-types` | List supported processor type definitions (preferred endpoint). | No body. | 200 JSON { items: [...] }. |
+
+## Node Types (Deprecated Alias)
+
+| Method | Path | Purpose | Request | Response |
+| --- | --- | --- | --- | --- |
+| GET | `/v1/node-types` | Deprecated alias for /v1/processor-types; returns identical JSON. | No body. | 200 JSON { items: [...] }. |
 
 ## Workspaces
 

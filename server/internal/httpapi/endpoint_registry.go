@@ -67,14 +67,28 @@ func buildRouteSpecs() []routeSpec {
 			},
 		},
 		{
+			Pattern:     "/v1/processor-types",
+			HandlerKind: handlerNodeTypes,
+			Endpoints: []Endpoint{
+				{
+					Area:     "Processor Types",
+					Method:   http.MethodGet,
+					Path:     "/v1/processor-types",
+					Summary:  "List supported processor type definitions (preferred endpoint).",
+					Request:  "No body.",
+					Response: "200 JSON { items: [...] }.",
+				},
+			},
+		},
+		{
 			Pattern:     "/v1/node-types",
 			HandlerKind: handlerNodeTypes,
 			Endpoints: []Endpoint{
 				{
-					Area:     "Node Types",
+					Area:     "Node Types (Deprecated Alias)",
 					Method:   http.MethodGet,
 					Path:     "/v1/node-types",
-					Summary:  "List supported node type definitions.",
+					Summary:  "Deprecated alias for /v1/processor-types; returns identical JSON.",
 					Request:  "No body.",
 					Response: "200 JSON { items: [...] }.",
 				},
@@ -302,14 +316,15 @@ func DocumentedEndpoints() []Endpoint {
 
 func areaOrder(area string) int {
 	order := map[string]int{
-		"Health":     1,
-		"Node Types": 2,
-		"Workspaces": 3,
-		"Docs":       4,
-		"Flows":      5,
-		"Runs":       6,
-		"Notes":      7,
-		"Packages":   8,
+		"Health":                        1,
+		"Processor Types":               2,
+		"Node Types (Deprecated Alias)": 3,
+		"Workspaces":                    4,
+		"Docs":                          5,
+		"Flows":                         6,
+		"Runs":                          7,
+		"Notes":                         8,
+		"Packages":                      9,
 	}
 	if idx, ok := order[area]; ok {
 		return idx

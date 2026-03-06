@@ -12,7 +12,7 @@ type nodeTypesResponse struct {
 }
 
 func NodeTypesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/v1/node-types" {
+	if r.URL.Path != "/v1/node-types" && r.URL.Path != "/v1/processor-types" {
 		http.NotFound(w, r)
 		return
 	}

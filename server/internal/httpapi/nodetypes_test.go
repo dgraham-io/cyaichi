@@ -69,3 +69,27 @@ func TestNodeTypesHandler(t *testing.T) {
 		t.Fatalf("unexpected file.write config_schema: %#v", write.ConfigSchema)
 	}
 }
+
+func TestProcessorTypesAliasMatchesNodeTypes(t *testing.T) {
+	mux := NewMux(nil, nil, "", "", "", "", 0)
+
+	nodeTypesReq := httptest.NewRequest(http.MethodGet, "/v1/node-types", nil)
+	nodeTypesRR := httptest.NewRecorder()
+	mux.ServeHTTP(nodeTypesRR, nodeTypesReq)
+
+	if nodeTypesRR.Code != http.StatusOK {
+		t.Fatalf("expected /v1/node-types status %d, got %d body=%s", http.StatusOK, nodeTypesRR.Code, nodeTypesRR.Body.String())
+	}
+
+	processorTypesReq := httptest.NewRequest(http.MethodGet, "/v1/processor-types", nil)
+	processorTypesRR := httptest.NewRecorder()
+	mux.ServeHTTP(processorTypesRR, processorTypesReq)
+
+	if processorTypesRR.Code != http.StatusOK {
+		t.Fatalf("expected /v1/processor-types status %d, got %d body=%s", http.StatusOK, processorTypesRR.Code, processorTypesRR.Body.String())
+	}
+
+	if nodeTypesRR.Body.String() != processorTypesRR.Body.String() {
+		t.Fatalf("expected alias endpoints to return identical JSON\nnode-types=%s\nprocessor-types=%s", nodeTypesRR.Body.String(), processorTypesRR.Body.String())
+	}
+}

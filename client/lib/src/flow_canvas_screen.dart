@@ -635,7 +635,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             ),
             const SizedBox(width: 6),
           ],
-          Expanded(
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 240),
             child: Text(
               key: const Key('workspace-title-label'),
               _currentWorkspaceLabel,

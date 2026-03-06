@@ -562,12 +562,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return;
     }
     if (index == 1) {
-      await _loadFlows();
-    }
-    if (index == 2) {
       await _loadRuns();
     }
-    if (index == 3) {
+    if (index == 2) {
       await _loadNotes();
     }
   }
@@ -600,16 +597,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               ),
               ButtonSegment<int>(
                 value: 1,
-                icon: Icon(Icons.account_tree_outlined, size: 20),
-                label: Text('Flows'),
-              ),
-              ButtonSegment<int>(
-                value: 2,
                 icon: Icon(Icons.history, size: 20),
                 label: Text('Runs'),
               ),
               ButtonSegment<int>(
-                value: 3,
+                value: 2,
                 icon: Icon(Icons.sticky_note_2_outlined, size: 20),
                 label: Text('Notes'),
               ),
@@ -724,14 +716,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       ),
       body: IndexedStack(
         index: _selectedTabIndex,
-        children: [
-          _buildFlowTab(),
-          _buildFlowsTab(),
-          _buildRunsTab(),
-          _buildNotesTab(),
-        ],
+        children: [_buildFlowTab(), _buildRunsTab(), _buildNotesTab()],
       ),
-      floatingActionButton: _selectedTabIndex == 3
+      floatingActionButton: _selectedTabIndex == 2
           ? FloatingActionButton.extended(
               onPressed: _selectedWorkspaceId == null
                   ? null
@@ -940,6 +927,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                     },
                                     onSetHead: () {
                                       unawaited(_setCurrentFlowAsHead());
+                                    },
+                                    canSelectFlow:
+                                        !_isSavingToServer &&
+                                        _selectedWorkspaceId != null,
+                                    onSelectFlow: () {
+                                      unawaited(_showSelectFlowDialog());
                                     },
                                     runEnabled: runEnabled,
                                     showRunBlockedOverlay:
@@ -1193,10 +1186,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   void _onSidebarTabSelected(int index) {
     switch (index) {
-      case 0:
-        unawaited(_loadFlows());
-        break;
-      case 3:
+      case 2:
         unawaited(_loadRuns());
         break;
       default:
@@ -1211,18 +1201,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     required List<Node<Map<String, dynamic>>> nodes,
   }) {
     return DefaultTabController(
-      length: 4,
-      initialIndex: 1,
+      length: 3,
+      initialIndex: 0,
       child: Column(
         children: [
           TabBar(
             onTap: _onSidebarTabSelected,
             tabs: const [
-              Tab(
-                key: Key('sidebar-tab-flows-button'),
-                icon: Icon(Icons.account_tree_outlined),
-                text: 'Flows',
-              ),
               Tab(
                 key: Key('sidebar-tab-nodes-button'),
                 icon: Icon(Icons.extension_outlined),
@@ -1244,15 +1229,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           Expanded(
             child: TabBarView(
               children: [
-                KeyedSubtree(
-                  key: const Key('sidebar_tab_flows'),
-                  child: _buildFlowsListPanel(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 10,
-                    ),
-                  ),
-                ),
                 KeyedSubtree(
                   key: const Key('sidebar_tab_nodes'),
                   child: Padding(
@@ -3640,6 +3616,85 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
+  Future<void> _showSelectFlowDialog() async {
+    final workspaceId = _selectedWorkspaceId;
+    if (workspaceId == null) {
+      _showSnack('Select a workspace first.');
+      return;
+    }
+
+    List<FlowListItem> flows;
+    try {
+      flows = await _apiClient.getFlows(workspaceId: workspaceId);
+    } on ApiError catch (error) {
+      _showSnack(_formatApiError(error));
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    final selected = await showDialog<FlowListItem>(
+      context: context,
+      builder: (dialogContext) => _SelectFlowDialog(flows: flows),
+    );
+    if (selected == null || !mounted) {
+      return;
+    }
+
+    if (_isFlowDirty) {
+      final decision = await _promptSwitchFlowDecision();
+      switch (decision) {
+        case _SwitchFlowDecision.cancel:
+          return;
+        case _SwitchFlowDecision.discard:
+          break;
+        case _SwitchFlowDecision.updateThenSwitch:
+          final saved = await _saveNewFlowVersionToServer();
+          if (!saved) {
+            return;
+          }
+          break;
+      }
+    }
+
+    await _openFlowFromLibrary(selected);
+  }
+
+  Future<_SwitchFlowDecision> _promptSwitchFlowDecision() async {
+    final result = await showDialog<_SwitchFlowDecision>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Unsaved changes'),
+          content: const Text(
+            'You have unsaved changes. Discard changes and switch?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SwitchFlowDecision.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SwitchFlowDecision.discard),
+              child: const Text('Discard & Switch'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_SwitchFlowDecision.updateThenSwitch),
+              child: const Text('Update then Switch'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? _SwitchFlowDecision.cancel;
+  }
+
   Future<void> _openFlowByListItem(
     FlowListItem flow, {
     required bool autoOpen,
@@ -4497,10 +4552,188 @@ class _RunGuardResult {
 
 enum _UnsavedFlowDecision { discard, cancel, save }
 
+enum _SwitchFlowDecision { cancel, discard, updateThenSwitch }
+
 enum _WorkspaceMenuAction { rename, select, create, delete }
 
 class _RunFlowIntent extends Intent {
   const _RunFlowIntent();
+}
+
+class _SelectFlowDialog extends StatefulWidget {
+  const _SelectFlowDialog({required this.flows});
+
+  final List<FlowListItem> flows;
+
+  @override
+  State<_SelectFlowDialog> createState() => _SelectFlowDialogState();
+}
+
+class _SelectFlowDialogState extends State<_SelectFlowDialog> {
+  late final TextEditingController _searchController;
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final latestFlows = _latestByDocId(widget.flows);
+    final normalizedQuery = _searchQuery.trim().toLowerCase();
+    final visibleFlows = normalizedQuery.isEmpty
+        ? latestFlows
+        : latestFlows
+              .where((flow) {
+                final title = flow.title.toLowerCase();
+                final docId = flow.docId.toLowerCase();
+                final verId = flow.verId.toLowerCase();
+                return title.contains(normalizedQuery) ||
+                    docId.contains(normalizedQuery) ||
+                    verId.contains(normalizedQuery);
+              })
+              .toList(growable: false);
+    final hasAnyFlows = latestFlows.isNotEmpty;
+
+    return AlertDialog(
+      key: const Key('select-flow-dialog'),
+      title: const Text('Select flow'),
+      content: SizedBox(
+        width: 540,
+        height: 420,
+        child: Column(
+          children: [
+            TextField(
+              key: const Key('select-flow-search-field'),
+              controller: _searchController,
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                });
+              },
+              decoration: InputDecoration(
+                hintText: 'Search flows…',
+                isDense: true,
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: normalizedQuery.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const Key('select-flow-search-clear'),
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {
+                            _searchQuery = '';
+                          });
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: !hasAnyFlows
+                  ? Center(
+                      child: Text(
+                        'No saved flows yet.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    )
+                  : visibleFlows.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No matching flows',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: visibleFlows.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final flow = visibleFlows[index];
+                        final title = flow.title.trim().isEmpty
+                            ? '(untitled flow)'
+                            : flow.title.trim();
+                        return ListTile(
+                          key: Key(
+                            'select-flow-item-${flow.docId}-${flow.verId}',
+                          ),
+                          leading: const Icon(Icons.account_tree_outlined),
+                          title: Text(title),
+                          subtitle: Text(
+                            'doc ${_shortId(flow.docId)}'
+                            ' • ${flow.createdAt}',
+                          ),
+                          onTap: () {
+                            Navigator.of(context).pop(flow);
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+
+  List<FlowListItem> _latestByDocId(List<FlowListItem> flows) {
+    final byDocId = <String, FlowListItem>{};
+    for (final flow in flows) {
+      final current = byDocId[flow.docId];
+      if (current == null) {
+        byDocId[flow.docId] = flow;
+        continue;
+      }
+      final nextCreatedAt = DateTime.tryParse(flow.createdAt);
+      final currentCreatedAt = DateTime.tryParse(current.createdAt);
+      if (nextCreatedAt == null) {
+        continue;
+      }
+      if (currentCreatedAt == null || nextCreatedAt.isAfter(currentCreatedAt)) {
+        byDocId[flow.docId] = flow;
+      }
+    }
+
+    final latest = byDocId.values.toList(growable: false);
+    latest.sort((a, b) {
+      final aTime = DateTime.tryParse(a.createdAt);
+      final bTime = DateTime.tryParse(b.createdAt);
+      if (aTime == null && bTime == null) {
+        return 0;
+      }
+      if (aTime == null) {
+        return 1;
+      }
+      if (bTime == null) {
+        return -1;
+      }
+      return bTime.compareTo(aTime);
+    });
+    return latest;
+  }
+
+  String _shortId(String id) {
+    if (id.length <= 8) {
+      return id;
+    }
+    return id.substring(0, 8);
+  }
 }
 
 class _FlowTitleOverlay extends StatelessWidget {
@@ -4513,6 +4746,8 @@ class _FlowTitleOverlay extends StatelessWidget {
     required this.onUpdate,
     required this.onDuplicate,
     required this.onSetHead,
+    required this.canSelectFlow,
+    required this.onSelectFlow,
     required this.runEnabled,
     required this.showRunBlockedOverlay,
     required this.isRunning,
@@ -4528,6 +4763,8 @@ class _FlowTitleOverlay extends StatelessWidget {
   final VoidCallback onUpdate;
   final VoidCallback onDuplicate;
   final VoidCallback onSetHead;
+  final bool canSelectFlow;
+  final VoidCallback onSelectFlow;
   final bool runEnabled;
   final bool showRunBlockedOverlay;
   final bool isRunning;
@@ -4562,6 +4799,17 @@ class _FlowTitleOverlay extends StatelessWidget {
               const SizedBox(width: 6),
               MenuAnchor(
                 menuChildren: [
+                  MenuItemButton(
+                    key: const Key('flow-title-edit-menu-select-flow'),
+                    leadingIcon: const Icon(Icons.folder_open),
+                    onPressed: canSelectFlow ? onSelectFlow : null,
+                    child: Tooltip(
+                      message: canSelectFlow
+                          ? 'Open a saved flow'
+                          : 'Select a workspace first',
+                      child: const Text('Select flow…'),
+                    ),
+                  ),
                   MenuItemButton(
                     key: const Key('flow-title-edit-menu-rename'),
                     leadingIcon: const Icon(Icons.drive_file_rename_outline),

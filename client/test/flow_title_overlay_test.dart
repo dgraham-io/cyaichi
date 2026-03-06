@@ -122,6 +122,116 @@ class _RunValidApiClient extends ApiClient {
   }
 }
 
+class _FlowSelectionApiClient extends ApiClient {
+  _FlowSelectionApiClient()
+    : super(
+        baseUrl: 'http://localhost:8080',
+        runRequestTimeout: const Duration(seconds: 300),
+      );
+
+  @override
+  void close() {}
+
+  @override
+  Future<List<WorkspaceListItem>> getWorkspaces() async {
+    return <WorkspaceListItem>[
+      WorkspaceListItem(
+        workspaceId: '11111111-1111-1111-1111-111111111111',
+        name: 'Workspace One',
+        createdAt: '2026-03-05T00:00:00Z',
+      ),
+    ];
+  }
+
+  @override
+  Future<List<NodeTypeDef>> getNodeTypes() async {
+    return <NodeTypeDef>[
+      NodeTypeDef(
+        type: 'file.read',
+        displayName: 'File Read',
+        category: 'io',
+        inputs: const <NodeTypePortDef>[],
+        outputs: <NodeTypePortDef>[
+          NodeTypePortDef(port: 'out', schema: 'artifact/text'),
+        ],
+        configSchema: const <NodeTypeConfigFieldDef>[],
+      ),
+    ];
+  }
+
+  @override
+  Future<List<FlowListItem>> getFlows({required String workspaceId}) async {
+    return <FlowListItem>[
+      FlowListItem(
+        docId: 'flow-doc-1',
+        verId: 'flow-ver-1',
+        createdAt: '2026-03-05T00:00:00Z',
+        ref: '',
+        title: 'First Flow',
+      ),
+      FlowListItem(
+        docId: 'flow-doc-2',
+        verId: 'flow-ver-2',
+        createdAt: '2026-03-06T00:00:00Z',
+        ref: '',
+        title: 'Imported Flow',
+      ),
+    ];
+  }
+
+  @override
+  Future<Map<String, dynamic>> getDocument({
+    required String docType,
+    required String docId,
+    required String verId,
+  }) async {
+    if (docType == 'flow' && docId == 'flow-doc-2') {
+      return <String, dynamic>{
+        'doc_type': 'flow',
+        'doc_id': docId,
+        'ver_id': verId,
+        'workspace_id': '11111111-1111-1111-1111-111111111111',
+        'created_at': '2026-03-06T00:00:00Z',
+        'meta': <String, dynamic>{'title': 'Imported Flow'},
+        'body': <String, dynamic>{
+          'nodes': [
+            {
+              'id': 'n1',
+              'type': 'file.read',
+              'inputs': [],
+              'outputs': [
+                {'port': 'out', 'schema': 'artifact/text'},
+              ],
+              'config': <String, dynamic>{},
+            },
+          ],
+          'edges': [],
+        },
+      };
+    }
+
+    return <String, dynamic>{
+      'doc_type': 'flow',
+      'doc_id': docId,
+      'ver_id': verId,
+      'workspace_id': '11111111-1111-1111-1111-111111111111',
+      'created_at': '2026-03-05T00:00:00Z',
+      'meta': <String, dynamic>{'title': 'First Flow'},
+      'body': <String, dynamic>{'nodes': [], 'edges': []},
+    };
+  }
+
+  @override
+  Future<List<RunListItem>> getRuns({required String workspaceId}) async {
+    return const <RunListItem>[];
+  }
+
+  @override
+  Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
+    return const <NoteListItem>[];
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -246,11 +356,52 @@ void main() {
       find.byKey(const Key('flow-title-edit-menu-set-head')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const Key('flow-title-edit-menu-select-flow')),
+      findsOneWidget,
+    );
 
     final updateItem = tester.widget<MenuItemButton>(
       find.byKey(const Key('flow-title-edit-menu-update')),
     );
     expect(updateItem.onPressed, isNull);
+  });
+
+  testWidgets('select flow menu opens dialog and loads selected flow', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _FlowSelectionApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('First Flow'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('flow-title-actions-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('flow-title-edit-menu-select-flow')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('select-flow-dialog')), findsOneWidget);
+    expect(find.text('Imported Flow'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('select-flow-item-flow-doc-2-flow-ver-2')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('select-flow-dialog')), findsNothing);
+    expect(find.text('Imported Flow'), findsOneWidget);
   });
 
   testWidgets('flow overlay contains run button and divider', (

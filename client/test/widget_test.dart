@@ -126,7 +126,7 @@ void main() {
     expect(find.text('File Read 1'), findsWidgets);
   });
 
-  testWidgets('top nav group renders and switches tabs', (
+  testWidgets('top nav group renders without flows and switches tabs', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -156,7 +156,7 @@ void main() {
     );
     expect(
       find.descendant(of: topNavFinder, matching: find.text('Flows')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(of: topNavFinder, matching: find.text('Runs')),
@@ -316,13 +316,9 @@ void main() {
     expect(sidebarFinder, findsOneWidget);
 
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsOneWidget);
-    expect(find.byKey(const Key('sidebar_tab_flows')), findsNothing);
     expect(find.byKey(const Key('sidebar_tab_inspector')), findsNothing);
     expect(find.byKey(const Key('sidebar_tab_runs')), findsNothing);
-
-    await tester.tap(find.byKey(const Key('sidebar-tab-flows-button')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('sidebar_tab_flows')), findsOneWidget);
+    expect(find.text('Flows'), findsNothing);
 
     await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
     await tester.pumpAndSettle();

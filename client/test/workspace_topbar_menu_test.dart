@@ -89,7 +89,7 @@ void main() {
     final actionsButton = find.byKey(const Key('workspace-actions-button'));
     expect(actionsButton, findsOneWidget);
     final popup = tester.widget<PopupMenuButton<dynamic>>(actionsButton);
-    expect(popup.iconSize, 20);
+    expect(popup.iconSize, 18);
     final icon = popup.icon as Icon;
     expect(icon.icon, Icons.more_vert);
     expect(find.byIcon(Icons.workspaces), findsNothing);

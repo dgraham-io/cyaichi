@@ -648,14 +648,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     ),
             ),
           ),
-          const SizedBox(width: 4),
           SizedBox(
-            width: 40,
-            height: 40,
+            width: 36,
+            height: 36,
             child: PopupMenuButton<_WorkspaceMenuAction>(
               key: const Key('workspace-actions-button'),
               tooltip: 'Workspace actions',
-              iconSize: 20,
+              iconSize: 18,
               padding: EdgeInsets.zero,
               icon: const Icon(Icons.more_vert),
               onSelected: _openWorkspaceMenuAction,

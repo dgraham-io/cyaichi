@@ -1100,128 +1100,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                             ),
                                           ),
                                         ),
-                                        child: Column(
-                                          children: [
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.fromLTRB(
-                                                    10,
-                                                    10,
-                                                    10,
-                                                    6,
-                                                  ),
-                                              child: SizedBox(
-                                                height: 220,
-                                                child: _PalettePanel(
-                                                  nodeTypes:
-                                                      _nodeTypeRegistry.all,
-                                                  onAddNode: _addNode,
-                                                  searchController:
-                                                      _nodePaletteSearchController,
-                                                  searchQuery:
-                                                      _nodePaletteSearchQuery,
-                                                  onSearchChanged:
-                                                      _onNodePaletteSearchChanged,
-                                                  onClearSearch:
-                                                      _clearNodePaletteSearch,
-                                                ),
-                                              ),
-                                            ),
-                                            const Divider(height: 1),
-                                            Expanded(
-                                              child: _InspectorPanel(
-                                                selectedNode: selectedNode,
-                                                selectedConnection:
-                                                    selectedConnection,
-                                                isPrimaryWriteNode:
-                                                    selectedNode != null &&
-                                                    selectedNode.type ==
-                                                        'file.write' &&
-                                                    _isPrimaryWriteNode(
-                                                      selectedNode.id,
-                                                    ),
-                                                nodeType: selectedNode == null
-                                                    ? null
-                                                    : _nodeTypeRegistry.byType(
-                                                        selectedNode.type,
-                                                      ),
-                                                onTitleChanged: (value) =>
-                                                    _updateNodeTitle(
-                                                      selectedNode,
-                                                      value,
-                                                    ),
-                                                onConfigChanged: (key, value) =>
-                                                    _updateNodeConfig(
-                                                      selectedNode,
-                                                      key,
-                                                      value,
-                                                    ),
-                                                onDeleteNode:
-                                                    _deleteSelectedNode,
-                                                onDeleteConnection:
-                                                    _deleteSelectedConnection,
-                                                onSetPrimaryOutput:
-                                                    selectedNode == null
-                                                    ? null
-                                                    : () =>
-                                                          _setPrimaryOutputNode(
-                                                            selectedNode.id,
-                                                          ),
-                                              ),
-                                            ),
-                                            const Divider(height: 1),
-                                            _RunPanel(
-                                              inputFileController:
-                                                  _inputFileController,
-                                              outputFileController:
-                                                  _outputFileController,
-                                              inputFileHint:
-                                                  _defaultRunInputFile,
-                                              outputFileHint:
-                                                  _defaultRunOutputFile,
-                                              status: _lastRunStatus,
-                                              blockers: runGuard.blockers,
-                                              showBlockers: _hasAttemptedRun,
-                                              subtleHint:
-                                                  !_hasAttemptedRun &&
-                                                      runGuard
-                                                          .blockers
-                                                          .isNotEmpty
-                                                  ? runGuard.blockers.first
-                                                  : null,
-                                              showEmptyHint: nodes.isEmpty,
-                                              validationError:
-                                                  _runValidationError,
-                                              runId: _lastRunId,
-                                              runVerId: _lastRunVerId,
-                                              error: _lastRunError,
-                                              errorKind: _lastRunErrorKind,
-                                              errorNodeId: _lastRunErrorNodeId,
-                                              errorCopyText:
-                                                  _lastRunErrorCopyText,
-                                              errorCopyJson:
-                                                  _lastRunErrorCopyJson,
-                                              invocations: _lastRunInvocations,
-                                              outputArtifactSummary:
-                                                  _lastOutputArtifactSummary,
-                                              outputPath: _lastOutputPath,
-                                              outputContent: _lastOutputContent,
-                                              outputContentFull:
-                                                  _lastOutputContentFull,
-                                              isRunning: _isRunning,
-                                              duration: _lastRunDuration,
-                                              retryable: _lastRunRetryable,
-                                              runTimedOut: _lastRunTimedOut,
-                                              onRetry: _runFlow,
-                                              onCancel: _cancelRunWait,
-                                              onOpenRunDetails:
-                                                  _openLatestRunDetailsFromPanel,
-                                              onRefreshRuns: _loadRuns,
-                                              onOpenOutputFileFromTimeout:
-                                                  _openKnownOutputFileFromRunPanel,
-                                              onNotify: _showSnack,
-                                            ),
-                                          ],
+                                        child: _buildRightOverlaySidebarTabs(
+                                          selectedNode: selectedNode,
+                                          selectedConnection:
+                                              selectedConnection,
+                                          runGuard: runGuard,
+                                          nodes: nodes,
                                         ),
                                       ),
                                     ),
@@ -1307,7 +1191,171 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
-  Widget _buildFlowsTab() {
+  void _onSidebarTabSelected(int index) {
+    switch (index) {
+      case 0:
+        unawaited(_loadFlows());
+        break;
+      case 3:
+        unawaited(_loadRuns());
+        break;
+      default:
+        break;
+    }
+  }
+
+  Widget _buildRightOverlaySidebarTabs({
+    required Node<Map<String, dynamic>>? selectedNode,
+    required Connection<dynamic>? selectedConnection,
+    required _RunGuardResult runGuard,
+    required List<Node<Map<String, dynamic>>> nodes,
+  }) {
+    return DefaultTabController(
+      length: 4,
+      initialIndex: 1,
+      child: Column(
+        children: [
+          TabBar(
+            onTap: _onSidebarTabSelected,
+            tabs: const [
+              Tab(
+                key: Key('sidebar-tab-flows-button'),
+                icon: Icon(Icons.account_tree_outlined),
+                text: 'Flows',
+              ),
+              Tab(
+                key: Key('sidebar-tab-nodes-button'),
+                icon: Icon(Icons.extension_outlined),
+                text: 'Nodes',
+              ),
+              Tab(
+                key: Key('sidebar-tab-inspector-button'),
+                icon: Icon(Icons.tune_outlined),
+                text: 'Inspector',
+              ),
+              Tab(
+                key: Key('sidebar-tab-runs-button'),
+                icon: Icon(Icons.history),
+                text: 'Runs',
+              ),
+            ],
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: TabBarView(
+              children: [
+                KeyedSubtree(
+                  key: const Key('sidebar_tab_flows'),
+                  child: _buildFlowsListPanel(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+                KeyedSubtree(
+                  key: const Key('sidebar_tab_nodes'),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                    child: SizedBox.expand(
+                      child: _PalettePanel(
+                        nodeTypes: _nodeTypeRegistry.all,
+                        onAddNode: _addNode,
+                        searchController: _nodePaletteSearchController,
+                        searchQuery: _nodePaletteSearchQuery,
+                        onSearchChanged: _onNodePaletteSearchChanged,
+                        onClearSearch: _clearNodePaletteSearch,
+                      ),
+                    ),
+                  ),
+                ),
+                KeyedSubtree(
+                  key: const Key('sidebar_tab_inspector'),
+                  child: _InspectorPanel(
+                    selectedNode: selectedNode,
+                    selectedConnection: selectedConnection,
+                    isPrimaryWriteNode:
+                        selectedNode != null &&
+                        selectedNode.type == 'file.write' &&
+                        _isPrimaryWriteNode(selectedNode.id),
+                    nodeType: selectedNode == null
+                        ? null
+                        : _nodeTypeRegistry.byType(selectedNode.type),
+                    onTitleChanged: (value) =>
+                        _updateNodeTitle(selectedNode, value),
+                    onConfigChanged: (key, value) =>
+                        _updateNodeConfig(selectedNode, key, value),
+                    onDeleteNode: _deleteSelectedNode,
+                    onDeleteConnection: _deleteSelectedConnection,
+                    onSetPrimaryOutput: selectedNode == null
+                        ? null
+                        : () => _setPrimaryOutputNode(selectedNode.id),
+                  ),
+                ),
+                KeyedSubtree(
+                  key: const Key('sidebar_tab_runs'),
+                  child: Column(
+                    children: [
+                      _RunPanel(
+                        inputFileController: _inputFileController,
+                        outputFileController: _outputFileController,
+                        inputFileHint: _defaultRunInputFile,
+                        outputFileHint: _defaultRunOutputFile,
+                        status: _lastRunStatus,
+                        blockers: runGuard.blockers,
+                        showBlockers: _hasAttemptedRun,
+                        subtleHint:
+                            !_hasAttemptedRun && runGuard.blockers.isNotEmpty
+                            ? runGuard.blockers.first
+                            : null,
+                        showEmptyHint: nodes.isEmpty,
+                        validationError: _runValidationError,
+                        runId: _lastRunId,
+                        runVerId: _lastRunVerId,
+                        error: _lastRunError,
+                        errorKind: _lastRunErrorKind,
+                        errorNodeId: _lastRunErrorNodeId,
+                        errorCopyText: _lastRunErrorCopyText,
+                        errorCopyJson: _lastRunErrorCopyJson,
+                        invocations: _lastRunInvocations,
+                        outputArtifactSummary: _lastOutputArtifactSummary,
+                        outputPath: _lastOutputPath,
+                        outputContent: _lastOutputContent,
+                        outputContentFull: _lastOutputContentFull,
+                        isRunning: _isRunning,
+                        duration: _lastRunDuration,
+                        retryable: _lastRunRetryable,
+                        runTimedOut: _lastRunTimedOut,
+                        onRetry: _runFlow,
+                        onCancel: _cancelRunWait,
+                        onOpenRunDetails: _openLatestRunDetailsFromPanel,
+                        onRefreshRuns: _loadRuns,
+                        onOpenOutputFileFromTimeout:
+                            _openKnownOutputFileFromRunPanel,
+                        onNotify: _showSnack,
+                      ),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: _buildRunsListPanel(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlowsListPanel({EdgeInsetsGeometry? padding}) {
+    final listPadding = padding ?? const EdgeInsets.all(16);
     if (_selectedWorkspaceId == null) {
       return const Center(
         child: Text('Select or create a workspace to view flows.'),
@@ -1328,13 +1376,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       onRefresh: _loadFlows,
       child: _flows.isEmpty
           ? ListView(
+              padding: listPadding,
               children: const [
                 SizedBox(height: 120),
                 Center(child: Text('No flows found for this workspace.')),
               ],
             )
           : ListView.separated(
-              padding: const EdgeInsets.all(16),
+              padding: listPadding,
               itemCount: _flows.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
@@ -1360,7 +1409,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
-  Widget _buildRunsTab() {
+  Widget _buildRunsListPanel({EdgeInsetsGeometry? padding}) {
+    final listPadding = padding ?? const EdgeInsets.all(16);
     if (_selectedWorkspaceId == null) {
       return const Center(
         child: Text('Select or create a workspace to view runs.'),
@@ -1381,13 +1431,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       onRefresh: _loadRuns,
       child: _runs.isEmpty
           ? ListView(
+              padding: listPadding,
               children: const [
                 SizedBox(height: 120),
                 Center(child: Text('No runs found for this workspace.')),
               ],
             )
           : ListView.separated(
-              padding: const EdgeInsets.all(16),
+              padding: listPadding,
               itemCount: _runs.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
@@ -1403,6 +1454,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               },
             ),
     );
+  }
+
+  Widget _buildFlowsTab() {
+    return _buildFlowsListPanel();
+  }
+
+  Widget _buildRunsTab() {
+    return _buildRunsListPanel();
   }
 
   Widget _buildNotesTab() {
@@ -4774,11 +4833,14 @@ class _InspectorPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (selectedNode == null && selectedConnection == null) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Text(
-          'Inspector\n\nSelect a node on the canvas.',
-          style: Theme.of(context).textTheme.bodyLarge,
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            'Select a node to inspect',
+            style: Theme.of(context).textTheme.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
         ),
       );
     }

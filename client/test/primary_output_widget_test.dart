@@ -108,6 +108,9 @@ void main() {
     await tester.tap(addWrite);
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
+    await tester.pumpAndSettle();
+
     expect(find.text('Set as Primary Output'), findsOneWidget);
     await tester.tap(find.text('Set as Primary Output'));
     await tester.pumpAndSettle();

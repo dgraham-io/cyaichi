@@ -104,6 +104,9 @@ void main() {
       await tester.tap(find.byKey(const Key('add-file.write')));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const Key('sidebar-tab-runs-button')));
+      await tester.pumpAndSettle();
+
       final inputField = find.byWidgetPredicate(
         (widget) =>
             widget is TextField && widget.decoration?.labelText == 'input_file',

@@ -149,12 +149,27 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('top-nav-group')), findsOneWidget);
-    expect(find.text('Flow'), findsOneWidget);
-    expect(find.text('Flows'), findsOneWidget);
-    expect(find.text('Runs'), findsOneWidget);
-    expect(find.text('Notes'), findsOneWidget);
+    final topNavFinder = find.byKey(const Key('top-nav-group'));
+    expect(
+      find.descendant(of: topNavFinder, matching: find.text('Flow')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: topNavFinder, matching: find.text('Flows')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: topNavFinder, matching: find.text('Runs')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: topNavFinder, matching: find.text('Notes')),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.text('Runs'));
+    await tester.tap(
+      find.descendant(of: topNavFinder, matching: find.text('Runs')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('No runs found for this workspace.'), findsOneWidget);
@@ -272,6 +287,51 @@ void main() {
 
     final widenedWidth = tester.getSize(sidebarFinder).width;
     expect(widenedWidth, greaterThan(initialWidth));
+  });
+
+  testWidgets('right overlay sidebar tab bar switches panels', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sidebarFinder = find.byKey(const Key('right-overlay-sidebar'));
+    expect(sidebarFinder, findsOneWidget);
+
+    expect(find.byKey(const Key('sidebar_tab_nodes')), findsOneWidget);
+    expect(find.byKey(const Key('sidebar_tab_flows')), findsNothing);
+    expect(find.byKey(const Key('sidebar_tab_inspector')), findsNothing);
+    expect(find.byKey(const Key('sidebar_tab_runs')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('sidebar-tab-flows-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sidebar_tab_flows')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sidebar_tab_inspector')), findsOneWidget);
+    expect(find.text('Select a node to inspect'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('sidebar-tab-runs-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sidebar_tab_runs')), findsOneWidget);
   });
 
   testWidgets('message drawer log row renders and copy action works', (

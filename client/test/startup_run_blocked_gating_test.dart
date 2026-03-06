@@ -1,4 +1,5 @@
 import 'package:client/src/app.dart';
+import 'package:client/messages/message_center.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    MessageCenter.instance.clear();
   });
 
   testWidgets('run blocked banner is gated until run is attempted', (
@@ -20,17 +22,19 @@ void main() {
     await tester.pumpWidget(const CyaichiApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Run blocked'), findsNothing);
+    final runBlockedMessagesBefore = MessageCenter.instance.messages
+        .where((message) => message.message.contains('Run blocked'))
+        .length;
+    expect(runBlockedMessagesBefore, 0);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pumpAndSettle();
 
-    expect(find.text('Run blocked'), findsOneWidget);
-    expect(
-      find.textContaining('Add at least one node before running.'),
-      findsOneWidget,
-    );
+    final runBlockedMessagesAfter = MessageCenter.instance.messages
+        .where((message) => message.message.contains('Run blocked'))
+        .length;
+    expect(runBlockedMessagesAfter, 1);
   });
 }

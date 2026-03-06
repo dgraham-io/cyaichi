@@ -1,4 +1,4 @@
-.PHONY: run server test fmt
+.PHONY: run server test fmt docs
 
 run:
 	go run ./cmd/cyaichi-server
@@ -10,3 +10,6 @@ test:
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -type f)
+
+docs:
+	go run ./cmd/apidocgen

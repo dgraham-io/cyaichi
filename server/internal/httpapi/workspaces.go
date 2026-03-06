@@ -430,7 +430,7 @@ func (h *WorkspacesHandler) handleCreateWorkspace(w http.ResponseWriter, r *http
 
 	workspaceID := uuid.NewString()
 	verID := uuid.NewString()
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	docJSON := map[string]any{
 		"doc_type":     "workspace",
@@ -612,7 +612,7 @@ func (h *WorkspacesHandler) newWorkspaceVersionFromLatest(currentDoc store.Docum
 
 	newVerID := uuid.NewString()
 	docMap["ver_id"] = newVerID
-	docMap["created_at"] = time.Now().UTC().Format(time.RFC3339)
+	docMap["created_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	docMap["parents"] = []string{currentDoc.VerID}
 	return docMap, newVerID, nil
 }

@@ -298,8 +298,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isLoadingWorkspaces = false;
   bool _didShowMissingWorkspaceToast = false;
 
-  int _selectedTabIndex = 0;
-
   bool _flowsLoading = false;
   String? _flowsError;
   List<FlowListItem> _flows = const <FlowListItem>[];
@@ -610,120 +608,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     await _refreshWorkspaceData();
   }
 
-  Future<bool> _handleTabChange(int nextIndex) async {
-    if (nextIndex == _selectedTabIndex) {
-      return true;
-    }
-    if (_selectedTabIndex == 0 && _isFlowDirty) {
-      final decision = await _promptUnsavedFlowDecision();
-      switch (decision) {
-        case _UnsavedFlowDecision.cancel:
-          return false;
-        case _UnsavedFlowDecision.save:
-          final saved = await _saveNewFlowVersionToServer();
-          if (!saved) {
-            return false;
-          }
-          break;
-        case _UnsavedFlowDecision.discard:
-          break;
-      }
-    }
-    if (!mounted) {
-      return false;
-    }
-    setState(() {
-      _selectedTabIndex = nextIndex;
-    });
-    return true;
-  }
-
-  Future<_UnsavedFlowDecision> _promptUnsavedFlowDecision() async {
-    final result = await showDialog<_UnsavedFlowDecision>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Unsaved changes'),
-          content: const Text(
-            'You have unsaved flow changes. Update before leaving the Flow editor?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(_UnsavedFlowDecision.discard),
-              child: const Text('Discard'),
-            ),
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(_UnsavedFlowDecision.cancel),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(_UnsavedFlowDecision.save),
-              child: const Text('Update'),
-            ),
-          ],
-        );
-      },
-    );
-    return result ?? _UnsavedFlowDecision.cancel;
-  }
-
-  Future<void> _onTopNavSelected(int index) async {
-    if (!await _handleTabChange(index)) {
-      return;
-    }
-    if (index == 1) {
-      await _loadNotes();
-    }
-  }
-
-  Widget _buildTopNavGroup() {
-    return Card(
-      key: const Key('top-nav-group'),
-      margin: EdgeInsets.zero,
-      elevation: 3,
-      color: Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: SegmentedButton<int>(
-            showSelectedIcon: false,
-            style: ButtonStyle(
-              minimumSize: WidgetStateProperty.all(const Size(0, 46)),
-              visualDensity: VisualDensity.standard,
-              textStyle: WidgetStateProperty.all(
-                Theme.of(context).textTheme.labelLarge,
-              ),
-            ),
-            segments: const <ButtonSegment<int>>[
-              ButtonSegment<int>(
-                value: 0,
-                icon: Icon(Icons.edit_outlined, size: 20),
-                label: Text('Flow'),
-              ),
-              ButtonSegment<int>(
-                value: 1,
-                icon: Icon(Icons.sticky_note_2_outlined, size: 20),
-                label: Text('Notes'),
-              ),
-            ],
-            selected: <int>{_selectedTabIndex},
-            onSelectionChanged: (selection) {
-              if (selection.isEmpty) {
-                return;
-              }
-              unawaited(_onTopNavSelected(selection.first));
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildWorkspaceLeadingSection({required bool hasSelectedWorkspace}) {
     return Padding(
       padding: const EdgeInsets.only(left: 12),
@@ -798,24 +682,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         leading: _buildWorkspaceLeadingSection(
           hasSelectedWorkspace: hasSelectedWorkspace,
         ),
-        title: SizedBox(
-          height: 52,
-          child: Stack(children: [Center(child: _buildTopNavGroup())]),
-        ),
-        centerTitle: true,
         actions: [
-          if (_selectedTabIndex == 0) ...[
-            IconButton(
-              tooltip: 'Export JSON',
-              onPressed: _onExportJson,
-              icon: const Icon(Icons.upload_file),
-            ),
-            IconButton(
-              tooltip: 'Import JSON',
-              onPressed: _onImportJson,
-              icon: const Icon(Icons.download),
-            ),
-          ],
+          IconButton(
+            tooltip: 'Export JSON',
+            onPressed: _onExportJson,
+            icon: const Icon(Icons.upload_file),
+          ),
+          IconButton(
+            tooltip: 'Import JSON',
+            onPressed: _onImportJson,
+            icon: const Icon(Icons.download),
+          ),
           IconButton(
             tooltip: 'Settings',
             onPressed: _showSettingsDialog,
@@ -824,26 +701,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedTabIndex,
-        children: [_buildFlowTab(), _buildNotesTab()],
-      ),
-      floatingActionButton: _selectedTabIndex == 1
-          ? FloatingActionButton.extended(
-              onPressed: _selectedWorkspaceId == null
-                  ? null
-                  : _showCreateNoteDialog,
-              icon: const Icon(Icons.add),
-              label: const Text('New Note'),
-            )
-          : null,
+      body: _buildFlowTab(),
     );
   }
 
   Widget _buildFlowTab() {
     final runGuard = _computeRunGuard();
     final hasWorkspaceSelected = _selectedWorkspaceId != null;
-    final nodes = _controller.nodes.values.toList(growable: false);
     final selectedNode = _selectedNodeId == null
         ? null
         : _controller.getNode(_selectedNodeId!);
@@ -910,383 +774,371 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           },
           child: Stack(
             children: [
-              AbsorbPointer(
-                absorbing: !hasWorkspaceSelected,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final panelWidth = clampRightOverlaySidebarWidth(
-                      _rightOverlaySidebarWidth,
-                      constraints.maxWidth,
-                    );
-                    final panelRight = _isRightOverlaySidebarOpen
-                        ? 0.0
-                        : -(panelWidth + 16);
-                    final toggleRight = _isRightOverlaySidebarOpen
-                        ? panelWidth + 12
-                        : 12.0;
-                    final drawerWidth =
-                        constraints.maxWidth -
-                        (_isRightOverlaySidebarOpen ? panelWidth : 0);
-                    final drawerHeight = clampMessageDrawerHeight(
-                      _messageDrawerHeight,
-                      constraints.maxHeight,
-                    );
-                    final messageButtonBottom = _isMessageDrawerOpen
-                        ? drawerHeight + 12
-                        : 12.0;
-                    return Stack(
-                      children: [
-                        KeyedSubtree(
-                          key: const Key('flow-canvas-pane'),
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  CyaichiTheme.background,
-                                  CyaichiTheme.surface,
-                                  CyaichiTheme.outline.withValues(alpha: 0.45),
-                                ],
-                              ),
-                            ),
-                            child: Stack(
-                              children: [
-                                NodeFlowEditor<Map<String, dynamic>, dynamic>(
-                                  controller: _controller,
-                                  theme: canvasTheme,
-                                  nodeBuilder: _buildNodeCard,
-                                  behavior: NodeFlowBehavior.design,
-                                  events:
-                                      NodeFlowEvents<
-                                        Map<String, dynamic>,
-                                        dynamic
-                                      >(
-                                        node: NodeEvents(
-                                          onSelected: (node) {
-                                            setState(() {
-                                              _selectedNodeId = node?.id;
-                                            });
-                                          },
-                                        ),
-                                        connection:
-                                            ConnectionEvents<
-                                              Map<String, dynamic>,
-                                              dynamic
-                                            >(
-                                              onBeforeComplete:
-                                                  _validateConnectionBeforeComplete,
-                                              onCreated: (_) {
-                                                _markFlowDirty();
-                                              },
-                                              onDeleted: (_) {
-                                                _markFlowDirty();
-                                              },
-                                              onSelected: (connection) {
-                                                setState(() {
-                                                  _selectedConnectionId =
-                                                      connection?.id;
-                                                });
-                                              },
-                                              onConnectEnd: (_, __, ___) {
-                                                final reason =
-                                                    _connectionRejectReason;
-                                                if (reason != null && mounted) {
-                                                  _showSnack(reason);
-                                                  _connectionRejectReason =
-                                                      null;
-                                                }
-                                              },
-                                            ),
-                                        onSelectionChange: (selection) {
-                                          setState(() {
-                                            _selectedNodeId =
-                                                selection.nodes.isEmpty
-                                                ? null
-                                                : selection.nodes.first.id;
-                                            _selectedConnectionId =
-                                                selection.connections.isEmpty
-                                                ? null
-                                                : selection
-                                                      .connections
-                                                      .first
-                                                      .id;
-                                          });
-                                        },
-                                      ),
-                                ),
-                                Positioned(
-                                  left: 12,
-                                  top: 12,
-                                  child: _FlowTitleOverlay(
-                                    title: _flowTitleController.text,
-                                    canUpdate:
-                                        !_isSavingToServer &&
-                                        _selectedWorkspaceId != null &&
-                                        _isFlowDirty,
-                                    canDuplicate: !_isSavingToServer,
-                                    canSetHead:
-                                        !_isSavingToServer &&
-                                        _selectedWorkspaceId != null,
-                                    onRename: _showRenameFlowDialog,
-                                    onUpdate: () {
-                                      unawaited(_saveNewFlowVersionToServer());
-                                    },
-                                    onDuplicate: () {
-                                      unawaited(_duplicateCurrentFlow());
-                                    },
-                                    onSetHead: () {
-                                      unawaited(_setCurrentFlowAsHead());
-                                    },
-                                    canSelectFlow:
-                                        !_isSavingToServer &&
-                                        _selectedWorkspaceId != null,
-                                    onSelectFlow: () {
-                                      unawaited(_showSelectFlowDialog());
-                                    },
-                                    runEnabled: runEnabled,
-                                    showRunBlockedOverlay:
-                                        showRunBlockedOverlay,
-                                    isRunning: _isRunning,
-                                    runTooltip: runTooltip,
-                                    onRun: () {
-                                      unawaited(_runFlow());
-                                    },
-                                  ),
-                                ),
-                                AnimatedPositioned(
-                                  duration: const Duration(milliseconds: 220),
-                                  curve: Curves.easeOutCubic,
-                                  top: 12,
-                                  right: toggleRight,
-                                  child: _CanvasControlGroup(
-                                    panelOpen: _isRightOverlaySidebarOpen,
-                                    onTogglePanel: _toggleRightOverlaySidebar,
-                                    onZoomIn: () => _zoomCanvasBy(0.1),
-                                    onZoomOut: () => _zoomCanvasBy(-0.1),
-                                    onResetZoom: _resetCanvasZoom,
-                                    zoomPercent: (_canvasZoomLevel * 100)
-                                        .round(),
-                                  ),
-                                ),
-                                if (_isLoadingFlow)
-                                  Positioned.fill(
-                                    child: ColoredBox(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.28,
-                                      ),
-                                      child: Center(
-                                        child: DecoratedBox(
-                                          decoration: BoxDecoration(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.surface,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                            border: Border.all(
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.outlineVariant,
-                                            ),
-                                          ),
-                                          child: const Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              horizontal: 14,
-                                              vertical: 10,
-                                            ),
-                                            child: Text('Loading flow...'),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final panelWidth = clampRightOverlaySidebarWidth(
+                    _rightOverlaySidebarWidth,
+                    constraints.maxWidth,
+                  );
+                  final panelRight = _isRightOverlaySidebarOpen
+                      ? 0.0
+                      : -(panelWidth + 16);
+                  final toggleRight = _isRightOverlaySidebarOpen
+                      ? panelWidth + 12
+                      : 12.0;
+                  final drawerWidth =
+                      constraints.maxWidth -
+                      (_isRightOverlaySidebarOpen ? panelWidth : 0);
+                  final drawerHeight = clampMessageDrawerHeight(
+                    _messageDrawerHeight,
+                    constraints.maxHeight,
+                  );
+                  final messageButtonBottom = _isMessageDrawerOpen
+                      ? drawerHeight + 12
+                      : 12.0;
+                  return Stack(
+                    children: [
+                      KeyedSubtree(
+                        key: const Key('flow-canvas-pane'),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                CyaichiTheme.background,
+                                CyaichiTheme.surface,
+                                CyaichiTheme.outline.withValues(alpha: 0.45),
                               ],
                             ),
                           ),
-                        ),
-                        if (_isMessageDrawerOpen)
-                          Positioned(
-                            left: 0,
-                            bottom: 0,
-                            width: drawerWidth,
-                            height: drawerHeight,
-                            child: _MessageDrawerPanel(
-                              messages: _messageCenter.messages,
-                              onClear: _messageCenter.clear,
-                              onResizeUpdate: (deltaY) {
-                                _resizeMessageDrawer(
-                                  deltaY,
-                                  constraints.maxHeight,
-                                );
-                              },
-                              onResizeEnd: () {
-                                unawaited(_persistSettings());
-                              },
-                            ),
-                          ),
-                        Positioned(
-                          right: toggleRight,
-                          bottom: messageButtonBottom,
-                          child: Card(
-                            key: const Key('message-drawer-toggle-button'),
-                            margin: EdgeInsets.zero,
-                            elevation: 3,
-                            child: InkWell(
-                              onTap: () => _toggleMessageDrawer(),
-                              borderRadius: BorderRadius.circular(14),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.message_outlined,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Messages (${_messageCenter.unreadCount})',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelMedium
-                                          ?.copyWith(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
+                          child: Stack(
+                            children: [
+                              NodeFlowEditor<Map<String, dynamic>, dynamic>(
+                                controller: _controller,
+                                theme: canvasTheme,
+                                nodeBuilder: _buildNodeCard,
+                                behavior: NodeFlowBehavior.design,
+                                events:
+                                    NodeFlowEvents<
+                                      Map<String, dynamic>,
+                                      dynamic
+                                    >(
+                                      node: NodeEvents(
+                                        onSelected: (node) {
+                                          setState(() {
+                                            _selectedNodeId = node?.id;
+                                          });
+                                        },
+                                      ),
+                                      connection:
+                                          ConnectionEvents<
+                                            Map<String, dynamic>,
+                                            dynamic
+                                          >(
+                                            onBeforeComplete:
+                                                _validateConnectionBeforeComplete,
+                                            onCreated: (_) {
+                                              _markFlowDirty();
+                                            },
+                                            onDeleted: (_) {
+                                              _markFlowDirty();
+                                            },
+                                            onSelected: (connection) {
+                                              setState(() {
+                                                _selectedConnectionId =
+                                                    connection?.id;
+                                              });
+                                            },
+                                            onConnectEnd: (_, __, ___) {
+                                              final reason =
+                                                  _connectionRejectReason;
+                                              if (reason != null && mounted) {
+                                                _showSnack(reason);
+                                                _connectionRejectReason = null;
+                                              }
+                                            },
                                           ),
+                                      onSelectionChange: (selection) {
+                                        setState(() {
+                                          _selectedNodeId =
+                                              selection.nodes.isEmpty
+                                              ? null
+                                              : selection.nodes.first.id;
+                                          _selectedConnectionId =
+                                              selection.connections.isEmpty
+                                              ? null
+                                              : selection.connections.first.id;
+                                        });
+                                      },
                                     ),
-                                    const SizedBox(width: 4),
-                                    Icon(
-                                      _isMessageDrawerOpen
-                                          ? Icons.keyboard_arrow_down
-                                          : Icons.keyboard_arrow_up,
-                                      size: 18,
-                                    ),
-                                  ],
+                              ),
+                              Positioned(
+                                left: 12,
+                                top: 12,
+                                child: _FlowTitleOverlay(
+                                  title: _flowTitleController.text,
+                                  canUpdate:
+                                      !_isSavingToServer &&
+                                      _selectedWorkspaceId != null &&
+                                      _isFlowDirty,
+                                  canDuplicate: !_isSavingToServer,
+                                  canSetHead:
+                                      !_isSavingToServer &&
+                                      _selectedWorkspaceId != null,
+                                  onRename: _showRenameFlowDialog,
+                                  onUpdate: () {
+                                    unawaited(_saveNewFlowVersionToServer());
+                                  },
+                                  onDuplicate: () {
+                                    unawaited(_duplicateCurrentFlow());
+                                  },
+                                  onSetHead: () {
+                                    unawaited(_setCurrentFlowAsHead());
+                                  },
+                                  canSelectFlow:
+                                      !_isSavingToServer &&
+                                      _selectedWorkspaceId != null,
+                                  onSelectFlow: () {
+                                    unawaited(_showSelectFlowDialog());
+                                  },
+                                  runEnabled: runEnabled,
+                                  showRunBlockedOverlay: showRunBlockedOverlay,
+                                  isRunning: _isRunning,
+                                  runTooltip: runTooltip,
+                                  onRun: () {
+                                    unawaited(_runFlow());
+                                  },
                                 ),
                               ),
-                            ),
-                          ),
-                        ),
-                        AnimatedPositioned(
-                          key: const Key('right-overlay-sidebar-position'),
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          top: 0,
-                          bottom: 0,
-                          right: panelRight,
-                          child: IgnorePointer(
-                            ignoring: !_isRightOverlaySidebarOpen,
-                            child: SizedBox(
-                              key: const Key('right-overlay-sidebar'),
-                              width: panelWidth,
-                              child: Stack(
-                                children: [
-                                  Material(
-                                    elevation: 10,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(left: 8),
+                              AnimatedPositioned(
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeOutCubic,
+                                top: 12,
+                                right: toggleRight,
+                                child: _CanvasControlGroup(
+                                  panelOpen: _isRightOverlaySidebarOpen,
+                                  onTogglePanel: _toggleRightOverlaySidebar,
+                                  onZoomIn: () => _zoomCanvasBy(0.1),
+                                  onZoomOut: () => _zoomCanvasBy(-0.1),
+                                  onResetZoom: _resetCanvasZoom,
+                                  zoomPercent: (_canvasZoomLevel * 100).round(),
+                                ),
+                              ),
+                              if (_isLoadingFlow)
+                                Positioned.fill(
+                                  child: ColoredBox(
+                                    color: Colors.black.withValues(alpha: 0.28),
+                                    child: Center(
                                       child: DecoratedBox(
                                         decoration: BoxDecoration(
-                                          border: Border(
-                                            left: BorderSide(
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.outlineVariant,
-                                            ),
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.surface,
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          border: Border.all(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.outlineVariant,
                                           ),
                                         ),
-                                        child: _buildRightOverlaySidebarTabs(
-                                          selectedNode: selectedNode,
-                                          selectedConnection:
-                                              selectedConnection,
-                                          runGuard: runGuard,
-                                          nodes: nodes,
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 10,
+                                          ),
+                                          child: Text('Loading flow...'),
                                         ),
                                       ),
                                     ),
                                   ),
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: MouseRegion(
-                                      cursor:
-                                          SystemMouseCursors.resizeLeftRight,
-                                      child: GestureDetector(
-                                        key: const Key(
-                                          'right-sidebar-resize-handle-hit',
-                                        ),
-                                        behavior: HitTestBehavior.opaque,
-                                        onHorizontalDragUpdate: (details) {
-                                          _resizeRightOverlaySidebar(
-                                            details.delta.dx,
-                                            constraints.maxWidth,
-                                          );
-                                        },
-                                        onHorizontalDragEnd: (_) {
-                                          unawaited(_persistSettings());
-                                        },
-                                        child: SizedBox(
-                                          width: 8,
-                                          height: double.infinity,
-                                          child: Center(
-                                            child: Container(
-                                              width: 1,
-                                              height: 96,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .outlineVariant
-                                                  .withValues(alpha: 0.55),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              if (!hasWorkspaceSelected)
-                Positioned.fill(
-                  child: ColoredBox(
-                    color: Colors.black.withValues(alpha: 0.24),
-                    child: Center(
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'No workspace selected',
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: 10),
-                              FilledButton.icon(
-                                onPressed: _showSelectWorkspaceDialog,
-                                icon: const Icon(Icons.workspaces_outlined),
-                                label: const Text('Select workspace'),
-                              ),
+                                ),
                             ],
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
+                      if (_isMessageDrawerOpen)
+                        Positioned(
+                          left: 0,
+                          bottom: 0,
+                          width: drawerWidth,
+                          height: drawerHeight,
+                          child: _MessageDrawerPanel(
+                            messages: _messageCenter.messages,
+                            onClear: _messageCenter.clear,
+                            onResizeUpdate: (deltaY) {
+                              _resizeMessageDrawer(
+                                deltaY,
+                                constraints.maxHeight,
+                              );
+                            },
+                            onResizeEnd: () {
+                              unawaited(_persistSettings());
+                            },
+                          ),
+                        ),
+                      Positioned(
+                        right: toggleRight,
+                        bottom: messageButtonBottom,
+                        child: Card(
+                          key: const Key('message-drawer-toggle-button'),
+                          margin: EdgeInsets.zero,
+                          elevation: 3,
+                          child: InkWell(
+                            onTap: () => _toggleMessageDrawer(),
+                            borderRadius: BorderRadius.circular(14),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.message_outlined, size: 18),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Messages (${_messageCenter.unreadCount})',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    _isMessageDrawerOpen
+                                        ? Icons.keyboard_arrow_down
+                                        : Icons.keyboard_arrow_up,
+                                    size: 18,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      AnimatedPositioned(
+                        key: const Key('right-overlay-sidebar-position'),
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        top: 0,
+                        bottom: 0,
+                        right: panelRight,
+                        child: IgnorePointer(
+                          ignoring: !_isRightOverlaySidebarOpen,
+                          child: SizedBox(
+                            key: const Key('right-overlay-sidebar'),
+                            width: panelWidth,
+                            child: Stack(
+                              children: [
+                                Material(
+                                  elevation: 10,
+                                  color: Theme.of(context).colorScheme.surface,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          left: BorderSide(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.outlineVariant,
+                                          ),
+                                        ),
+                                      ),
+                                      child: _buildRightOverlaySidebarTabs(
+                                        selectedNode: selectedNode,
+                                        selectedConnection: selectedConnection,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.resizeLeftRight,
+                                    child: GestureDetector(
+                                      key: const Key(
+                                        'right-sidebar-resize-handle-hit',
+                                      ),
+                                      behavior: HitTestBehavior.opaque,
+                                      onHorizontalDragUpdate: (details) {
+                                        _resizeRightOverlaySidebar(
+                                          details.delta.dx,
+                                          constraints.maxWidth,
+                                        );
+                                      },
+                                      onHorizontalDragEnd: (_) {
+                                        unawaited(_persistSettings());
+                                      },
+                                      child: SizedBox(
+                                        width: 8,
+                                        height: double.infinity,
+                                        child: Center(
+                                          child: Container(
+                                            width: 1,
+                                            height: 96,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .outlineVariant
+                                                .withValues(alpha: 0.55),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (!hasWorkspaceSelected)
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          right: _isRightOverlaySidebarOpen ? panelWidth : 0,
+                          child: ColoredBox(
+                            color: Colors.black.withValues(alpha: 0.24),
+                            child: Center(
+                              child: Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'No workspace selected',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                      const SizedBox(height: 10),
+                                      FilledButton.icon(
+                                        onPressed: _showSelectWorkspaceDialog,
+                                        icon: const Icon(
+                                          Icons.workspaces_outlined,
+                                        ),
+                                        label: const Text('Select workspace'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -1297,15 +1149,18 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   Widget _buildRightOverlaySidebarTabs({
     required Node<Map<String, dynamic>>? selectedNode,
     required Connection<dynamic>? selectedConnection,
-    required _RunGuardResult runGuard,
-    required List<Node<Map<String, dynamic>>> nodes,
   }) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       initialIndex: 0,
       child: Column(
         children: [
           TabBar(
+            onTap: (index) {
+              if (index == 2) {
+                unawaited(_loadNotes());
+              }
+            },
             tabs: const [
               Tab(
                 key: Key('sidebar-tab-nodes-button'),
@@ -1316,6 +1171,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 key: Key('sidebar-tab-inspector-button'),
                 icon: Icon(Icons.tune_outlined),
                 text: 'Inspector',
+              ),
+              Tab(
+                key: Key('sidebar-tab-notes-button'),
+                icon: Icon(Icons.sticky_note_2_outlined),
+                text: 'Notes',
               ),
             ],
           ),
@@ -1362,6 +1222,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                         : () => _setPrimaryOutputNode(selectedNode.id),
                   ),
                 ),
+                KeyedSubtree(
+                  key: const Key('sidebar_tab_notes'),
+                  child: _buildNotesSidebarPanel(),
+                ),
               ],
             ),
           ),
@@ -1370,121 +1234,32 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
-  Widget _buildFlowsListPanel({EdgeInsetsGeometry? padding}) {
-    final listPadding = padding ?? const EdgeInsets.all(16);
-    if (_selectedWorkspaceId == null) {
-      return const Center(
-        child: Text('Select or create a workspace to view flows.'),
-      );
-    }
-    if (_flowsLoading && _flows.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_flowsError != null && _flows.isEmpty) {
-      return _ErrorState(
-        title: 'Flow list error',
-        message: _flowsError!,
-        onRetry: _loadFlows,
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadFlows,
-      child: _flows.isEmpty
-          ? ListView(
-              padding: listPadding,
-              children: const [
-                SizedBox(height: 120),
-                Center(child: Text('No flows found for this workspace.')),
-              ],
-            )
-          : ListView.separated(
-              padding: listPadding,
-              itemCount: _flows.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final flow = _flows[index];
-                return ListTile(
-                  title: Text(
-                    flow.title.isEmpty ? '(untitled flow)' : flow.title,
-                  ),
-                  subtitle: SelectionArea(
-                    child: Text(
-                      '${_friendlyDate(flow.createdAt)}'
-                      '${flow.ref.isEmpty ? '' : ' • ref: ${flow.ref}'}\n'
-                      'doc_id: ${flow.docId}\n'
-                      'ver_id: ${flow.verId}',
-                    ),
-                  ),
-                  isThreeLine: true,
-                  trailing: const Icon(Icons.open_in_new),
-                  onTap: () => _openFlowFromLibrary(flow),
-                );
-              },
-            ),
+  Widget _buildNotesSidebarPanel() {
+    final hasWorkspace = _selectedWorkspaceId != null;
+    final listContent = _buildNotesListContent(
+      emptyWorkspaceMessage: 'Select a workspace to view notes.',
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FilledButton.tonalIcon(
+            key: const Key('sidebar-notes-new-note-button'),
+            onPressed: hasWorkspace ? _showCreateNoteDialog : null,
+            icon: const Icon(Icons.add),
+            label: const Text('New note'),
+          ),
+          const SizedBox(height: 10),
+          Expanded(child: listContent),
+        ],
+      ),
     );
   }
 
-  Widget _buildRunsListPanel({EdgeInsetsGeometry? padding}) {
-    final listPadding = padding ?? const EdgeInsets.all(16);
+  Widget _buildNotesListContent({required String emptyWorkspaceMessage}) {
     if (_selectedWorkspaceId == null) {
-      return const Center(
-        child: Text('Select or create a workspace to view runs.'),
-      );
-    }
-    if (_runsLoading && _runs.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_runsError != null && _runs.isEmpty) {
-      return _ErrorState(
-        title: 'Runs list error',
-        message: _runsError!,
-        onRetry: _loadRuns,
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadRuns,
-      child: _runs.isEmpty
-          ? ListView(
-              padding: listPadding,
-              children: const [
-                SizedBox(height: 120),
-                Center(child: Text('No runs found for this workspace.')),
-              ],
-            )
-          : ListView.separated(
-              padding: listPadding,
-              itemCount: _runs.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final item = _runs[index];
-                return ListTile(
-                  title: Text(_friendlyDate(item.createdAt)),
-                  subtitle: Text(
-                    'mode: ${item.mode.isEmpty ? 'n/a' : item.mode}',
-                  ),
-                  trailing: _StatusBadge(status: item.status),
-                  onTap: () => _openRunDetails(item),
-                );
-              },
-            ),
-    );
-  }
-
-  Widget _buildFlowsTab() {
-    return _buildFlowsListPanel();
-  }
-
-  Widget _buildRunsTab() {
-    return _buildRunsListPanel();
-  }
-
-  Widget _buildNotesTab() {
-    if (_selectedWorkspaceId == null) {
-      return const Center(
-        child: Text('Select or create a workspace to view notes.'),
-      );
+      return Center(child: Text(emptyWorkspaceMessage));
     }
     if (_notesLoading && _notes.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -1501,8 +1276,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       onRefresh: _loadNotes,
       child: _notes.isEmpty
           ? ListView(
+              padding: const EdgeInsets.symmetric(vertical: 12),
               children: const [
-                SizedBox(height: 120),
                 Center(child: Text('No notes found for this workspace.')),
               ],
             )
@@ -2203,7 +1978,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       await _loadWorkspaces();
       await _loadFlows();
       await _autoOpenFlowForSelectedWorkspace();
-      await _loadRuns();
       await _loadNotes();
     } finally {
       if (mounted) {
@@ -2327,12 +2101,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _controller.nodes.isNotEmpty) {
       return;
     }
-    await _openFlowByListItem(
-      selected,
-      autoOpen: true,
-      showSnack: false,
-      selectFlowTab: false,
-    );
+    await _openFlowByListItem(selected, autoOpen: true, showSnack: false);
   }
 
   Future<void> _refreshNodeTypesFromServer({
@@ -3750,12 +3519,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _openFlowFromLibrary(FlowListItem flow) async {
-    await _openFlowByListItem(
-      flow,
-      autoOpen: false,
-      showSnack: true,
-      selectFlowTab: true,
-    );
+    await _openFlowByListItem(flow, autoOpen: false, showSnack: true);
   }
 
   Future<void> _showSelectFlowDialog() async {
@@ -3838,11 +3602,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   Future<void> _onNewFlowPressed() async {
-    if (_selectedTabIndex != 0) {
-      if (!await _handleTabChange(0)) {
-        return;
-      }
-    }
     if (_isFlowDirty) {
       final decision = await _promptNewFlowDecision();
       switch (decision) {
@@ -3899,7 +3658,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _controller.clearGraph();
     _flowTitleController.text = 'Untitled Flow';
     setState(() {
-      _selectedTabIndex = 0;
       _selectedNodeId = null;
       _selectedConnectionId = null;
       _primaryWriteNodeId = null;
@@ -3923,7 +3681,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     FlowListItem flow, {
     required bool autoOpen,
     required bool showSnack,
-    required bool selectFlowTab,
   }) async {
     if (mounted) {
       setState(() {
@@ -3940,11 +3697,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        if (selectFlowTab) {
-          _selectedTabIndex = 0;
-        }
-      });
       if (showSnack) {
         _showSnack(
           'Loaded flow ${_shortId(flow.docId)} @ ${_shortId(flow.verId)}',
@@ -3984,6 +3736,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       await showDialog<void>(
         context: context,
         builder: (context) {
+          final copyPayload = StringBuffer()
+            ..writeln('title: $title')
+            ..writeln('doc_id: ${item.docId}')
+            ..writeln('ver_id: ${item.verId}')
+            ..writeln('scope: ${item.scope}')
+            ..writeln('')
+            ..write(fullBody);
           return AlertDialog(
             title: Text(title),
             content: SizedBox(
@@ -3991,6 +3750,18 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               child: SingleChildScrollView(child: SelectableText(fullBody)),
             ),
             actions: [
+              FilledButton.tonalIcon(
+                onPressed: () async {
+                  await Clipboard.setData(
+                    ClipboardData(text: copyPayload.toString()),
+                  );
+                  if (context.mounted) {
+                    _showSnack('Note copied');
+                  }
+                },
+                icon: const Icon(Icons.copy_outlined),
+                label: const Text('Copy'),
+              ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Close'),
@@ -4777,8 +4548,6 @@ class _RunGuardResult {
   final bool canRun;
   final List<String> blockers;
 }
-
-enum _UnsavedFlowDecision { discard, cancel, save }
 
 enum _SwitchFlowDecision { cancel, discard, updateThenSwitch }
 

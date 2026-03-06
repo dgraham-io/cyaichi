@@ -10,7 +10,7 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  testWidgets('notes tab shows workspace empty state', (
+  testWidgets('notes sidebar tab shows workspace empty state', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
@@ -19,12 +19,13 @@ void main() {
     await tester.pumpWidget(const CyaichiApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Notes'));
+    final tabBarElement = tester.element(find.byType(TabBar).first);
+    final tabController = DefaultTabController.of(tabBarElement);
+    expect(tabController, isNotNull);
+    tabController!.animateTo(2);
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Select or create a workspace to view notes.'),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
+    expect(find.text('Select a workspace to view notes.'), findsOneWidget);
   });
 }

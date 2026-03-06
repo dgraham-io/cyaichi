@@ -86,6 +86,30 @@ class _WidgetTestApiClient extends ApiClient {
   }
 }
 
+class _NotesListApiClient extends _WidgetTestApiClient {
+  @override
+  Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
+    return <NoteListItem>[
+      NoteListItem(
+        docId: 'note-doc-1',
+        verId: 'note-ver-1',
+        createdAt: '2026-03-06T12:34:00Z',
+        title: 'Daily Log',
+        scope: 'personal',
+        bodyPreview: 'First preview line',
+      ),
+      NoteListItem(
+        docId: 'note-doc-2',
+        verId: 'note-ver-2',
+        createdAt: '2026-03-06T13:00:00Z',
+        title: 'Team Update',
+        scope: 'team',
+        bodyPreview: 'Second preview line',
+      ),
+    ];
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -126,7 +150,7 @@ void main() {
     expect(find.text('File Read 1'), findsWidgets);
   });
 
-  testWidgets('top nav group renders without flows/runs and switches tabs', (
+  testWidgets('canvas is always main content and notes live in sidebar tab', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -148,30 +172,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('top-nav-group')), findsOneWidget);
-    final topNavFinder = find.byKey(const Key('top-nav-group'));
-    expect(
-      find.descendant(of: topNavFinder, matching: find.text('Flow')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: topNavFinder, matching: find.text('Flows')),
-      findsNothing,
-    );
-    expect(
-      find.descendant(of: topNavFinder, matching: find.text('Runs')),
-      findsNothing,
-    );
-    expect(
-      find.descendant(of: topNavFinder, matching: find.text('Notes')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('top-nav-group')), findsNothing);
+    expect(find.byKey(const Key('flow-canvas-pane')), findsOneWidget);
 
-    await tester.tap(
-      find.descendant(of: topNavFinder, matching: find.text('Notes')),
-    );
+    await tester.tap(find.byKey(const Key('sidebar-tab-notes-button')));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const Key('flow-canvas-pane')), findsOneWidget);
+    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
     expect(find.text('No notes found for this workspace.'), findsOneWidget);
   });
 
@@ -350,10 +358,7 @@ void main() {
 
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsOneWidget);
     expect(find.byKey(const Key('sidebar_tab_inspector')), findsNothing);
-    expect(find.byKey(const Key('sidebar_tab_runs')), findsNothing);
-    expect(find.byKey(const Key('sidebar-tab-runs-button')), findsNothing);
-    expect(find.text('Flows'), findsNothing);
-    expect(find.text('Runs'), findsNothing);
+    expect(find.byKey(const Key('sidebar_tab_notes')), findsNothing);
 
     await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
     await tester.pumpAndSettle();
@@ -361,6 +366,46 @@ void main() {
     expect(find.text('Select a processor to inspect'), findsOneWidget);
 
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('sidebar-tab-notes-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
+    expect(
+      find.byKey(const Key('sidebar-notes-new-note-button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('notes sidebar tab loads and renders notes list items', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _NotesListApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('sidebar-tab-notes-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
+    expect(find.text('Daily Log'), findsOneWidget);
+    expect(find.text('Team Update'), findsOneWidget);
+    expect(find.textContaining('First preview line'), findsOneWidget);
+    expect(find.textContaining('Second preview line'), findsOneWidget);
   });
 
   testWidgets('message drawer log row renders and copy action works', (

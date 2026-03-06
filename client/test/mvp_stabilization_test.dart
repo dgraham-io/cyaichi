@@ -146,11 +146,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('•'), findsNothing);
+    final dynamic stateBefore = tester.state(find.byType(FlowCanvasScreen));
+    expect(stateBefore.debugIsFlowDirty, isFalse);
 
     await tester.tap(find.byKey(const Key('add-file.read')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('•'), findsOneWidget);
+    final dynamic stateAfter = tester.state(find.byType(FlowCanvasScreen));
+    expect(stateAfter.debugIsFlowDirty, isTrue);
   });
 }

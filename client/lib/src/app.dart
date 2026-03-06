@@ -8,7 +8,7 @@ class CyaichiApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'cyaichi client',
+      title: 'CyaiChi',
       debugShowCheckedModeBanner: false,
       theme: CyaichiTheme.dark,
       darkTheme: CyaichiTheme.dark,

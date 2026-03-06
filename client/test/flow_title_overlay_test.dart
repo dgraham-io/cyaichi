@@ -264,7 +264,8 @@ void main() {
     expect(find.byKey(const Key('flow-title-display')), findsOneWidget);
     expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
     expect(find.text('My Flow'), findsOneWidget);
-    expect(find.textContaining('•'), findsNothing);
+    final dynamic stateBefore = tester.state(find.byType(FlowCanvasScreen));
+    expect(stateBefore.debugIsFlowDirty, isFalse);
 
     await tester.tap(find.byKey(const Key('flow-title-actions-button')));
     await tester.pumpAndSettle();
@@ -284,7 +285,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Renamed Flow'), findsOneWidget);
-    expect(find.textContaining('•'), findsOneWidget);
+    final dynamic stateAfter = tester.state(find.byType(FlowCanvasScreen));
+    expect(stateAfter.debugIsFlowDirty, isTrue);
   });
 
   testWidgets(

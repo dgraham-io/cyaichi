@@ -116,7 +116,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('cyaichi'), findsOneWidget);
+    expect(find.byKey(const Key('workspace-title-row')), findsOneWidget);
     expect(find.byKey(const Key('add-file.read')), findsOneWidget);
     expect(find.text('File Read 1'), findsNothing);
 
@@ -173,6 +173,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No runs found for this workspace.'), findsOneWidget);
+  });
+
+  testWidgets('app bar shows workspace section on left and new flow button', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('workspace-title-row')), findsOneWidget);
+    expect(find.byKey(const Key('workspace-actions-button')), findsOneWidget);
+    expect(find.byKey(const Key('new-flow-button')), findsOneWidget);
+    expect(find.text('My Flow'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('new-flow-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Untitled Flow'), findsOneWidget);
   });
 
   testWidgets('node palette search filters and clear restores list', (

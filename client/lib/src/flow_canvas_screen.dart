@@ -142,6 +142,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   String? _primaryWriteNodeId;
   int _nodeCounter = 1;
   bool _isFlowDirty = false;
+  bool _isCurrentFlowDraft = false;
   bool _hasAttemptedRun = false;
 
   bool _isCreatingWorkspace = false;
@@ -619,81 +620,86 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
+  Widget _buildWorkspaceLeadingSection({required bool hasSelectedWorkspace}) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 12),
+      child: Row(
+        key: const Key('workspace-title-row'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_isLoadingWorkspaces) ...[
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text(
+              key: const Key('workspace-title-label'),
+              _currentWorkspaceLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: hasSelectedWorkspace
+                  ? null
+                  : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: PopupMenuButton<_WorkspaceMenuAction>(
+              key: const Key('workspace-actions-button'),
+              tooltip: 'Workspace actions',
+              iconSize: 20,
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.more_vert),
+              onSelected: _openWorkspaceMenuAction,
+              itemBuilder: (context) => _buildWorkspaceMenuItems(
+                context,
+                hasSelectedWorkspace: hasSelectedWorkspace,
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 24,
+            child: VerticalDivider(
+              width: 16,
+              thickness: 1,
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
+          IconButton(
+            key: const Key('new-flow-button'),
+            tooltip: 'New flow',
+            onPressed: _onNewFlowPressed,
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasSelectedWorkspace = _selectedWorkspaceId != null;
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
+        leadingWidth: 420,
+        leading: _buildWorkspaceLeadingSection(
+          hasSelectedWorkspace: hasSelectedWorkspace,
+        ),
         title: SizedBox(
           height: 52,
-          child: Stack(
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.hub),
-                    const SizedBox(width: 8),
-                    Text('cyaichi${_isFlowDirty ? ' •' : ''}'),
-                  ],
-                ),
-              ),
-              Center(child: _buildTopNavGroup()),
-            ],
-          ),
+          child: Stack(children: [Center(child: _buildTopNavGroup())]),
         ),
+        centerTitle: true,
         actions: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320),
-            child: Row(
-              key: const Key('workspace-title-row'),
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_isLoadingWorkspaces) ...[
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                Flexible(
-                  child: Text(
-                    key: const Key('workspace-title-label'),
-                    _currentWorkspaceLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: hasSelectedWorkspace
-                        ? null
-                        : Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: PopupMenuButton<_WorkspaceMenuAction>(
-                    key: const Key('workspace-actions-button'),
-                    tooltip: 'Workspace actions',
-                    iconSize: 20,
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: _openWorkspaceMenuAction,
-                    itemBuilder: (context) => _buildWorkspaceMenuItems(
-                      context,
-                      hasSelectedWorkspace: hasSelectedWorkspace,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-            ),
-          ),
           if (_selectedTabIndex == 0) ...[
             IconButton(
               tooltip: 'Export JSON',
@@ -2751,7 +2757,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             _currentFlowVerId != null
         ? _currentFlowDocId!
         : _uuid.v4();
-    final previousVerID = _currentFlowWorkspaceId == workspaceId
+    final previousVerID =
+        !_isCurrentFlowDraft && _currentFlowWorkspaceId == workspaceId
         ? _currentFlowVerId
         : null;
     final flowVerId = _uuid.v4();
@@ -2795,6 +2802,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastOpenedFlowDocId = flowDocId;
         _lastOpenedFlowVerId = flowVerId;
         _isFlowDirty = false;
+        _isCurrentFlowDraft = false;
       });
       await _persistSettings();
       await _loadFlows();
@@ -2869,6 +2877,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastOpenedFlowDocId = docId;
         _lastOpenedFlowVerId = verId;
         _isFlowDirty = false;
+        _isCurrentFlowDraft = false;
       });
       await _persistSettings();
       await _loadFlows();
@@ -3695,6 +3704,88 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     return result ?? _SwitchFlowDecision.cancel;
   }
 
+  Future<void> _onNewFlowPressed() async {
+    if (_selectedTabIndex != 0) {
+      if (!await _handleTabChange(0)) {
+        return;
+      }
+    }
+    if (_isFlowDirty) {
+      final decision = await _promptNewFlowDecision();
+      switch (decision) {
+        case _SwitchFlowDecision.cancel:
+          return;
+        case _SwitchFlowDecision.discard:
+          break;
+        case _SwitchFlowDecision.updateThenSwitch:
+          final saved = await _saveNewFlowVersionToServer();
+          if (!saved) {
+            return;
+          }
+          break;
+      }
+    }
+    _createBlankFlowDraft();
+  }
+
+  Future<_SwitchFlowDecision> _promptNewFlowDecision() async {
+    final result = await showDialog<_SwitchFlowDecision>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Unsaved changes'),
+          content: const Text(
+            'You have unsaved changes. Create a new flow anyway?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SwitchFlowDecision.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_SwitchFlowDecision.discard),
+              child: const Text('Discard & New'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_SwitchFlowDecision.updateThenSwitch),
+              child: const Text('Update then New'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? _SwitchFlowDecision.cancel;
+  }
+
+  void _createBlankFlowDraft() {
+    final workspaceId = _selectedWorkspaceId;
+    _controller.clearGraph();
+    _flowTitleController.text = 'Untitled Flow';
+    setState(() {
+      _selectedTabIndex = 0;
+      _selectedNodeId = null;
+      _selectedConnectionId = null;
+      _primaryWriteNodeId = null;
+      _currentFlowDocId = _uuid.v4();
+      _currentFlowVerId = _uuid.v4();
+      _currentFlowWorkspaceId = workspaceId;
+      _currentFlowParents = const <String>[];
+      _isFlowDirty = true;
+      _isCurrentFlowDraft = true;
+      _hasAttemptedRun = false;
+      _lastExportJson = '';
+    });
+    _scheduleFlowValidation(immediate: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _controller.fitToView();
+    });
+    _showSnack('Created new flow draft');
+  }
+
   Future<void> _openFlowByListItem(
     FlowListItem flow, {
     required bool autoOpen,
@@ -4251,6 +4342,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _currentFlowParents = parsed.parents;
       _primaryWriteNodeId = importedPrimaryWriteNodeId;
       _isFlowDirty = false;
+      _isCurrentFlowDraft = false;
       _hasAttemptedRun = false;
     });
     _scheduleFlowValidation(immediate: true);
@@ -4510,6 +4602,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   @visibleForTesting
   bool get debugHasFlowValidationErrors => _flowValidationErrors.isNotEmpty;
+
+  @visibleForTesting
+  bool get debugIsFlowDirty => _isFlowDirty;
 
   @visibleForTesting
   List<String> get debugFlowValidationErrors =>

@@ -172,3 +172,39 @@ func TestListDocumentsByType(t *testing.T) {
 		t.Fatalf("expected ref on second row, got %+v", rows[1].Ref)
 	}
 }
+
+func TestGetLatestDocumentVersion(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	v1 := Document{
+		DocType:     "memory",
+		DocID:       "doc-1",
+		VerID:       "ver-1",
+		WorkspaceID: "ws-1",
+		CreatedAt:   "2026-03-03T00:00:00Z",
+		JSON:        `{"doc_type":"memory","doc_id":"doc-1","ver_id":"ver-1"}`,
+	}
+	v2 := Document{
+		DocType:     "memory",
+		DocID:       "doc-1",
+		VerID:       "ver-2",
+		WorkspaceID: "ws-1",
+		CreatedAt:   "2026-03-03T00:00:01Z",
+		JSON:        `{"doc_type":"memory","doc_id":"doc-1","ver_id":"ver-2"}`,
+	}
+
+	for _, doc := range []Document{v1, v2} {
+		if err := s.PutDocument(ctx, doc); err != nil {
+			t.Fatalf("put document %s: %v", doc.VerID, err)
+		}
+	}
+
+	got, err := s.GetLatestDocumentVersion(ctx, "memory", "doc-1")
+	if err != nil {
+		t.Fatalf("get latest document version: %v", err)
+	}
+	if got.VerID != "ver-2" {
+		t.Fatalf("expected latest ver-2, got %q", got.VerID)
+	}
+}

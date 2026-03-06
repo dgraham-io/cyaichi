@@ -290,7 +290,7 @@ Example:
 
 ## 5.4 Memory (`doc_type: "memory"`)
 
-Memory documents represent governed knowledge entries intended for reuse.
+Memory documents represent governed knowledge entries intended for reuse. In the MVP they also carry collaboration objects such as channels, chat messages, and tasks so the system can keep a single append-only storage model for notes, discussion, and work tracking.
 
 Body:
 
@@ -298,6 +298,7 @@ Body:
 * `type` (required): free-form string (e.g., `decision`, `procedure`)
 * `content` (required): `{ format, body }`
 * `links` (optional): array of `doc_ref` to related flows/runs/artifacts/etc.
+* `attrs` (optional): open-ended structured attributes for collaboration metadata such as authors, assignees, channel ids, task state, and structured refs
 * `provenance` (required):
 
   * `created_by` (open-ended object in v1)
@@ -329,6 +330,25 @@ Example:
   }
 }
 ```
+
+### 5.4.1 Collaboration profile on top of `memory`
+
+The current collaboration MVP stores the following objects as `memory` documents:
+
+* `body.type = "channel"`: a container for workspace, flow, topic, or DM conversation
+* `body.type = "message"`: an append-only chat event authored by a `user` or `agent`
+* `body.type = "task"`: a first-class work item with its own version history and status lifecycle
+
+Common `attrs` conventions:
+
+* `channel.attrs.channel_kind`: `workspace | flow | topic | dm`
+* `message.attrs.author`: `{ kind, id, label }`
+* `message.attrs.refs`: structured references to users, agents, flows, processors, channels, or tasks
+* `task.attrs.status`: `open | in_progress | done`
+* `task.attrs.assignee`: `{ kind, id, label }`
+* `task.attrs.channel_doc_id`: optional parent conversation
+
+This keeps collaboration records queryable and referenceable for future AI retrieval without turning the canonical store into an embedding database. Full-text search and vector embeddings should be treated as derived indexes over these canonical records.
 
 ---
 

@@ -143,6 +143,38 @@ func (s *Store) GetDocument(ctx context.Context, docType, docID, verID string) (
 	return doc, nil
 }
 
+func (s *Store) GetLatestDocumentVersion(ctx context.Context, docType, docID string) (Document, error) {
+	var doc Document
+	err := s.db.QueryRowContext(ctx, `
+		SELECT doc_type, doc_id, ver_id, workspace_id, created_at,
+		       ref, key_namespace, key_name, json
+		FROM documents
+		WHERE doc_type = ? AND doc_id = ?
+		ORDER BY created_at DESC, ver_id DESC
+		LIMIT 1
+	`,
+		docType,
+		docID,
+	).Scan(
+		&doc.DocType,
+		&doc.DocID,
+		&doc.VerID,
+		&doc.WorkspaceID,
+		&doc.CreatedAt,
+		&doc.Ref,
+		&doc.KeyNS,
+		&doc.KeyName,
+		&doc.JSON,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Document{}, ErrDocumentNotFound
+	}
+	if err != nil {
+		return Document{}, fmt.Errorf("get latest document version: %w", err)
+	}
+	return doc, nil
+}
+
 func (s *Store) GetLatestWorkspaceDoc(ctx context.Context, workspaceID string) (Document, error) {
 	var doc Document
 	err := s.db.QueryRowContext(ctx, `

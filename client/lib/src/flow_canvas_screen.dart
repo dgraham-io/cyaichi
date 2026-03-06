@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:client/api/api_client.dart';
+import 'package:client/src/activity/activity_sidebar.dart';
 import 'package:client/src/flow/connection_validation.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/flow/flow_validation.dart';
@@ -78,7 +79,7 @@ List<AppMessage> filterDrawerMessages(List<AppMessage> messages, String query) {
       .toList(growable: false);
 }
 
-Map<String, dynamic> _compactMessageDetails(Map<String, dynamic?> raw) {
+Map<String, dynamic> _compactMessageDetails(Map<String, Object?> raw) {
   final result = <String, dynamic>{};
   raw.forEach((key, value) {
     if (value == null) {
@@ -108,7 +109,7 @@ void logRunStartedMessage({
     title: 'Run started',
     message:
         'Executing flow ${flowTitle.trim().isEmpty ? '(untitled flow)' : flowTitle.trim()}…',
-    details: _compactMessageDetails(<String, dynamic?>{
+    details: _compactMessageDetails(<String, Object?>{
       'workspace_id': workspaceId,
       'flow_doc_id': flowDocId,
       'flow_ver_id': flowVerId,
@@ -132,7 +133,7 @@ void logRunSucceededMessage({
     source: AppMessageSource.server,
     title: 'Run succeeded',
     message: 'Completed in ${durationMs}ms',
-    details: _compactMessageDetails(<String, dynamic?>{
+    details: _compactMessageDetails(<String, Object?>{
       'run_id': runId,
       'run_ver_id': runVerId,
       'output_path': outputPath,
@@ -149,7 +150,7 @@ void logRunWarningMessage({
   String? runVerId,
   Map<String, dynamic>? extraDetails,
 }) {
-  final details = <String, dynamic?>{
+  final details = <String, Object?>{
     'run_id': runId,
     'run_ver_id': runVerId,
     ...?extraDetails,
@@ -173,7 +174,7 @@ void logRunFailedMessage({
   String? nodeId,
   Map<String, dynamic>? extraDetails,
 }) {
-  final details = <String, dynamic?>{
+  final details = <String, Object?>{
     'run_id': runId,
     'run_ver_id': runVerId,
     'error_kind': errorKind,
@@ -201,14 +202,12 @@ class FlowCanvasScreen extends StatefulWidget {
   State<FlowCanvasScreen> createState() => _FlowCanvasScreenState();
 }
 
-class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
+class _FlowCanvasScreenState extends State<FlowCanvasScreen>
+    with SingleTickerProviderStateMixin {
   static const _uuid = Uuid();
 
   static const _defaultServerBaseUrl = 'http://localhost:8080';
   static const _defaultRunRequestTimeoutSeconds = 300;
-  static const _defaultRunInputFile = 'input.txt';
-  static const _defaultRunOutputFile = 'output.txt';
-  static const _outputPreviewLimit = 4000;
 
   static const _prefServerBaseUrl = 'client.server_base_url';
   static const _prefWorkspaceDataRoot = 'client.workspace_data_root';
@@ -230,6 +229,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefMessageDrawerHeight = 'client.message_drawer_height';
 
   late final NodeFlowController<Map<String, dynamic>, dynamic> _controller;
+  late final TabController _rightOverlaySidebarTabController;
   late final TextEditingController _flowTitleController;
   late final TextEditingController _inputFileController;
   late final TextEditingController _outputFileController;
@@ -241,7 +241,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   String _serverBaseUrl = _defaultServerBaseUrl;
   late String _workspaceDataRoot = defaultWorkspaceDataRoot();
-  bool _settingsLoaded = false;
   String _processorTypesStatus = 'cached/fallback';
 
   final List<String> _workspaceIds = <String>[];
@@ -261,27 +260,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isSavingToServer = false;
   bool _isRunning = false;
   String? _connectionRejectReason;
-  String? _runValidationError;
   Timer? _validationDebounce;
   List<String> _flowValidationErrors = const <String>[];
   List<String> _flowValidationWarnings = const <String>[];
-
-  String _lastRunStatus = 'idle';
-  String? _lastRunError;
-  String? _lastRunErrorKind;
-  String? _lastRunErrorNodeId;
-  String? _lastRunErrorCopyText;
-  String? _lastRunErrorCopyJson;
-  String? _lastRunId;
-  String? _lastRunVerId;
-  String? _lastOutputPath;
-  String? _lastOutputContent;
-  String? _lastOutputContentFull;
-  String? _lastOutputArtifactSummary;
-  List<String> _lastRunInvocations = const <String>[];
-  bool _lastRunRetryable = false;
-  bool _lastRunTimedOut = false;
-  Duration? _lastRunDuration;
   int _runRequestToken = 0;
   bool _runWaitCancelled = false;
 
@@ -298,23 +279,15 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   bool _isLoadingWorkspaces = false;
   bool _didShowMissingWorkspaceToast = false;
 
-  bool _flowsLoading = false;
   String? _flowsError;
   List<FlowListItem> _flows = const <FlowListItem>[];
-
-  bool _runsLoading = false;
-  String? _runsError;
-  List<RunListItem> _runs = const <RunListItem>[];
-
-  bool _notesLoading = false;
-  String? _notesError;
-  List<NoteListItem> _notes = const <NoteListItem>[];
 
   String _lastExportJson = '';
   String _nodePaletteSearchQuery = '';
   Timer? _nodePaletteSearchDebounce;
   bool _isRightOverlaySidebarOpen = true;
   double _rightOverlaySidebarWidth = 360;
+  int _rightOverlaySidebarTabIndex = 0;
   double _canvasZoomLevel = 1.0;
   final MessageCenter _messageCenter = MessageCenter.instance;
   bool _isMessageDrawerOpen = false;
@@ -327,6 +300,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _controller = NodeFlowController<Map<String, dynamic>, dynamic>(
       // Use official API toggle from vyuh_node_flow to hide attribution.
       config: NodeFlowConfig(scrollToZoom: false, showAttribution: false),
+    );
+    _rightOverlaySidebarTabController = TabController(length: 3, vsync: this);
+    _rightOverlaySidebarTabController.addListener(
+      _handleRightSidebarTabChanged,
     );
     _flowTitleController = TextEditingController(text: 'My Flow');
     _inputFileController = TextEditingController();
@@ -350,6 +327,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   void dispose() {
     _validationDebounce?.cancel();
     _nodePaletteSearchDebounce?.cancel();
+    _rightOverlaySidebarTabController.removeListener(
+      _handleRightSidebarTabChanged,
+    );
+    _rightOverlaySidebarTabController.dispose();
     _controller.dispose();
     _flowTitleController.dispose();
     _inputFileController.dispose();
@@ -380,6 +361,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
     setState(() {
       _nodePaletteSearchQuery = '';
+    });
+  }
+
+  void _handleRightSidebarTabChanged() {
+    final index = _rightOverlaySidebarTabController.index;
+    if (!mounted || _rightOverlaySidebarTabIndex == index) {
+      return;
+    }
+    setState(() {
+      _rightOverlaySidebarTabIndex = index;
     });
   }
 
@@ -476,7 +467,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _messageDrawerHeight = loadedMessageDrawerHeight;
       _processorTypeRegistry = loadedRegistry;
       _processorTypesStatus = _processorTypesStatusLabel(loadedRegistry.source);
-      _settingsLoaded = true;
     });
 
     unawaited(_refreshNodeTypesFromServer(showFailureSnack: true));
@@ -850,7 +840,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                                                     connection?.id;
                                               });
                                             },
-                                            onConnectEnd: (_, __, ___) {
+                                            onConnectEnd: (_, _, _) {
                                               final reason =
                                                   _connectionRejectReason;
                                               if (reason != null && mounted) {
@@ -1150,155 +1140,90 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     required Node<Map<String, dynamic>>? selectedNode,
     required Connection<dynamic>? selectedConnection,
   }) {
-    return DefaultTabController(
-      length: 3,
-      initialIndex: 0,
-      child: Column(
-        children: [
-          TabBar(
-            onTap: (index) {
-              if (index == 2) {
-                unawaited(_loadNotes());
-              }
-            },
-            tabs: const [
-              Tab(
-                key: Key('sidebar-tab-nodes-button'),
-                icon: Icon(Icons.extension_outlined),
-                text: 'Processors',
-              ),
-              Tab(
-                key: Key('sidebar-tab-inspector-button'),
-                icon: Icon(Icons.tune_outlined),
-                text: 'Inspector',
-              ),
-              Tab(
-                key: Key('sidebar-tab-notes-button'),
-                icon: Icon(Icons.sticky_note_2_outlined),
-                text: 'Notes',
-              ),
-            ],
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: TabBarView(
-              children: [
-                KeyedSubtree(
-                  key: const Key('sidebar_tab_nodes'),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                    child: SizedBox.expand(
-                      child: _ProcessorPalettePanel(
-                        nodeTypes: _processorTypeRegistry.all,
-                        onAddNode: _addNode,
-                        searchController: _nodePaletteSearchController,
-                        searchQuery: _nodePaletteSearchQuery,
-                        onSearchChanged: _onNodePaletteSearchChanged,
-                        onClearSearch: _clearNodePaletteSearch,
-                      ),
+    final currentFlowRef = _currentFlowCollaborationRef();
+    final selectedProcessorRef = _selectedProcessorCollaborationRef();
+    return Column(
+      children: [
+        TabBar(
+          controller: _rightOverlaySidebarTabController,
+          tabs: const [
+            Tab(
+              key: Key('sidebar-tab-nodes-button'),
+              icon: Icon(Icons.extension_outlined),
+              text: 'Processors',
+            ),
+            Tab(
+              key: Key('sidebar-tab-inspector-button'),
+              icon: Icon(Icons.tune_outlined),
+              text: 'Inspector',
+            ),
+            Tab(
+              key: Key('sidebar-tab-activity-button'),
+              icon: Icon(Icons.chat_bubble_outline),
+              text: 'Activity',
+            ),
+          ],
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: TabBarView(
+            controller: _rightOverlaySidebarTabController,
+            children: [
+              KeyedSubtree(
+                key: const Key('sidebar_tab_nodes'),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                  child: SizedBox.expand(
+                    child: _ProcessorPalettePanel(
+                      nodeTypes: _processorTypeRegistry.all,
+                      onAddNode: _addNode,
+                      searchController: _nodePaletteSearchController,
+                      searchQuery: _nodePaletteSearchQuery,
+                      onSearchChanged: _onNodePaletteSearchChanged,
+                      onClearSearch: _clearNodePaletteSearch,
                     ),
                   ),
                 ),
-                KeyedSubtree(
-                  key: const Key('sidebar_tab_inspector'),
-                  child: _InspectorPanel(
-                    selectedNode: selectedNode,
-                    selectedConnection: selectedConnection,
-                    isPrimaryWriteNode:
-                        selectedNode != null &&
-                        selectedNode.type == 'file.write' &&
-                        _isPrimaryWriteNode(selectedNode.id),
-                    nodeType: selectedNode == null
-                        ? null
-                        : _processorTypeRegistry.byType(selectedNode.type),
-                    onTitleChanged: (value) =>
-                        _updateNodeTitle(selectedNode, value),
-                    onConfigChanged: (key, value) =>
-                        _updateNodeConfig(selectedNode, key, value),
-                    onDeleteNode: _deleteSelectedNode,
-                    onDeleteConnection: _deleteSelectedConnection,
-                    onSetPrimaryOutput: selectedNode == null
-                        ? null
-                        : () => _setPrimaryOutputNode(selectedNode.id),
-                  ),
+              ),
+              KeyedSubtree(
+                key: const Key('sidebar_tab_inspector'),
+                child: _InspectorPanel(
+                  selectedNode: selectedNode,
+                  selectedConnection: selectedConnection,
+                  isPrimaryWriteNode:
+                      selectedNode != null &&
+                      selectedNode.type == 'file.write' &&
+                      _isPrimaryWriteNode(selectedNode.id),
+                  nodeType: selectedNode == null
+                      ? null
+                      : _processorTypeRegistry.byType(selectedNode.type),
+                  onTitleChanged: (value) =>
+                      _updateNodeTitle(selectedNode, value),
+                  onConfigChanged: (key, value) =>
+                      _updateNodeConfig(selectedNode, key, value),
+                  onDeleteNode: _deleteSelectedNode,
+                  onDeleteConnection: _deleteSelectedConnection,
+                  onSetPrimaryOutput: selectedNode == null
+                      ? null
+                      : () => _setPrimaryOutputNode(selectedNode.id),
                 ),
-                KeyedSubtree(
-                  key: const Key('sidebar_tab_notes'),
-                  child: _buildNotesSidebarPanel(),
+              ),
+              KeyedSubtree(
+                key: const Key('sidebar_tab_activity'),
+                child: ActivitySidebar(
+                  apiClient: _apiClient,
+                  workspaceId: _selectedWorkspaceId,
+                  currentFlowRef: currentFlowRef,
+                  selectedProcessorRef: selectedProcessorRef,
+                  onNotify: _showSnack,
+                  formatApiError: _formatApiError,
+                  isActive: _rightOverlaySidebarTabIndex == 2,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotesSidebarPanel() {
-    final hasWorkspace = _selectedWorkspaceId != null;
-    final listContent = _buildNotesListContent(
-      emptyWorkspaceMessage: 'Select a workspace to view notes.',
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          FilledButton.tonalIcon(
-            key: const Key('sidebar-notes-new-note-button'),
-            onPressed: hasWorkspace ? _showCreateNoteDialog : null,
-            icon: const Icon(Icons.add),
-            label: const Text('New note'),
-          ),
-          const SizedBox(height: 10),
-          Expanded(child: listContent),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNotesListContent({required String emptyWorkspaceMessage}) {
-    if (_selectedWorkspaceId == null) {
-      return Center(child: Text(emptyWorkspaceMessage));
-    }
-    if (_notesLoading && _notes.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_notesError != null && _notes.isEmpty) {
-      return _ErrorState(
-        title: 'Notes list error',
-        message: _notesError!,
-        onRetry: _loadNotes,
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadNotes,
-      child: _notes.isEmpty
-          ? ListView(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              children: const [
-                Center(child: Text('No notes found for this workspace.')),
-              ],
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: _notes.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final item = _notes[index];
-                return ListTile(
-                  title: Text(item.title.isEmpty ? '(untitled)' : item.title),
-                  subtitle: Text(
-                    '${item.scope} • ${_friendlyDate(item.createdAt)}\n${item.bodyPreview}',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  isThreeLine: true,
-                  onTap: () => _openNote(item),
-                );
-              },
-            ),
+        ),
+      ],
     );
   }
 
@@ -1978,7 +1903,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       await _loadWorkspaces();
       await _loadFlows();
       await _autoOpenFlowForSelectedWorkspace();
-      await _loadNotes();
     } finally {
       if (mounted) {
         setState(() {
@@ -2212,7 +2136,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
     setState(() {
       _hasAttemptedRun = true;
-      _runValidationError = null;
     });
     if (runGuard.blockers.isNotEmpty) {
       _showSnack('Run blocked. Fix flow issues and try again.');
@@ -2338,18 +2261,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     _markFlowDirty();
   }
 
-  void _clearFlowDirty() {
-    if (!_isFlowDirty) {
-      return;
-    }
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _isFlowDirty = false;
-    });
-  }
-
   Future<void> _loadFlows() async {
     final workspaceId = _selectedWorkspaceId;
     if (workspaceId == null) {
@@ -2359,14 +2270,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       setState(() {
         _flows = const <FlowListItem>[];
         _flowsError = null;
-        _flowsLoading = false;
       });
       return;
     }
 
     if (mounted) {
       setState(() {
-        _flowsLoading = true;
         _flowsError = null;
       });
     }
@@ -2385,105 +2294,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
       setState(() {
         _flowsError = _formatApiError(error);
-      });
-    } finally {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _flowsLoading = false;
-      });
-    }
-  }
-
-  Future<void> _loadRuns() async {
-    final workspaceId = _selectedWorkspaceId;
-    if (workspaceId == null) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _runs = const <RunListItem>[];
-        _runsError = null;
-        _runsLoading = false;
-      });
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _runsLoading = true;
-        _runsError = null;
-      });
-    }
-
-    try {
-      final runs = await _apiClient.getRuns(workspaceId: workspaceId);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _runs = runs;
-      });
-    } on ApiError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _runsError = _formatApiError(error);
-      });
-    } finally {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _runsLoading = false;
-      });
-    }
-  }
-
-  Future<void> _loadNotes() async {
-    final workspaceId = _selectedWorkspaceId;
-    if (workspaceId == null) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _notes = const <NoteListItem>[];
-        _notesError = null;
-        _notesLoading = false;
-      });
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _notesLoading = true;
-        _notesError = null;
-      });
-    }
-
-    try {
-      final notes = await _apiClient.getNotes(workspaceId: workspaceId);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _notes = notes;
-      });
-    } on ApiError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _notesError = _formatApiError(error);
-      });
-    } finally {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _notesLoading = false;
       });
     }
   }
@@ -2747,15 +2557,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
     final runGuard = _computeRunGuard(forRunAttempt: true);
     if (!runGuard.canRun) {
-      setState(() {
-        _runValidationError = null;
-      });
       return;
     }
-
-    setState(() {
-      _runValidationError = null;
-    });
 
     final initialWrites = _collectWriteNodeOptions();
     final requiresPrimaryDialog =
@@ -2769,10 +2572,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     if (requiresPrimaryDialog) {
       final selectedNodeId = await _promptPrimaryOutputSelection(initialWrites);
       if (selectedNodeId == null) {
-        setState(() {
-          _runValidationError =
-              'Select a primary output processor or enter output_file to run.';
-        });
         return;
       }
       _setPrimaryOutputNode(selectedNodeId);
@@ -2787,10 +2586,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       preferredPrimaryWriteNodeId: _primaryWriteNodeId,
     );
     if (!validation.isValid || validation.params == null) {
-      setState(() {
-        _runValidationError =
-            validation.errorMessage ?? 'Run validation failed';
-      });
       return;
     }
     final params = validation.params!;
@@ -2811,23 +2606,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
     setState(() {
       _isRunning = true;
-      _lastRunStatus = 'running';
-      _runValidationError = null;
-      _lastRunError = null;
-      _lastRunErrorKind = null;
-      _lastRunErrorNodeId = null;
-      _lastRunErrorCopyText = null;
-      _lastRunErrorCopyJson = null;
-      _lastRunId = null;
-      _lastRunVerId = null;
-      _lastOutputPath = null;
-      _lastOutputContent = null;
-      _lastOutputContentFull = null;
-      _lastOutputArtifactSummary = null;
-      _lastRunInvocations = const <String>[];
-      _lastRunRetryable = false;
-      _lastRunTimedOut = false;
-      _lastRunDuration = null;
     });
     logRunStartedMessage(
       messageCenter: _messageCenter,
@@ -2848,20 +2626,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (mounted) {
         setState(() {
           _isRunning = false;
-          _lastRunStatus = 'failed';
-          _lastRunError = errorMessage;
-          _lastRunErrorKind = 'client';
-          _lastRunErrorNodeId = null;
-          _lastRunErrorCopyText = _buildRunErrorCopyText(
-            title: 'Run failed',
-            message: errorMessage,
-            kind: 'client',
-            workspaceId: workspaceId,
-            flowDocId: _currentFlowDocId,
-            flowVerId: _currentFlowVerId,
-          );
-          _lastRunErrorCopyJson = null;
-          _lastRunTimedOut = false;
         });
       }
       logRunFailedMessage(
@@ -2880,18 +2644,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (mounted) {
         setState(() {
           _isRunning = false;
-          _lastRunStatus = 'failed';
-          _lastRunError = 'Save flow before running.';
-          _lastRunErrorKind = 'client';
-          _lastRunErrorNodeId = null;
-          _lastRunErrorCopyText = _buildRunErrorCopyText(
-            title: 'Run failed',
-            message: 'Save flow before running.',
-            kind: 'client',
-            workspaceId: workspaceId,
-          );
-          _lastRunErrorCopyJson = null;
-          _lastRunTimedOut = false;
         });
       }
       logRunFailedMessage(
@@ -2906,22 +2658,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (mounted) {
         setState(() {
           _isRunning = false;
-          _lastRunStatus = 'failed';
-          _lastRunError =
-              'Open or save a flow in the selected workspace before running.';
-          _lastRunErrorKind = 'client';
-          _lastRunErrorNodeId = null;
-          _lastRunErrorCopyText = _buildRunErrorCopyText(
-            title: 'Run failed',
-            message:
-                'Open or save a flow in the selected workspace before running.',
-            kind: 'client',
-            workspaceId: workspaceId,
-            flowDocId: _currentFlowDocId,
-            flowVerId: _currentFlowVerId,
-          );
-          _lastRunErrorCopyJson = null;
-          _lastRunTimedOut = false;
         });
       }
       logRunFailedMessage(
@@ -2968,11 +2704,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final runBody = runDoc['body'] as Map<String, dynamic>?;
       final status = runBody?['status'] as String? ?? 'succeeded';
       final traceError = _traceErrorDetails(runBody);
-      final invocations = _invocationSummaries(runBody);
 
       String? outputPath;
-      String? outputContent;
-      String? outputContentFull;
       String? outputArtifactSummary;
       String? runError = traceError?.message;
       if (status == 'succeeded') {
@@ -2998,17 +2731,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               .map((item) => item.path)
               .whereType<String>()
               .firstWhere((path) => path.trim().isNotEmpty, orElse: () => '');
-          if (outputPath != null && outputPath!.trim().isEmpty) {
+          if (outputPath.trim().isEmpty) {
             outputPath = null;
           }
         }
-        if (resolution.previewText != null &&
-            resolution.previewText!.trim().isNotEmpty) {
-          outputContentFull = resolution.previewText!;
-          outputContent = outputContentFull.length > _outputPreviewLimit
-              ? '${outputContentFull.substring(0, _outputPreviewLimit)}...'
-              : outputContentFull;
-        } else if (resolution.fallbackMessage != null &&
+        if (resolution.previewText == null &&
+            resolution.fallbackMessage != null &&
             resolution.fallbackMessage!.trim().isNotEmpty) {
           runError = resolution.fallbackMessage!;
         }
@@ -3019,37 +2747,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
 
       setState(() {
-        _lastRunStatus = status;
-        _lastRunId = run.runId;
-        _lastRunVerId = run.runVerId;
-        _lastRunError = runError;
-        _lastRunErrorKind = traceError?.kind;
-        _lastRunErrorNodeId = traceError?.nodeId;
-        _lastRunErrorCopyText = runError == null
-            ? null
-            : _buildRunErrorCopyText(
-                title: status == 'succeeded' ? 'Run warning' : 'Run failed',
-                message: runError,
-                kind: traceError?.kind,
-                nodeId: traceError?.nodeId,
-                runId: run.runId,
-                runVerId: run.runVerId,
-                workspaceId: workspaceId,
-                flowDocId: _currentFlowDocId,
-                flowVerId: _currentFlowVerId,
-              );
-        _lastRunErrorCopyJson = null;
-        _lastOutputPath = outputPath;
-        _lastOutputContent = outputContent;
-        _lastOutputContentFull = outputContentFull;
-        _lastOutputArtifactSummary = outputArtifactSummary;
-        _lastRunInvocations = invocations;
-        _lastRunTimedOut = false;
-        _lastRunDuration = DateTime.now().difference(runStartedAt);
+        _hasAttemptedRun = true;
       });
-      final durationMs =
-          _lastRunDuration?.inMilliseconds ??
-          DateTime.now().difference(runStartedAt).inMilliseconds;
+      final durationMs = DateTime.now().difference(runStartedAt).inMilliseconds;
       if (status == 'succeeded' && runError == null) {
         logRunSucceededMessage(
           messageCenter: _messageCenter,
@@ -3092,14 +2792,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       String? runId;
       String? runVerId;
       _TraceErrorDetails? traceError;
-      List<String> invocationSummaries = const <String>[];
 
       final body = error.responseBody;
       final isRunCreateTimeout =
           error.isTimeout &&
           error.method == 'POST' &&
           error.endpoint == '/v1/runs';
-      final isRetryable = error.isNetwork || error.statusCode == 502;
       if (body != null) {
         final valueRunId = body['run_id'];
         final valueRunVerId = body['run_ver_id'];
@@ -3124,7 +2822,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           final runBody = runDoc['body'] as Map<String, dynamic>?;
           status = runBody?['status'] as String? ?? status;
           traceError = _traceErrorDetails(runBody);
-          invocationSummaries = _invocationSummaries(runBody);
         } on ApiError {
           traceError = null;
         }
@@ -3135,38 +2832,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       }
 
       final timeoutSeconds = error.timeoutSeconds ?? _runRequestTimeoutSeconds;
-      final timeoutOutputPath = params.outputFile;
       final displayErrorMessage = isRunCreateTimeout
           ? 'Run request timed out after ${timeoutSeconds}s; server may still complete.'
           : (traceError?.message ?? _formatApiError(error));
 
       setState(() {
-        _lastRunStatus = isRunCreateTimeout ? 'timed_out' : status;
-        _lastRunId = runId;
-        _lastRunVerId = runVerId;
-        _lastRunError = displayErrorMessage;
-        _lastRunErrorKind = traceError?.kind;
-        _lastRunErrorNodeId = traceError?.nodeId;
-        _lastRunErrorCopyText = _buildRunErrorCopyText(
-          title: 'Run failed',
-          message: displayErrorMessage,
-          kind: traceError?.kind,
-          nodeId: traceError?.nodeId,
-          runId: runId,
-          runVerId: runVerId,
-          workspaceId: workspaceId,
-          flowDocId: _currentFlowDocId,
-          flowVerId: _currentFlowVerId,
-          apiError: error,
-        );
-        _lastRunErrorCopyJson = body == null ? null : jsonEncode(body);
-        _lastRunInvocations = invocationSummaries;
-        _lastRunRetryable = isRunCreateTimeout ? false : isRetryable;
-        _lastRunTimedOut = isRunCreateTimeout;
-        if (isRunCreateTimeout) {
-          _lastOutputPath = timeoutOutputPath;
-        }
-        _lastRunDuration = DateTime.now().difference(runStartedAt);
+        _hasAttemptedRun = true;
       });
       if (isRunCreateTimeout) {
         logRunWarningMessage(
@@ -3203,10 +2874,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (mounted && _isRunRequestActive(runToken)) {
         setState(() {
           _isRunning = false;
-          if (_runWaitCancelled) {
-            _lastRunStatus = 'cancelled';
-            _lastRunError = 'Run wait cancelled by user.';
-          }
         });
       }
     }
@@ -3216,41 +2883,10 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     return token == _runRequestToken && !_runWaitCancelled;
   }
 
-  void _cancelRunWait() {
-    if (!_isRunning) {
-      return;
-    }
-    setState(() {
-      _runWaitCancelled = true;
-      _isRunning = false;
-      _lastRunStatus = 'cancelled';
-      _lastRunError = 'Run wait cancelled by user.';
-    });
-    _showSnack('Run wait cancelled');
-  }
-
   List<String> _collectReadNodeInputDefaults() {
     return _controller.nodes.values
         .where((node) => node.type == 'file.read')
         .map((node) => (_readConfig(node.data)['input_file'] as String?) ?? '')
-        .toList(growable: false);
-  }
-
-  List<String> _invocationSummaries(Map<String, dynamic>? runBody) {
-    if (runBody == null) {
-      return const <String>[];
-    }
-    final invocations = runBody['invocations'];
-    if (invocations is! List<dynamic>) {
-      return const <String>[];
-    }
-    return invocations
-        .whereType<Map<String, dynamic>>()
-        .map((entry) {
-          final nodeId = entry['node_id'] as String? ?? '(unknown)';
-          final status = entry['status'] as String? ?? 'unknown';
-          return '$nodeId: $status';
-        })
         .toList(growable: false);
   }
 
@@ -3437,85 +3073,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         );
       },
     );
-  }
-
-  Future<void> _openRunDetails(RunListItem item) async {
-    final workspaceId = _selectedWorkspaceId;
-    if (workspaceId == null) {
-      return;
-    }
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => _RunDetailsScreen(
-          apiClient: _apiClient,
-          runItem: item,
-          friendlyDate: _friendlyDate,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openLatestRunDetailsFromPanel() async {
-    final workspaceId = _selectedWorkspaceId;
-    final runId = _lastRunId;
-    final runVerId = _lastRunVerId;
-    if (workspaceId == null || runId == null || runVerId == null) {
-      return;
-    }
-    final runItem = RunListItem(
-      docId: runId,
-      verId: runVerId,
-      createdAt: DateTime.now().toIso8601String(),
-      status: _lastRunStatus,
-      mode: 'hybrid',
-    );
-    await _openRunDetails(runItem);
-  }
-
-  Future<void> _openKnownOutputFileFromRunPanel() async {
-    final runId = _lastRunId;
-    final runVerId = _lastRunVerId;
-    if (runId == null || runVerId == null) {
-      _showSnack('Run details are not available yet.');
-      return;
-    }
-    try {
-      final runDoc = await _apiClient.getRun(docId: runId, verId: runVerId);
-      final runBody = runDoc['body'] as Map<String, dynamic>?;
-      final resolution = await resolveRunOutputs(
-        runBody: runBody,
-        fetchArtifactDocument:
-            ({required String docId, required String verId}) {
-              return _apiClient.getDocument(
-                docType: 'artifact',
-                docId: docId,
-                verId: verId,
-              );
-            },
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        final preview = resolution.previewText;
-        if (preview != null && preview.trim().isNotEmpty) {
-          _lastOutputContentFull = preview;
-          _lastOutputContent = preview.length > _outputPreviewLimit
-              ? '${preview.substring(0, _outputPreviewLimit)}...'
-              : preview;
-          _lastRunError = null;
-        } else {
-          _lastRunError =
-              resolution.fallbackMessage ??
-              'Output file created on server. Client cannot read server filesystem.';
-        }
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      _showSnack('Failed to request file preview: $error');
-    }
   }
 
   Future<void> _openFlowFromLibrary(FlowListItem flow) async {
@@ -3719,190 +3276,42 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
-  Future<void> _openNote(NoteListItem item) async {
-    try {
-      final doc = await _apiClient.getNote(
-        docId: item.docId,
-        verId: item.verId,
-      );
-      if (!mounted) {
-        return;
-      }
-      final meta = doc['meta'] as Map<String, dynamic>?;
-      final body = doc['body'] as Map<String, dynamic>?;
-      final content = body?['content'] as Map<String, dynamic>?;
-      final fullBody = content?['body'] as String? ?? '';
-      final title = meta?['title'] as String? ?? '(untitled)';
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          final copyPayload = StringBuffer()
-            ..writeln('title: $title')
-            ..writeln('doc_id: ${item.docId}')
-            ..writeln('ver_id: ${item.verId}')
-            ..writeln('scope: ${item.scope}')
-            ..writeln('')
-            ..write(fullBody);
-          return AlertDialog(
-            title: Text(title),
-            content: SizedBox(
-              width: 720,
-              child: SingleChildScrollView(child: SelectableText(fullBody)),
-            ),
-            actions: [
-              FilledButton.tonalIcon(
-                onPressed: () async {
-                  await Clipboard.setData(
-                    ClipboardData(text: copyPayload.toString()),
-                  );
-                  if (context.mounted) {
-                    _showSnack('Note copied');
-                  }
-                },
-                icon: const Icon(Icons.copy_outlined),
-                label: const Text('Copy'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Close'),
-              ),
-            ],
-          );
-        },
-      );
-    } on ApiError catch (error) {
-      _showSnack(_formatApiError(error));
+  CollaborationRef? _currentFlowCollaborationRef() {
+    if (_currentFlowDocId == null ||
+        _currentFlowVerId == null ||
+        _currentFlowWorkspaceId != _selectedWorkspaceId) {
+      return null;
     }
-  }
-
-  Future<void> _showCreateNoteDialog() async {
-    final workspaceId = _selectedWorkspaceId;
-    if (workspaceId == null) {
-      _showSnack('Select or create a workspace first.');
-      return;
-    }
-    final titleController = TextEditingController();
-    final bodyController = TextEditingController();
-    String scope = 'personal';
-
-    final submitted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('New Note'),
-              content: SizedBox(
-                width: 700,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: scope,
-                      decoration: const InputDecoration(
-                        labelText: 'Scope',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'personal',
-                          child: Text('personal'),
-                        ),
-                        DropdownMenuItem(value: 'team', child: Text('team')),
-                        DropdownMenuItem(value: 'org', child: Text('org')),
-                        DropdownMenuItem(
-                          value: 'public_read',
-                          child: Text('public_read'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          scope = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Title (optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: bodyController,
-                      minLines: 6,
-                      maxLines: 12,
-                      decoration: const InputDecoration(
-                        labelText: 'Body',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Create'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+    return CollaborationRef(
+      kind: 'flow',
+      docId: _currentFlowDocId,
+      verId: _currentFlowVerId,
+      selector: 'pinned',
+      label: _flowTitleController.text.trim().isEmpty
+          ? 'Current Flow'
+          : _flowTitleController.text.trim(),
     );
-
-    if (submitted != true) {
-      titleController.dispose();
-      bodyController.dispose();
-      return;
-    }
-
-    final title = titleController.text.trim();
-    final body = bodyController.text.trim();
-    titleController.dispose();
-    bodyController.dispose();
-
-    if (body.isEmpty) {
-      _showSnack('Note body cannot be empty');
-      return;
-    }
-
-    try {
-      await _apiClient.createNote(
-        workspaceId: workspaceId,
-        scope: scope,
-        title: title,
-        body: body,
-      );
-      await _loadNotes();
-      _showSnack('Note created');
-    } on ApiError catch (error) {
-      _showSnack(_formatApiError(error));
-    }
   }
 
-  String _friendlyDate(String raw) {
-    final parsed = DateTime.tryParse(raw);
-    if (parsed == null) {
-      return raw;
+  CollaborationRef? _selectedProcessorCollaborationRef() {
+    final nodeId = _selectedNodeId;
+    if (nodeId == null || nodeId.trim().isEmpty) {
+      return null;
     }
-    final local = parsed.toLocal();
-    final year = local.year.toString().padLeft(4, '0');
-    final month = local.month.toString().padLeft(2, '0');
-    final day = local.day.toString().padLeft(2, '0');
-    final hour = local.hour.toString().padLeft(2, '0');
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '$year-$month-$day $hour:$minute';
+    final node = _controller.getNode(nodeId);
+    if (node == null) {
+      return null;
+    }
+    return CollaborationRef(
+      kind: 'processor',
+      id: node.id,
+      nodeId: node.id,
+      flowDocId: _currentFlowDocId,
+      flowVerId: _currentFlowVerId,
+      label: ((node.data['title'] as String?)?.trim().isNotEmpty ?? false)
+          ? (node.data['title'] as String).trim()
+          : node.type,
+    );
   }
 
   _TraceErrorDetails? _traceErrorDetails(Map<String, dynamic>? runBody) {
@@ -3989,41 +3398,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           }
         }
       }
-    }
-    return lines.join('\n');
-  }
-
-  String _buildRunErrorCopyText({
-    required String title,
-    required String message,
-    String? kind,
-    String? nodeId,
-    String? runId,
-    String? runVerId,
-    String? workspaceId,
-    String? flowDocId,
-    String? flowVerId,
-    ApiError? apiError,
-  }) {
-    final lines = <String>[
-      'timestamp: ${DateTime.now().toUtc().toIso8601String()}',
-      'title: $title',
-      'message: $message',
-      if (kind != null && kind.trim().isNotEmpty) 'kind: $kind',
-      if (nodeId != null && nodeId.trim().isNotEmpty) 'node_id: $nodeId',
-      if (runId != null && runId.trim().isNotEmpty) 'run_id: $runId',
-      if (runVerId != null && runVerId.trim().isNotEmpty)
-        'run_ver_id: $runVerId',
-      if (workspaceId != null && workspaceId.trim().isNotEmpty)
-        'workspace_id: $workspaceId',
-      if (flowDocId != null && flowDocId.trim().isNotEmpty)
-        'flow_doc_id: $flowDocId',
-      if (flowVerId != null && flowVerId.trim().isNotEmpty)
-        'flow_ver_id: $flowVerId',
-    ];
-    if (apiError != null) {
-      lines.add('');
-      lines.add(_buildApiErrorCopyText(apiError, title: 'API error'));
     }
     return lines.join('\n');
   }
@@ -4426,30 +3800,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     return id.substring(0, 8);
   }
 
-  String _joinPath(String first, String second, String third) {
-    String trimSegment(String value) {
-      return value
-          .replaceAll(RegExp(r'^/+'), '')
-          .replaceAll(RegExp(r'/+$'), '');
-    }
-
-    final leadingDot = first.startsWith('./') ? './' : '';
-    final cleanFirst = trimSegment(first);
-    final cleanSecond = trimSegment(second);
-    final cleanThird = trimSegment(third);
-
-    final joined = [
-      cleanFirst,
-      cleanSecond,
-      cleanThird,
-    ].where((segment) => segment.isNotEmpty).join('/');
-
-    if (leadingDot.isNotEmpty && !joined.startsWith('./')) {
-      return '$leadingDot$joined';
-    }
-    return joined;
-  }
-
   Map<String, dynamic> _readConfig(Map<String, dynamic> data) {
     final config = data['config'];
     if (config is Map<String, dynamic>) {
@@ -4654,7 +4004,7 @@ class _SelectFlowDialogState extends State<_SelectFlowDialog> {
                     )
                   : ListView.separated(
                       itemCount: visibleFlows.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (_, _) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final flow = visibleFlows[index];
                         final title = flow.title.trim().isEmpty
@@ -4977,7 +4327,7 @@ class _ProcessorPalettePanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(
           context,
-        ).colorScheme.surfaceVariant.withValues(alpha: 0.28),
+        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
@@ -5205,471 +4555,6 @@ class _InspectorPanel extends StatelessWidget {
   }
 }
 
-class _RunPanel extends StatelessWidget {
-  const _RunPanel({
-    required this.inputFileController,
-    required this.outputFileController,
-    required this.inputFileHint,
-    required this.outputFileHint,
-    required this.status,
-    required this.blockers,
-    required this.showBlockers,
-    required this.subtleHint,
-    required this.showEmptyHint,
-    required this.validationError,
-    required this.runId,
-    required this.runVerId,
-    required this.error,
-    required this.errorKind,
-    required this.errorNodeId,
-    required this.errorCopyText,
-    required this.errorCopyJson,
-    required this.invocations,
-    required this.outputArtifactSummary,
-    required this.outputPath,
-    required this.outputContent,
-    required this.outputContentFull,
-    required this.isRunning,
-    required this.duration,
-    required this.retryable,
-    required this.runTimedOut,
-    required this.onRetry,
-    required this.onCancel,
-    required this.onOpenRunDetails,
-    required this.onRefreshRuns,
-    required this.onOpenOutputFileFromTimeout,
-    required this.onNotify,
-  });
-
-  final TextEditingController inputFileController;
-  final TextEditingController outputFileController;
-  final String inputFileHint;
-  final String outputFileHint;
-  final String status;
-  final List<String> blockers;
-  final bool showBlockers;
-  final String? subtleHint;
-  final bool showEmptyHint;
-  final String? validationError;
-  final String? runId;
-  final String? runVerId;
-  final String? error;
-  final String? errorKind;
-  final String? errorNodeId;
-  final String? errorCopyText;
-  final String? errorCopyJson;
-  final List<String> invocations;
-  final String? outputArtifactSummary;
-  final String? outputPath;
-  final String? outputContent;
-  final String? outputContentFull;
-  final bool isRunning;
-  final Duration? duration;
-  final bool retryable;
-  final bool runTimedOut;
-  final Future<void> Function() onRetry;
-  final VoidCallback onCancel;
-  final Future<void> Function() onOpenRunDetails;
-  final Future<void> Function() onRefreshRuns;
-  final Future<void> Function() onOpenOutputFileFromTimeout;
-  final ValueChanged<String> onNotify;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 280,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final compact = constraints.maxWidth < 360;
-                if (compact) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Run Panel',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      _RunStatusChip(status: status, isRunning: isRunning),
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    Text(
-                      'Run Panel',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const Spacer(),
-                    _RunStatusChip(status: status, isRunning: isRunning),
-                  ],
-                );
-              },
-            ),
-            if (isRunning)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
-                  children: const [
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 8),
-                    Text('Running...'),
-                  ],
-                ),
-              ),
-            if (validationError != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: ErrorBanner(
-                  title: 'Validation error',
-                  message: validationError!,
-                  copyText:
-                      'title: Validation error\nmessage: ${validationError!}',
-                ),
-              ),
-            if (showEmptyHint)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  'Add processors from the left palette to get started.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            if (!showBlockers && subtleHint != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  'Run unavailable: $subtleHint',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            if (showBlockers && blockers.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: ErrorBanner(
-                  title: 'Run blocked',
-                  message: blockers.map((item) => '• $item').join('\n'),
-                  copyText: 'title: Run blocked\n${blockers.join('\n')}',
-                ),
-              ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: inputFileController,
-              decoration: InputDecoration(
-                labelText: 'input_file',
-                hintText: inputFileHint,
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: outputFileController,
-              decoration: InputDecoration(
-                labelText: 'output_file',
-                hintText: outputFileHint,
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (runId != null) Text('run_id: $runId'),
-            if (runVerId != null) Text('run_ver_id: $runVerId'),
-            if (duration != null)
-              Text('duration: ${duration!.inMilliseconds}ms'),
-            if (outputArtifactSummary != null)
-              Text('output_artifact: $outputArtifactSummary'),
-            if (outputPath != null)
-              SelectionArea(child: Text('output_path: $outputPath')),
-            if (error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: ErrorBanner(
-                  title: 'Run failed',
-                  message: [
-                    if (errorKind != null) 'kind: $errorKind',
-                    if (errorNodeId != null) 'node_id: $errorNodeId',
-                    error!,
-                  ].join('\n'),
-                  copyText: errorCopyText,
-                  copyJsonText: errorCopyJson,
-                ),
-              ),
-            if (invocations.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Invocations',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    const SizedBox(height: 4),
-                    ...invocations.map((line) => Text('• $line')),
-                  ],
-                ),
-              ),
-            if (runId != null && runVerId != null && status == 'failed')
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: FilledButton.tonalIcon(
-                  onPressed: onOpenRunDetails,
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Open run details'),
-                ),
-              ),
-            if (runTimedOut)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.tonalIcon(
-                      onPressed: onRefreshRuns,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Refresh Runs'),
-                    ),
-                    if (outputPath != null && outputPath!.trim().isNotEmpty)
-                      FilledButton.tonalIcon(
-                        onPressed: onOpenOutputFileFromTimeout,
-                        icon: const Icon(Icons.file_open),
-                        label: const Text('Request file preview'),
-                      ),
-                  ],
-                ),
-              ),
-            if ((retryable || isRunning) && !isRunning)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: FilledButton.tonalIcon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
-                ),
-              ),
-            if (isRunning)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: FilledButton.tonalIcon(
-                  onPressed: onCancel,
-                  icon: const Icon(Icons.cancel),
-                  label: const Text('Cancel wait'),
-                ),
-              ),
-            if (outputContent != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outlineVariant,
-                    ),
-                  ),
-                  child: SelectableText(outputContent!),
-                ),
-              ),
-            if (outputContent != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FilledButton.tonalIcon(
-                      onPressed: () async {
-                        await Clipboard.setData(
-                          ClipboardData(text: outputContent!),
-                        );
-                        if (context.mounted) {
-                          onNotify('Output copied to clipboard');
-                        }
-                      },
-                      icon: const Icon(Icons.copy),
-                      label: const Text('Copy output'),
-                    ),
-                    if (outputPath != null)
-                      FilledButton.tonalIcon(
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: outputPath!),
-                          );
-                          if (context.mounted) {
-                            onNotify('Output path copied');
-                          }
-                        },
-                        icon: const Icon(Icons.copy_all),
-                        label: const Text('Copy output file path'),
-                      ),
-                    if (outputContentFull != null &&
-                        outputContentFull!.length > outputContent!.length)
-                      FilledButton.tonalIcon(
-                        onPressed: () {
-                          showDialog<void>(
-                            context: context,
-                            builder: (dialogContext) {
-                              return AlertDialog(
-                                title: const Text('Full output'),
-                                content: SizedBox(
-                                  width: 760,
-                                  child: SingleChildScrollView(
-                                    child: SelectableText(outputContentFull!),
-                                  ),
-                                ),
-                                actions: [
-                                  FilledButton(
-                                    onPressed: () =>
-                                        Navigator.of(dialogContext).pop(),
-                                    child: const Text('Close'),
-                                  ),
-                                ],
-                              );
-                            },
-                          );
-                        },
-                        icon: const Icon(Icons.open_in_full),
-                        label: const Text('Open full'),
-                      ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RunStatusChip extends StatelessWidget {
-  const _RunStatusChip({required this.status, required this.isRunning});
-
-  final String status;
-  final bool isRunning;
-
-  @override
-  Widget build(BuildContext context) {
-    final normalized = isRunning ? 'running' : status;
-    late final Color color;
-    switch (normalized) {
-      case 'succeeded':
-        color = Colors.green;
-        break;
-      case 'failed':
-        color = Theme.of(context).colorScheme.error;
-        break;
-      case 'timed_out':
-        color = Theme.of(context).colorScheme.error;
-        break;
-      case 'running':
-        color = Colors.orange;
-        break;
-      default:
-        color = Theme.of(context).colorScheme.outline;
-        break;
-    }
-
-    return Tooltip(
-      message: normalized,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 150),
-          child: Text(
-            normalized,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(color: color),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
-
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    late final Color color;
-    switch (status) {
-      case 'succeeded':
-        color = Colors.green;
-        break;
-      case 'failed':
-        color = Theme.of(context).colorScheme.error;
-        break;
-      default:
-        color = Theme.of(context).colorScheme.outline;
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        status,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color),
-      ),
-    );
-  }
-}
-
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({
-    required this.title,
-    required this.message,
-    required this.onRetry,
-  });
-
-  final String title;
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ErrorBanner(
-              title: title,
-              message: message,
-              copyText: 'title: $title\nmessage: $message',
-            ),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _MessageDrawerPanel extends StatefulWidget {
   const _MessageDrawerPanel({
     required this.messages,
@@ -5814,7 +4699,7 @@ class _MessageDrawerPanelState extends State<_MessageDrawerPanel> {
                       vertical: 8,
                     ),
                     itemCount: filteredMessages.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final item = filteredMessages[index];
                       return _MessageDrawerItem(message: item);
@@ -6091,276 +4976,6 @@ class _CanvasControlGroup extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _RunDetailsScreen extends StatefulWidget {
-  const _RunDetailsScreen({
-    required this.apiClient,
-    required this.runItem,
-    required this.friendlyDate,
-  });
-
-  final ApiClient apiClient;
-  final RunListItem runItem;
-  final String Function(String raw) friendlyDate;
-
-  @override
-  State<_RunDetailsScreen> createState() => _RunDetailsScreenState();
-}
-
-class _RunDetailsScreenState extends State<_RunDetailsScreen> {
-  bool _loading = true;
-  String? _error;
-  Map<String, dynamic>? _runDoc;
-  String? _outputPreview;
-  String? _outputPreviewError;
-  String? _outputPath;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final runDoc = await widget.apiClient.getRun(
-        docId: widget.runItem.docId,
-        verId: widget.runItem.verId,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _runDoc = runDoc;
-      });
-    } on ApiError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _error = error.toString();
-      });
-    } finally {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _openOutputFile(
-    String outputDocId,
-    String outputVerId,
-    BuildContext context,
-  ) async {
-    setState(() {
-      _outputPreview = null;
-      _outputPreviewError = null;
-      _outputPath = null;
-    });
-
-    try {
-      final runBody = _runDoc?['body'] as Map<String, dynamic>?;
-      final resolution = await resolveRunOutputs(
-        runBody: runBody,
-        fetchArtifactDocument:
-            ({required String docId, required String verId}) {
-              return widget.apiClient.getDocument(
-                docType: 'artifact',
-                docId: docId,
-                verId: verId,
-              );
-            },
-      );
-      final selectedOutput = resolution.outputArtifacts.firstWhere(
-        (item) =>
-            item.ref.docId == outputDocId && item.ref.verId == outputVerId,
-        orElse: () => ResolvedRunOutputArtifact(
-          ref: ArtifactRefId(docId: outputDocId, verId: outputVerId),
-          schema: '',
-          path: null,
-          bytes: null,
-        ),
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _outputPath = selectedOutput.path;
-        final preview = resolution.previewText;
-        if (preview != null && preview.trim().isNotEmpty) {
-          _outputPreview = preview.length > 2000
-              ? '${preview.substring(0, 2000)}...'
-              : preview;
-        } else {
-          _outputPreview = null;
-          _outputPreviewError =
-              resolution.fallbackMessage ??
-              'Output file created on server. Client cannot read server filesystem.';
-        }
-      });
-    } on ApiError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _outputPreviewError = error.toString();
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _outputPreviewError = error.toString();
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final runBody = _runDoc?['body'];
-    final body = runBody is Map<String, dynamic>
-        ? runBody
-        : const <String, dynamic>{};
-    final flowRef = body['flow_ref'];
-    final flowRefMap = flowRef is Map<String, dynamic>
-        ? flowRef
-        : const <String, dynamic>{};
-    final invocations = body['invocations'];
-    final invocationList = invocations is List
-        ? invocations.whereType<Map<String, dynamic>>().toList(growable: false)
-        : const <Map<String, dynamic>>[];
-    final outputs = body['outputs'];
-    final outputList = outputs is List
-        ? outputs.whereType<Map<String, dynamic>>().toList(growable: false)
-        : const <Map<String, dynamic>>[];
-    final traceRef = body['trace_ref'];
-    final traceRefMap = traceRef is Map<String, dynamic>
-        ? traceRef
-        : const <String, dynamic>{};
-    final traceError = traceRefMap['error'];
-    final traceErrorMap = traceError is Map<String, dynamic>
-        ? traceError
-        : const <String, dynamic>{};
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Run Details')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? _ErrorState(
-              title: 'Run details error',
-              message: _error!,
-              onRetry: _load,
-            )
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(
-                  'created_at: ${widget.friendlyDate(widget.runItem.createdAt)}',
-                ),
-                const SizedBox(height: 8),
-                Text('status: ${widget.runItem.status}'),
-                Text('mode: ${widget.runItem.mode}'),
-                const SizedBox(height: 12),
-                Text(
-                  'flow_ref: ${flowRefMap['doc_id'] ?? ''} @ ${flowRefMap['ver_id'] ?? ''}',
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Invocations',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                if (invocationList.isEmpty) const Text('(none)'),
-                ...invocationList.map((invocation) {
-                  return ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(invocation['node_id'] as String? ?? ''),
-                    trailing: _StatusBadge(
-                      status: invocation['status'] as String? ?? 'unknown',
-                    ),
-                  );
-                }),
-                const SizedBox(height: 16),
-                Text('Error', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                if (traceErrorMap.isEmpty) const Text('(none)'),
-                if (traceErrorMap.isNotEmpty)
-                  ErrorBanner(
-                    title: 'Run trace error',
-                    message:
-                        'message: ${traceErrorMap['message'] ?? ''}\nkind: ${traceErrorMap['kind'] ?? ''}\nnode_id: ${traceErrorMap['node_id'] ?? ''}',
-                    copyText:
-                        'title: Run trace error\nrun_id: ${widget.runItem.docId}\nrun_ver_id: ${widget.runItem.verId}\nmessage: ${traceErrorMap['message'] ?? ''}\nkind: ${traceErrorMap['kind'] ?? ''}\nnode_id: ${traceErrorMap['node_id'] ?? ''}',
-                    copyJsonText: jsonEncode(traceErrorMap),
-                  ),
-                const SizedBox(height: 16),
-                Text('Outputs', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                if (outputList.isEmpty) const Text('(none)'),
-                ...outputList.map((outputRef) {
-                  final artifactRefRaw = outputRef['artifact_ref'];
-                  final artifactRef = artifactRefRaw is Map<String, dynamic>
-                      ? artifactRefRaw
-                      : outputRef;
-                  final docId = artifactRef['doc_id'] as String? ?? '';
-                  final verId = artifactRef['ver_id'] as String? ?? '';
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('artifact: $docId @ $verId'),
-                          const SizedBox(height: 8),
-                          FilledButton.tonal(
-                            onPressed: docId.isEmpty || verId.isEmpty
-                                ? null
-                                : () => _openOutputFile(docId, verId, context),
-                            child: const Text('Request file preview'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-                if (_outputPath != null) Text('output_path: $_outputPath'),
-                if (_outputPreviewError != null)
-                  ErrorBanner(
-                    title: 'Output preview error',
-                    message: _outputPreviewError!,
-                    copyText:
-                        'title: Output preview error\nrun_id: ${widget.runItem.docId}\nrun_ver_id: ${widget.runItem.verId}\nmessage: ${_outputPreviewError!}',
-                  ),
-                if (_outputPreview != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                      ),
-                      child: SelectableText(_outputPreview!),
-                    ),
-                  ),
-              ],
-            ),
     );
   }
 }

@@ -347,6 +347,162 @@ class ApiClient {
     return getDocument(docType: 'run', docId: docId, verId: verId);
   }
 
+  Future<List<ChannelListItem>> getChannels({
+    required String workspaceId,
+  }) async {
+    final json = await _requestJson(
+      'GET',
+      '/v1/workspaces/$workspaceId/channels',
+    );
+    return parseChannelListResponse(json);
+  }
+
+  Future<MemoryCreated> createChannel({
+    required String workspaceId,
+    required String scope,
+    required String name,
+    required String kind,
+    String? topic,
+    String? flowDocId,
+    String? flowVerId,
+    String? flowTitle,
+    String createdByKind = 'user',
+    String createdById = 'local-user',
+    String createdByLabel = 'You',
+  }) async {
+    final json = await _requestJson(
+      'POST',
+      '/v1/channels',
+      body: <String, dynamic>{
+        'workspace_id': workspaceId,
+        'scope': scope,
+        'name': name,
+        'kind': kind,
+        'topic': topic ?? '',
+        'flow_doc_id': flowDocId ?? '',
+        'flow_ver_id': flowVerId ?? '',
+        'flow_title': flowTitle ?? '',
+        'created_by': <String, dynamic>{
+          'kind': createdByKind,
+          'id': createdById,
+          'label': createdByLabel,
+        },
+      },
+    );
+    return MemoryCreated(
+      docId: json['doc_id'] as String? ?? '',
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
+  Future<List<MessageListItem>> getMessages({
+    required String channelDocId,
+  }) async {
+    final json = await _requestJson(
+      'GET',
+      '/v1/channels/$channelDocId/messages',
+    );
+    return parseMessageListResponse(json);
+  }
+
+  Future<MemoryCreated> createMessage({
+    required String workspaceId,
+    required String scope,
+    required String channelDocId,
+    required String body,
+    String format = 'markdown',
+    String authorKind = 'user',
+    String authorId = 'local-user',
+    String authorLabel = 'You',
+    List<CollaborationRef> refs = const <CollaborationRef>[],
+  }) async {
+    final json = await _requestJson(
+      'POST',
+      '/v1/messages',
+      body: <String, dynamic>{
+        'workspace_id': workspaceId,
+        'scope': scope,
+        'channel_doc_id': channelDocId,
+        'format': format,
+        'body': body,
+        'author': <String, dynamic>{
+          'kind': authorKind,
+          'id': authorId,
+          'label': authorLabel,
+        },
+        'refs': refs.map((item) => item.toJson()).toList(growable: false),
+      },
+    );
+    return MemoryCreated(
+      docId: json['doc_id'] as String? ?? '',
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
+  Future<List<TaskListItem>> getTasks({required String workspaceId}) async {
+    final json = await _requestJson('GET', '/v1/workspaces/$workspaceId/tasks');
+    return parseTaskListResponse(json);
+  }
+
+  Future<MemoryCreated> createTask({
+    required String workspaceId,
+    required String scope,
+    required String title,
+    required String body,
+    String status = 'open',
+    String? channelDocId,
+    String createdByKind = 'user',
+    String createdById = 'local-user',
+    String createdByLabel = 'You',
+    String assigneeKind = '',
+    String assigneeId = '',
+    String assigneeLabel = '',
+    List<CollaborationRef> refs = const <CollaborationRef>[],
+  }) async {
+    final json = await _requestJson(
+      'POST',
+      '/v1/tasks',
+      body: <String, dynamic>{
+        'workspace_id': workspaceId,
+        'scope': scope,
+        'channel_doc_id': channelDocId ?? '',
+        'title': title,
+        'body': body,
+        'status': status,
+        'created_by': <String, dynamic>{
+          'kind': createdByKind,
+          'id': createdById,
+          'label': createdByLabel,
+        },
+        'assignee': <String, dynamic>{
+          'kind': assigneeKind,
+          'id': assigneeId,
+          'label': assigneeLabel,
+        },
+        'refs': refs.map((item) => item.toJson()).toList(growable: false),
+      },
+    );
+    return MemoryCreated(
+      docId: json['doc_id'] as String? ?? '',
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
+  Future<MemoryCreated> patchTaskStatus({
+    required String taskDocId,
+    required String status,
+  }) async {
+    final json = await _requestJson(
+      'PATCH',
+      '/v1/tasks/$taskDocId',
+      body: <String, dynamic>{'status': status},
+    );
+    return MemoryCreated(
+      docId: json['doc_id'] as String? ?? taskDocId,
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
   Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
     final json = await _requestJson('GET', '/v1/workspaces/$workspaceId/notes');
     return parseNoteListResponse(json);

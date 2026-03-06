@@ -41,13 +41,14 @@ type routeSpec struct {
 type routeHandlerKind string
 
 const (
-	handlerHealth     routeHandlerKind = "health"
-	handlerNodeTypes  routeHandlerKind = "node_types"
-	handlerNotes      routeHandlerKind = "notes"
-	handlerDocs       routeHandlerKind = "docs"
-	handlerWorkspaces routeHandlerKind = "workspaces"
-	handlerRuns       routeHandlerKind = "runs"
-	handlerPackages   routeHandlerKind = "packages"
+	handlerHealth        routeHandlerKind = "health"
+	handlerNodeTypes     routeHandlerKind = "node_types"
+	handlerNotes         routeHandlerKind = "notes"
+	handlerCollaboration routeHandlerKind = "collaboration"
+	handlerDocs          routeHandlerKind = "docs"
+	handlerWorkspaces    routeHandlerKind = "workspaces"
+	handlerRuns          routeHandlerKind = "runs"
+	handlerPackages      routeHandlerKind = "packages"
 )
 
 func buildRouteSpecs() []routeSpec {
@@ -121,6 +122,81 @@ func buildRouteSpecs() []routeSpec {
 					Summary:  "Fetch a specific note version.",
 					Request:  "Path params: doc_id, ver_id.",
 					Response: "200 note envelope JSON; 404 not found.",
+				},
+			},
+		},
+		{
+			Pattern:      "/v1/channels",
+			RequiresData: true,
+			HandlerKind:  handlerCollaboration,
+			Endpoints: []Endpoint{
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodPost,
+					Path:     "/v1/channels",
+					Summary:  "Create a workspace, flow, topic, or direct-message channel.",
+					Request:  "JSON: workspace_id, scope, name, kind, optional topic/flow refs.",
+					Response: "201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace not found.",
+				},
+			},
+		},
+		{
+			Pattern:      "/v1/messages",
+			RequiresData: true,
+			HandlerKind:  handlerCollaboration,
+			Endpoints: []Endpoint{
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodPost,
+					Path:     "/v1/messages",
+					Summary:  "Create a chat message in a channel.",
+					Request:  "JSON: workspace_id, scope, channel_doc_id, body, author, optional refs.",
+					Response: "201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace/channel not found.",
+				},
+			},
+		},
+		{
+			Pattern:      "/v1/channels/",
+			RequiresData: true,
+			HandlerKind:  handlerCollaboration,
+			Endpoints: []Endpoint{
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodGet,
+					Path:     "/v1/channels/{channel_doc_id}/messages",
+					Summary:  "List messages in a channel in timeline order.",
+					Request:  "Path param: channel_doc_id.",
+					Response: "200 JSON { items: [{ doc_id, ver_id, created_at, body, author_*, refs }] }.",
+				},
+			},
+		},
+		{
+			Pattern:      "/v1/tasks",
+			RequiresData: true,
+			HandlerKind:  handlerCollaboration,
+			Endpoints: []Endpoint{
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodPost,
+					Path:     "/v1/tasks",
+					Summary:  "Create a task linked to a workspace or channel.",
+					Request:  "JSON: workspace_id, scope, title, body, optional channel_doc_id/assignee/refs.",
+					Response: "201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace/channel not found.",
+				},
+			},
+		},
+		{
+			Pattern:      "/v1/tasks/",
+			RequiresData: true,
+			HandlerKind:  handlerCollaboration,
+			Endpoints: []Endpoint{
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodPatch,
+					Path:     "/v1/tasks/{task_doc_id}",
+					Summary:  "Write a new task version with updated status.",
+					Request:  "JSON: status.",
+					Response: "200 JSON { doc_id, ver_id }; 400 invalid payload; 404 task not found.",
 				},
 			},
 		},
@@ -224,12 +300,28 @@ func buildRouteSpecs() []routeSpec {
 					Response: "200 JSON { items: [{ doc_id, ver_id, created_at, ref, title }] }.",
 				},
 				{
+					Area:     "Collaboration",
+					Method:   http.MethodGet,
+					Path:     "/v1/workspaces/{workspace_id}/channels",
+					Summary:  "List latest channels for a workspace.",
+					Request:  "Path param: workspace_id.",
+					Response: "200 JSON { items: [{ doc_id, ver_id, created_at, name, kind, topic }] }.",
+				},
+				{
 					Area:     "Runs",
 					Method:   http.MethodGet,
 					Path:     "/v1/workspaces/{workspace_id}/runs",
 					Summary:  "List latest run versions for a workspace.",
 					Request:  "Path param: workspace_id.",
 					Response: "200 JSON { items: [{ doc_id, ver_id, created_at, status, mode }] }.",
+				},
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodGet,
+					Path:     "/v1/workspaces/{workspace_id}/tasks",
+					Summary:  "List latest task versions for a workspace.",
+					Request:  "Path param: workspace_id.",
+					Response: "200 JSON { items: [{ doc_id, ver_id, created_at, title, status, assignee_label }] }.",
 				},
 				{
 					Area:     "Notes",
@@ -320,11 +412,12 @@ func areaOrder(area string) int {
 		"Processor Types":               2,
 		"Node Types (Deprecated Alias)": 3,
 		"Workspaces":                    4,
-		"Docs":                          5,
-		"Flows":                         6,
-		"Runs":                          7,
-		"Notes":                         8,
-		"Packages":                      9,
+		"Collaboration":                 5,
+		"Docs":                          6,
+		"Flows":                         7,
+		"Runs":                          8,
+		"Notes":                         9,
+		"Packages":                      10,
 	}
 	if idx, ok := order[area]; ok {
 		return idx
@@ -374,8 +467,9 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) {
 	}
 	if deps.docStore != nil && deps.validator != nil {
 		nh := &NotesHandler{store: deps.docStore, validator: deps.validator}
+		ch := &CollaborationHandler{store: deps.docStore, validator: deps.validator}
 		dh := &DocsHandler{store: deps.docStore, validator: deps.validator}
-		wh := &WorkspacesHandler{store: deps.docStore, validator: deps.validator, notes: nh, workspaceRoot: deps.workspaceRoot}
+		wh := &WorkspacesHandler{store: deps.docStore, validator: deps.validator, notes: nh, collaboration: ch, workspaceRoot: deps.workspaceRoot}
 		rh := &RunsHandler{
 			service: engine.NewRunService(
 				deps.docStore,
@@ -389,6 +483,7 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) {
 			store:   deps.docStore,
 		}
 		handlers[handlerNotes] = nh.Handle
+		handlers[handlerCollaboration] = ch.Handle
 		handlers[handlerDocs] = dh.Handle
 		handlers[handlerWorkspaces] = wh.Handle
 		handlers[handlerRuns] = rh.Handle

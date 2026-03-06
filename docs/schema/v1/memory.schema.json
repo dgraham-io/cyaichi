@@ -27,6 +27,11 @@
               "type": "array",
               "items": { "$ref": "common.schema.json#/$defs/doc_ref" }
             },
+            "attrs": {
+              "type": "object",
+              "description": "Open-ended structured attributes for collaboration objects such as channels, messages, and tasks.",
+              "additionalProperties": true
+            },
             "provenance": {
               "type": "object",
               "additionalProperties": false,

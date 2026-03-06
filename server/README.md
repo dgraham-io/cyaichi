@@ -280,47 +280,108 @@ OUT_ART_VER=$(echo "$RUN_DOC" | jq -r '.body.outputs[0].artifact_ref.ver_id')
 curl -i "http://127.0.0.1:8080/v1/docs/artifact/$OUT_ART_ID/$OUT_ART_VER"
 ```
 
-## Notes API
+## Collaboration API
 
 Create workspace:
 
 ```bash
 WS_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/workspaces \
   -H 'Content-Type: application/json' \
-  --data-binary '{"name":"Notes Demo"}')
+  --data-binary '{"name":"Collaboration Demo"}')
 WS_ID=$(echo "$WS_RESP" | jq -r '.workspace_id')
 echo "$WS_RESP"
 ```
 
-Create note:
+Set up a flow id/version for a flow-scoped channel reference:
 
 ```bash
-NOTE_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/notes \
+FLOW_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+FLOW_VER=$(uuidgen | tr '[:upper:]' '[:lower:]')
+```
+
+Create channel:
+
+```bash
+CHANNEL_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/channels \
   -H 'Content-Type: application/json' \
   --data-binary "{
-    \"workspace_id\":\"$WS_ID\",
-    \"scope\":\"personal\",
-    \"title\":\"My first note\",
-    \"body\":\"# Notes\\nThis is saved as a memory document.\"
+    \"workspace_id\": \"$WS_ID\",
+    \"scope\": \"team\",
+    \"name\": \"Flow Chat\",
+    \"kind\": \"flow\",
+    \"topic\": \"Discuss rollout decisions\",
+    \"flow_doc_id\": \"$FLOW_ID\",
+    \"flow_ver_id\": \"$FLOW_VER\",
+    \"flow_title\": \"Daily Triage\"
   }")
-echo "$NOTE_RESP"
-NOTE_ID=$(echo "$NOTE_RESP" | jq -r '.doc_id')
-NOTE_VER=$(echo "$NOTE_RESP" | jq -r '.ver_id')
+echo "$CHANNEL_RESP"
+CHANNEL_ID=$(echo "$CHANNEL_RESP" | jq -r '.doc_id')
 ```
 
-List notes:
+List channels:
 
 ```bash
-curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/notes" | jq
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/channels" | jq
 ```
 
-Fetch note by `doc_id` + `ver_id`:
+Post a message with structured refs:
 
 ```bash
-curl -i "http://127.0.0.1:8080/v1/notes/$NOTE_ID/$NOTE_VER"
+MESSAGE_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/messages \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"workspace_id\": \"$WS_ID\",
+    \"scope\": \"team\",
+    \"channel_doc_id\": \"$CHANNEL_ID\",
+    \"format\": \"markdown\",
+    \"body\": \"Please review @planner against the current flow.\",
+    \"author\": {\"kind\": \"user\", \"id\": \"user_1\", \"label\": \"Dana\"},
+    \"refs\": [
+      {\"kind\": \"flow\", \"doc_id\": \"$FLOW_ID\", \"ver_id\": \"$FLOW_VER\", \"selector\": \"pinned\", \"label\": \"Daily Triage\"},
+      {\"kind\": \"agent\", \"id\": \"planner\", \"label\": \"Planner Agent\"}
+    ]
+  }")
+echo "$MESSAGE_RESP"
+```
+
+List messages for a channel:
+
+```bash
+curl -s "http://127.0.0.1:8080/v1/channels/$CHANNEL_ID/messages" | jq
+```
+
+Create task:
+
+```bash
+TASK_RESP=$(curl -s -X POST http://127.0.0.1:8080/v1/tasks \
+  -H 'Content-Type: application/json' \
+  --data-binary "{
+    \"workspace_id\": \"$WS_ID\",
+    \"scope\": \"team\",
+    \"channel_doc_id\": \"$CHANNEL_ID\",
+    \"title\": \"Review rollout prompt\",
+    \"body\": \"Turn the discussion into a concrete processor change.\",
+    \"created_by\": {\"kind\": \"user\", \"id\": \"user_1\", \"label\": \"Dana\"},
+    \"assignee\": {\"kind\": \"agent\", \"id\": \"planner\", \"label\": \"Planner Agent\"},
+    \"refs\": [
+      {\"kind\": \"flow\", \"doc_id\": \"$FLOW_ID\", \"ver_id\": \"$FLOW_VER\", \"selector\": \"pinned\", \"label\": \"Daily Triage\"}
+    ]
+  }")
+echo "$TASK_RESP"
+TASK_ID=$(echo "$TASK_RESP" | jq -r '.doc_id')
+```
+
+Patch task status:
+
+```bash
+curl -s -X PATCH "http://127.0.0.1:8080/v1/tasks/$TASK_ID" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"status":"done"}' | jq
 ```
 
 ## Workspace List Endpoints
+
+Legacy `/v1/notes` endpoints still exist for compatibility, but the current client uses the collaboration endpoints above for the Activity sidebar.
 
 List flows for a workspace:
 
@@ -334,10 +395,16 @@ List runs for a workspace:
 curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/runs" | jq
 ```
 
-List notes for a workspace:
+List channels for a workspace:
 
 ```bash
-curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/notes" | jq
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/channels" | jq
+```
+
+List tasks for a workspace:
+
+```bash
+curl -s "http://127.0.0.1:8080/v1/workspaces/$WS_ID/tasks" | jq
 ```
 
 ## Failed Run Persistence

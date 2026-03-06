@@ -18,6 +18,7 @@ type WorkspacesHandler struct {
 	store         *store.Store
 	validator     *schema.Validator
 	notes         *NotesHandler
+	collaboration *CollaborationHandler
 	workspaceRoot string
 }
 
@@ -128,6 +129,18 @@ func (h *WorkspacesHandler) Handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.notes.HandleWorkspaceList(w, r, workspaceID)
+		case "channels":
+			if h.collaboration == nil {
+				http.NotFound(w, r)
+				return
+			}
+			h.collaboration.HandleWorkspaceChannels(w, r, workspaceID)
+		case "tasks":
+			if h.collaboration == nil {
+				http.NotFound(w, r)
+				return
+			}
+			h.collaboration.HandleWorkspaceTasks(w, r, workspaceID)
 		case "flows":
 			h.handleListFlows(w, r, workspaceID)
 		case "runs":

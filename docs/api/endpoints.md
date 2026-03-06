@@ -36,6 +36,18 @@ Authoritative server HTTP endpoints.
 | GET | `/v1/workspaces/{workspace_id}/heads/{doc_id}` | Get current head version for a document. | Path params: workspace_id, doc_id. | 200 JSON { ver_id }; 404 if unset. |
 | PUT | `/v1/workspaces/{workspace_id}/heads/{doc_id}` | Set head version for a document in a workspace. | JSON: ver_id. | 204 no content; 404 workspace/doc not found. |
 
+## Collaboration
+
+| Method | Path | Purpose | Request | Response |
+| --- | --- | --- | --- | --- |
+| POST | `/v1/channels` | Create a workspace, flow, topic, or direct-message channel. | JSON: workspace_id, scope, name, kind, optional topic/flow refs. | 201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace not found. |
+| GET | `/v1/channels/{channel_doc_id}/messages` | List messages in a channel in timeline order. | Path param: channel_doc_id. | 200 JSON { items: [{ doc_id, ver_id, created_at, body, author_*, refs }] }. |
+| POST | `/v1/messages` | Create a chat message in a channel. | JSON: workspace_id, scope, channel_doc_id, body, author, optional refs. | 201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace/channel not found. |
+| POST | `/v1/tasks` | Create a task linked to a workspace or channel. | JSON: workspace_id, scope, title, body, optional channel_doc_id/assignee/refs. | 201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace/channel not found. |
+| PATCH | `/v1/tasks/{task_doc_id}` | Write a new task version with updated status. | JSON: status. | 200 JSON { doc_id, ver_id }; 400 invalid payload; 404 task not found. |
+| GET | `/v1/workspaces/{workspace_id}/channels` | List latest channels for a workspace. | Path param: workspace_id. | 200 JSON { items: [{ doc_id, ver_id, created_at, name, kind, topic }] }. |
+| GET | `/v1/workspaces/{workspace_id}/tasks` | List latest task versions for a workspace. | Path param: workspace_id. | 200 JSON { items: [{ doc_id, ver_id, created_at, title, status, assignee_label }] }. |
+
 ## Docs
 
 | Method | Path | Purpose | Request | Response |

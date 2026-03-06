@@ -81,30 +81,78 @@ class _WidgetTestApiClient extends ApiClient {
   }
 
   @override
+  Future<List<ChannelListItem>> getChannels({
+    required String workspaceId,
+  }) async {
+    return const <ChannelListItem>[];
+  }
+
+  @override
+  Future<List<MessageListItem>> getMessages({
+    required String channelDocId,
+  }) async {
+    return const <MessageListItem>[];
+  }
+
+  @override
+  Future<List<TaskListItem>> getTasks({required String workspaceId}) async {
+    return const <TaskListItem>[];
+  }
+
+  @override
   Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
     return const <NoteListItem>[];
   }
 }
 
-class _NotesListApiClient extends _WidgetTestApiClient {
+class _ActivityListApiClient extends _WidgetTestApiClient {
   @override
-  Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
-    return <NoteListItem>[
-      NoteListItem(
-        docId: 'note-doc-1',
-        verId: 'note-ver-1',
+  Future<List<ChannelListItem>> getChannels({
+    required String workspaceId,
+  }) async {
+    return <ChannelListItem>[
+      ChannelListItem(
+        docId: 'channel-doc-1',
+        verId: 'channel-ver-1',
         createdAt: '2026-03-06T12:34:00Z',
-        title: 'Daily Log',
-        scope: 'personal',
-        bodyPreview: 'First preview line',
-      ),
-      NoteListItem(
-        docId: 'note-doc-2',
-        verId: 'note-ver-2',
-        createdAt: '2026-03-06T13:00:00Z',
-        title: 'Team Update',
         scope: 'team',
-        bodyPreview: 'Second preview line',
+        name: 'Daily Log',
+        kind: 'workspace',
+        topic: '',
+        flowDocId: '',
+        flowVerId: '',
+        flowTitle: '',
+        isArchived: false,
+      ),
+    ];
+  }
+
+  @override
+  Future<List<MessageListItem>> getMessages({
+    required String channelDocId,
+  }) async {
+    return <MessageListItem>[
+      MessageListItem(
+        docId: 'msg-doc-1',
+        verId: 'msg-ver-1',
+        createdAt: '2026-03-06T12:34:00Z',
+        body: 'First preview line',
+        format: 'markdown',
+        authorKind: 'user',
+        authorId: 'user-1',
+        authorLabel: 'Dana',
+        refs: const <CollaborationRef>[],
+      ),
+      MessageListItem(
+        docId: 'msg-doc-2',
+        verId: 'msg-ver-2',
+        createdAt: '2026-03-06T13:00:00Z',
+        body: 'Second preview line',
+        format: 'markdown',
+        authorKind: 'agent',
+        authorId: 'planner',
+        authorLabel: 'Planner Agent',
+        refs: const <CollaborationRef>[],
       ),
     ];
   }
@@ -150,38 +198,42 @@ void main() {
     expect(find.text('File Read 1'), findsWidgets);
   });
 
-  testWidgets('canvas is always main content and notes live in sidebar tab', (
-    WidgetTester tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1600, 1000));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets(
+    'canvas is always main content and activity lives in sidebar tab',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1600, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
-    });
-    await tester.pumpWidget(
-      MaterialApp(
-        home: FlowCanvasScreen(
-          apiClientFactory:
-              ({
-                required String baseUrl,
-                required int runRequestTimeoutSeconds,
-              }) => _WidgetTestApiClient(),
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlowCanvasScreen(
+            apiClientFactory:
+                ({
+                  required String baseUrl,
+                  required int runRequestTimeoutSeconds,
+                }) => _WidgetTestApiClient(),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('top-nav-group')), findsNothing);
-    expect(find.byKey(const Key('flow-canvas-pane')), findsOneWidget);
+      expect(find.byKey(const Key('top-nav-group')), findsNothing);
+      expect(find.byKey(const Key('flow-canvas-pane')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('sidebar-tab-notes-button')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('sidebar-tab-activity-button')));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('flow-canvas-pane')), findsOneWidget);
-    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
-    expect(find.text('No notes found for this workspace.'), findsOneWidget);
-  });
+      expect(find.byKey(const Key('flow-canvas-pane')), findsOneWidget);
+      expect(find.byKey(const Key('sidebar_tab_activity')), findsOneWidget);
+      expect(
+        find.text('No channels yet. Create a channel to start chatting.'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('app bar shows workspace section on left and new flow button', (
     WidgetTester tester,
@@ -358,7 +410,7 @@ void main() {
 
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsOneWidget);
     expect(find.byKey(const Key('sidebar_tab_inspector')), findsNothing);
-    expect(find.byKey(const Key('sidebar_tab_notes')), findsNothing);
+    expect(find.byKey(const Key('sidebar_tab_activity')), findsNothing);
 
     await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
     await tester.pumpAndSettle();
@@ -367,16 +419,16 @@ void main() {
 
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsNothing);
 
-    await tester.tap(find.byKey(const Key('sidebar-tab-notes-button')));
+    await tester.tap(find.byKey(const Key('sidebar-tab-activity-button')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
+    expect(find.byKey(const Key('sidebar_tab_activity')), findsOneWidget);
     expect(
-      find.byKey(const Key('sidebar-notes-new-note-button')),
+      find.byKey(const Key('sidebar-activity-new-channel-button')),
       findsOneWidget,
     );
   });
 
-  testWidgets('notes sidebar tab loads and renders notes list items', (
+  testWidgets('activity sidebar tab loads and renders chat list items', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -392,18 +444,17 @@ void main() {
               ({
                 required String baseUrl,
                 required int runRequestTimeoutSeconds,
-              }) => _NotesListApiClient(),
+              }) => _ActivityListApiClient(),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('sidebar-tab-notes-button')));
+    await tester.tap(find.byKey(const Key('sidebar-tab-activity-button')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('sidebar_tab_notes')), findsOneWidget);
+    expect(find.byKey(const Key('sidebar_tab_activity')), findsOneWidget);
     expect(find.text('Daily Log'), findsOneWidget);
-    expect(find.text('Team Update'), findsOneWidget);
     expect(find.textContaining('First preview line'), findsOneWidget);
     expect(find.textContaining('Second preview line'), findsOneWidget);
   });

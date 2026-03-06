@@ -28,11 +28,10 @@ flutter run
   - **Flow**: processor editor + save/run controls
   - **Flows**: flow library for list/open/version management
   - **Runs**: recent run history + run details view
-  - **Notes**: notes list + create/view note
 - Three-panel processor editor in Flow tab:
   - left palette (`file.read`, `llm.chat`, `file.write`)
   - center pan/zoom canvas (`vyuh_node_flow`)
-  - right inspector for processor title + config
+  - right sidebar tabs for **Nodes**, **Inspector**, and **Activity**
 - Local JSON tools in Flow tab:
   - **Export JSON** (dialog + clipboard copy)
   - **Import JSON** (paste + rehydrate canvas)
@@ -52,7 +51,10 @@ flutter run
     - invocation statuses
     - `trace_ref.error`
     - output artifact refs + output file preview
-  - create/list/view notes in Notes tab
+  - create/list channels in the Activity sidebar
+  - post chat messages as either `user` or `agent`
+  - create/update tasks linked to the selected channel
+  - attach structured references to users, agents, the current flow, or the selected processor
   - read and display output file contents from local filesystem
 - Client settings (persisted with `SharedPreferences`):
   - `Server base URL` (default `http://localhost:8080`)
@@ -145,9 +147,13 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 - `GET /v1/workspaces/{workspace_id}/runs`
 - `GET /v1/docs/run/{doc_id}/{ver_id}`
 - `GET /v1/docs/artifact/{doc_id}/{ver_id}` (for output preview in run details)
-- `POST /v1/notes`
-- `GET /v1/workspaces/{workspace_id}/notes`
-- `GET /v1/notes/{doc_id}/{ver_id}`
+- `POST /v1/channels`
+- `GET /v1/workspaces/{workspace_id}/channels`
+- `POST /v1/messages`
+- `GET /v1/channels/{channel_doc_id}/messages`
+- `POST /v1/tasks`
+- `PATCH /v1/tasks/{task_doc_id}`
+- `GET /v1/workspaces/{workspace_id}/tasks`
 
 ## End-to-End Walkthrough
 
@@ -170,7 +176,9 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
    - run status + ids in Run Panel
    - output file contents loaded from `{workspace_data_root}/{workspace_id}/output.txt`
 12. Open **Runs** tab to view run history and inspect invocation/output details.
-13. Open **Notes** tab to create a note and verify it appears in list.
+13. Open the right sidebar **Activity** tab.
+14. Create a channel, post a message, and create a task linked to that channel.
+15. Add a flow or processor reference from the message/task dialog and verify the reference chips render in the sidebar.
 
 Flow layout persistence:
 - processor positions are stored in `node.config.ui = {"x": ..., "y": ...}` on save

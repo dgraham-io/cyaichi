@@ -68,7 +68,7 @@ RunRequestValidation buildRunRequestParams({
         enteredOutput.isEmpty) {
       return const RunRequestValidation(
         errorMessage:
-            'Select a primary output node and set output_file, or enter output_file in Run Panel.',
+            'Select a primary output processor and set output_file, or enter output_file in Run Panel.',
         needsPrimarySelection: true,
       );
     }

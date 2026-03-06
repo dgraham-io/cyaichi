@@ -25,14 +25,14 @@ flutter run
   - all workspace actions run through dialogs (no workspace dropdown)
   - dialogs follow Material 3 button hierarchy: **Filled** for primary, **Tonal** for secondary, **Text** for cancel
 - Bottom navigation with four tabs:
-  - **Flow**: node editor + save/run controls
+  - **Flow**: processor editor + save/run controls
   - **Flows**: flow library for list/open/version management
   - **Runs**: recent run history + run details view
   - **Notes**: notes list + create/view note
-- Three-panel node editor in Flow tab:
+- Three-panel processor editor in Flow tab:
   - left palette (`file.read`, `llm.chat`, `file.write`)
   - center pan/zoom canvas (`vyuh_node_flow`)
-  - right inspector for node title + config
+  - right inspector for processor title + config
 - Local JSON tools in Flow tab:
   - **Export JSON** (dialog + clipboard copy)
   - **Import JSON** (paste + rehydrate canvas)
@@ -70,27 +70,27 @@ flutter run
 - **Duplicate** creates a new `doc_id` + new `ver_id` with empty `parents`.
 - **Set Head** maps workspace head for a flow `doc_id` to a specific `ver_id`.
 
-## Node Types Registry
+## Processor Types Registry
 
-- The client fetches node types from the server via `GET /v1/node-types`.
+- The client fetches processor types from the server via `GET /v1/node-types`.
 - The response drives:
   - palette groups/labels
-  - node input/output ports
+  - processor input/output ports
   - inspector config fields (`string` and `bool`)
-- The last successful node type set is cached locally (`SharedPreferences`).
+- The last successful processor type set is cached locally (`SharedPreferences`).
 - If fetch fails, the app falls back to cached or built-in registry and continues offline.
-- Settings shows source status as `Node types: server` or `Node types: cached/fallback`.
+- Settings shows source status as `Processor types: server` or `Processor types: cached/fallback`.
 
-Node config values are always written into flow JSON for forward compatibility.
+Processor config values are always written into flow JSON for forward compatibility.
 Errors are selectable and include a **Copy** button for quick sharing/debugging.
 
 ## Flow Validation (Client-side)
 
 The **Validate Flow** action checks:
-- exactly one `file.read` node
-- exactly one `file.write` node
-- directed connectivity from `file.read` to `file.write` with all nodes on that end-to-end path
-- required node config fields present (`input_file` and `output_file`)
+- exactly one `file.read` processor
+- exactly one `file.write` processor
+- directed connectivity from `file.read` to `file.write` with all processors on that end-to-end path
+- required processor config fields present (`input_file` and `output_file`)
 
 Connection creation is also validated in-editor:
 - only output -> input connections are allowed
@@ -100,28 +100,28 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 
 ## Delete Shortcuts
 
-- Select a node in the canvas and use **Delete node** in Inspector or press `Delete` / `Backspace` (desktop).
+- Select a processor in the canvas and use **Delete processor** in Inspector or press `Delete` / `Backspace` (desktop).
 - Select a connection in the canvas and use **Delete connection** in Inspector or press `Delete` / `Backspace` (desktop).
 
 ## Primary Output for Multi-write Flows
 
-- When a `file.write` node is selected, use **Set as Primary Output** in Inspector.
-- The primary selection is stored in flow JSON as `node.config.primary=true` on the selected write node.
+- When a `file.write` processor is selected, use **Set as Primary Output** in Inspector.
+- The primary selection is stored in flow JSON as `node.config.primary=true` on the selected write processor.
 - Run output selection logic:
-  - if a primary write exists, Run uses that node’s `config.output_file`
-  - else if exactly one `file.write` exists, Run uses that node’s `config.output_file`
-  - else Run prompts you to pick a primary write node before continuing
+  - if a primary write exists, Run uses that processor’s `config.output_file`
+  - else if exactly one `file.write` exists, Run uses that processor’s `config.output_file`
+  - else Run prompts you to pick a primary write processor before continuing
 - Run input selection uses `file.read` `config.input_file` by default, with run-panel input field as override.
 
 ## Run Workflow
 
-- Configure node defaults in Inspector:
+- Configure processor defaults in Inspector:
   - `file.read` -> `input_file`
   - `file.write` -> `output_file`
   - for multiple writes, mark one as `primary`
 - Run parameter precedence in client:
-  - Run Panel value (if provided) overrides node config
-  - otherwise, defaults come from node config (`file.read.input_file`, chosen `file.write.output_file`)
+  - Run Panel value (if provided) overrides processor config
+  - otherwise, defaults come from processor config (`file.read.input_file`, chosen `file.write.output_file`)
 - If required run values are missing, the Run Panel shows inline validation and run is blocked.
 - During run, the panel shows `Running...` progress.
 - After run:
@@ -157,7 +157,7 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
    - Server base URL (for example `http://localhost:8080`)
    - Workspace data root (must match server) (for example `../workspace-data` when launched from `client/`)
 4. Click **New Workspace**.
-5. Add nodes (`file.read`, `llm.chat`, `file.write`) and connect edges.
+5. Add processors (`file.read`, `llm.chat`, `file.write`) and connect edges.
 6. Set run inputs in Run Panel (`input.txt`, `output.txt` by default).
 7. Open **Flows** tab and verify the flow appears in the list.
 8. Click a flow in **Flows** tab to load/re-hydrate it into the canvas.
@@ -173,14 +173,14 @@ MVP structural constraints (for example exactly one `file.read`/`file.write`) ar
 13. Open **Notes** tab to create a note and verify it appears in list.
 
 Flow layout persistence:
-- node positions are stored in `node.config.ui = {"x": ..., "y": ...}` on save
+- processor positions are stored in `node.config.ui = {"x": ..., "y": ...}` on save
 - on open/import, positions are restored and the canvas fits to content
 
 ## MVP Stability Checklist
 
 - Select a workspace before Save/Run (buttons stay disabled otherwise).
 - Build at least one connected graph path before Run:
-  - no nodes or no edges blocks Run with guidance.
+  - no processors or no edges blocks Run with guidance.
   - validation **errors** block Run (warnings do not).
 - Set `file.write` primary output when multiple writes exist; Run prompts if missing.
 - Keep an eye on dirty state:

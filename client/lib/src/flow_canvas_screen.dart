@@ -1309,7 +1309,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               Tab(
                 key: Key('sidebar-tab-nodes-button'),
                 icon: Icon(Icons.extension_outlined),
-                text: 'Nodes',
+                text: 'Processors',
               ),
               Tab(
                 key: Key('sidebar-tab-inspector-button'),
@@ -1684,7 +1684,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Node types: $_nodeTypesStatus',
+                        'Processor types: $_nodeTypesStatus',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
@@ -2368,10 +2368,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       });
       if (showFailureSnack) {
         _showCopyableErrorSnack(
-          message: 'Node types fetch failed. Using cached/fallback registry.',
+          message:
+              'Processor types fetch failed. Using cached/fallback registry.',
           copyText: _buildApiErrorCopyText(
             error,
-            title: 'Node types fetch failed',
+            title: 'Processor types fetch failed',
           ),
         );
       }
@@ -2398,7 +2399,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final nodes = _controller.nodes.values.toList(growable: false);
     final edges = _controller.connections.toList(growable: false);
     if (nodes.isEmpty) {
-      blockers.add('Add at least one node before running.');
+      blockers.add('Add at least one processor before running.');
     }
     if (edges.isEmpty) {
       blockers.add('Create at least one connection before running.');
@@ -2998,7 +2999,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (selectedNodeId == null) {
         setState(() {
           _runValidationError =
-              'Select a primary output node or enter output_file to run.';
+              'Select a primary output processor or enter output_file to run.';
         });
         return;
       }
@@ -3571,9 +3572,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         }
       });
       _markFlowDirty();
-      _showSnack('Node deleted');
+      _showSnack('Processor deleted');
     } catch (error) {
-      _showSnack('Failed to delete node: $error');
+      _showSnack('Failed to delete processor: $error');
     }
   }
 
@@ -5218,7 +5219,7 @@ class _PalettePanel extends StatelessWidget {
               controller: searchController,
               onChanged: onSearchChanged,
               decoration: InputDecoration(
-                hintText: 'Search nodes…',
+                hintText: 'Search processors…',
                 isDense: true,
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: normalizedQuery.isEmpty
@@ -5239,7 +5240,7 @@ class _PalettePanel extends StatelessWidget {
               child: grouped.isEmpty
                   ? Center(
                       child: Text(
-                        'No matching nodes',
+                        'No matching processors',
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
                     )
@@ -5309,7 +5310,7 @@ class _InspectorPanel extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Text(
-            'Select a node to inspect',
+            'Select a processor to inspect',
             style: Theme.of(context).textTheme.bodyLarge,
             textAlign: TextAlign.center,
           ),
@@ -5361,7 +5362,7 @@ class _InspectorPanel extends StatelessWidget {
             key: Key('title-field-${node.id}'),
             initialValue: title,
             decoration: const InputDecoration(
-              labelText: 'Node title',
+              labelText: 'Processor title',
               border: OutlineInputBorder(),
             ),
             onChanged: onTitleChanged,
@@ -5416,7 +5417,7 @@ class _InspectorPanel extends StatelessWidget {
           FilledButton.icon(
             onPressed: onDeleteNode,
             icon: const Icon(Icons.delete),
-            label: const Text('Delete node'),
+            label: const Text('Delete processor'),
           ),
         ],
       ),
@@ -5567,7 +5568,7 @@ class _RunPanel extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 10),
                 child: Text(
-                  'Add nodes from the left palette to get started.',
+                  'Add processors from the left palette to get started.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

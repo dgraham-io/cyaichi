@@ -63,27 +63,31 @@ FlowValidationResult validateFlowGraph({
     final target = nodeById[edge.targetNodeId];
     if (source == null) {
       errors.add(
-        FlowValidationIssue('Edge source node not found: ${edge.sourceNodeId}'),
+        FlowValidationIssue(
+          'Edge source processor not found: ${edge.sourceNodeId}',
+        ),
       );
       continue;
     }
     if (target == null) {
       errors.add(
-        FlowValidationIssue('Edge target node not found: ${edge.targetNodeId}'),
+        FlowValidationIssue(
+          'Edge target processor not found: ${edge.targetNodeId}',
+        ),
       );
       continue;
     }
     if (!source.outputPorts.contains(edge.sourcePortId)) {
       errors.add(
         FlowValidationIssue(
-          'Source port ${edge.sourcePortId} does not exist on node ${source.id}',
+          'Source port ${edge.sourcePortId} does not exist on processor ${source.id}',
         ),
       );
     }
     if (!target.inputPorts.contains(edge.targetPortId)) {
       errors.add(
         FlowValidationIssue(
-          'Target port ${edge.targetPortId} does not exist on node ${target.id}',
+          'Target port ${edge.targetPortId} does not exist on processor ${target.id}',
         ),
       );
     }
@@ -117,21 +121,23 @@ FlowValidationResult validateFlowGraph({
   if (readNodes.length != 1) {
     warnings.add(
       const FlowValidationIssue(
-        'MVP warning: expected exactly one file.read node.',
+        'MVP warning: expected exactly one file.read processor.',
       ),
     );
   }
   if (writeNodes.length != 1) {
     warnings.add(
       const FlowValidationIssue(
-        'MVP warning: expected exactly one file.write node.',
+        'MVP warning: expected exactly one file.write processor.',
       ),
     );
   }
 
   if (primaryWrites.length > 1) {
     errors.add(
-      const FlowValidationIssue('Only one file.write node can be primary.'),
+      const FlowValidationIssue(
+        'Only one file.write processor can be primary.',
+      ),
     );
   }
   if (writeNodes.length > 1 && primaryWrites.isEmpty) {
@@ -143,7 +149,7 @@ FlowValidationResult validateFlowGraph({
     if (outputFile.isEmpty) {
       errors.add(
         const FlowValidationIssue(
-          'Primary output node is missing output_file.',
+          'Primary output processor is missing output_file.',
         ),
       );
     }
@@ -183,7 +189,7 @@ FlowValidationResult validateFlowGraph({
           !canReachEnd.contains(node.id)) {
         warnings.add(
           FlowValidationIssue(
-            'MVP warning: node ${node.id} is outside single end-to-end chain.',
+            'MVP warning: processor ${node.id} is outside single end-to-end chain.',
           ),
         );
       }

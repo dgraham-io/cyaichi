@@ -358,7 +358,7 @@ void main() {
     await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('sidebar_tab_inspector')), findsOneWidget);
-    expect(find.text('Select a node to inspect'), findsOneWidget);
+    expect(find.text('Select a processor to inspect'), findsOneWidget);
 
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsNothing);
   });

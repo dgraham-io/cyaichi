@@ -82,49 +82,35 @@ void main() {
     });
   });
 
-  testWidgets(
-    'run panel shows run blocked after run attempt when output_file missing',
-    (WidgetTester tester) async {
-      await tester.binding.setSurfaceSize(const Size(1600, 1000));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('run stays blocked when required output_file is missing', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: FlowCanvasScreen(
-            apiClientFactory:
-                ({
-                  required String baseUrl,
-                  required int runRequestTimeoutSeconds,
-                }) => _RunPanelApiClient(),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _RunPanelApiClient(),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('add-file.write')));
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add-file.write')));
+    await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const Key('sidebar-tab-runs-button')));
-      await tester.pumpAndSettle();
-
-      final inputField = find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField && widget.decoration?.labelText == 'input_file',
-      );
-      expect(inputField, findsOneWidget);
-      await tester.enterText(inputField, 'input.txt');
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('output_file is required'), findsNothing);
-
-      final runButton = tester.widget<IconButton>(
-        find.byKey(const Key('flow-title-run-button')),
-      );
-      expect(runButton.onPressed, isNull);
-      expect(
-        find.byKey(const Key('flow-title-run-blocked-overlay')),
-        findsOneWidget,
-      );
-    },
-  );
+    final runButton = tester.widget<IconButton>(
+      find.byKey(const Key('flow-title-run-button')),
+    );
+    expect(runButton.onPressed, isNull);
+    expect(
+      find.byKey(const Key('flow-title-run-blocked-overlay')),
+      findsOneWidget,
+    );
+  });
 }

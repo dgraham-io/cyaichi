@@ -78,6 +78,117 @@ List<AppMessage> filterDrawerMessages(List<AppMessage> messages, String query) {
       .toList(growable: false);
 }
 
+Map<String, dynamic> _compactMessageDetails(Map<String, dynamic?> raw) {
+  final result = <String, dynamic>{};
+  raw.forEach((key, value) {
+    if (value == null) {
+      return;
+    }
+    if (value is String && value.trim().isEmpty) {
+      return;
+    }
+    result[key] = value;
+  });
+  return result;
+}
+
+@visibleForTesting
+void logRunStartedMessage({
+  required MessageCenter messageCenter,
+  required String flowTitle,
+  required String workspaceId,
+  String? flowDocId,
+  String? flowVerId,
+  required String inputFile,
+  required String outputFile,
+}) {
+  messageCenter.log(
+    level: AppMessageLevel.info,
+    source: AppMessageSource.app,
+    title: 'Run started',
+    message:
+        'Executing flow ${flowTitle.trim().isEmpty ? '(untitled flow)' : flowTitle.trim()}…',
+    details: _compactMessageDetails(<String, dynamic?>{
+      'workspace_id': workspaceId,
+      'flow_doc_id': flowDocId,
+      'flow_ver_id': flowVerId,
+      'input_file': inputFile,
+      'output_file': outputFile,
+    }),
+  );
+}
+
+@visibleForTesting
+void logRunSucceededMessage({
+  required MessageCenter messageCenter,
+  required int durationMs,
+  String? runId,
+  String? runVerId,
+  String? outputPath,
+  String? outputArtifactSummary,
+}) {
+  messageCenter.log(
+    level: AppMessageLevel.success,
+    source: AppMessageSource.server,
+    title: 'Run succeeded',
+    message: 'Completed in ${durationMs}ms',
+    details: _compactMessageDetails(<String, dynamic?>{
+      'run_id': runId,
+      'run_ver_id': runVerId,
+      'output_path': outputPath,
+      'output_artifacts': outputArtifactSummary,
+    }),
+  );
+}
+
+@visibleForTesting
+void logRunWarningMessage({
+  required MessageCenter messageCenter,
+  required String message,
+  String? runId,
+  String? runVerId,
+  Map<String, dynamic>? extraDetails,
+}) {
+  final details = <String, dynamic?>{
+    'run_id': runId,
+    'run_ver_id': runVerId,
+    ...?extraDetails,
+  };
+  messageCenter.log(
+    level: AppMessageLevel.warn,
+    source: AppMessageSource.server,
+    title: 'Run warning',
+    message: message,
+    details: _compactMessageDetails(details),
+  );
+}
+
+@visibleForTesting
+void logRunFailedMessage({
+  required MessageCenter messageCenter,
+  required String message,
+  String? runId,
+  String? runVerId,
+  String? errorKind,
+  String? nodeId,
+  Map<String, dynamic>? extraDetails,
+}) {
+  final details = <String, dynamic?>{
+    'run_id': runId,
+    'run_ver_id': runVerId,
+    'error_kind': errorKind,
+    'node_id': nodeId,
+    ...?extraDetails,
+  };
+  messageCenter.log(
+    level: AppMessageLevel.error,
+    source: AppMessageSource.server,
+    title: 'Run failed',
+    message: message,
+    details: _compactMessageDetails(details),
+  );
+}
+
 class FlowCanvasScreen extends StatefulWidget {
   const FlowCanvasScreen({
     super.key,
@@ -563,9 +674,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       return;
     }
     if (index == 1) {
-      await _loadRuns();
-    }
-    if (index == 2) {
       await _loadNotes();
     }
   }
@@ -598,11 +706,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               ),
               ButtonSegment<int>(
                 value: 1,
-                icon: Icon(Icons.history, size: 20),
-                label: Text('Runs'),
-              ),
-              ButtonSegment<int>(
-                value: 2,
                 icon: Icon(Icons.sticky_note_2_outlined, size: 20),
                 label: Text('Notes'),
               ),
@@ -722,9 +825,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       ),
       body: IndexedStack(
         index: _selectedTabIndex,
-        children: [_buildFlowTab(), _buildRunsTab(), _buildNotesTab()],
+        children: [_buildFlowTab(), _buildNotesTab()],
       ),
-      floatingActionButton: _selectedTabIndex == 2
+      floatingActionButton: _selectedTabIndex == 1
           ? FloatingActionButton.extended(
               onPressed: _selectedWorkspaceId == null
                   ? null
@@ -1190,16 +1293,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     );
   }
 
-  void _onSidebarTabSelected(int index) {
-    switch (index) {
-      case 2:
-        unawaited(_loadRuns());
-        break;
-      default:
-        break;
-    }
-  }
-
   Widget _buildRightOverlaySidebarTabs({
     required Node<Map<String, dynamic>>? selectedNode,
     required Connection<dynamic>? selectedConnection,
@@ -1207,12 +1300,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     required List<Node<Map<String, dynamic>>> nodes,
   }) {
     return DefaultTabController(
-      length: 3,
+      length: 2,
       initialIndex: 0,
       child: Column(
         children: [
           TabBar(
-            onTap: _onSidebarTabSelected,
             tabs: const [
               Tab(
                 key: Key('sidebar-tab-nodes-button'),
@@ -1223,11 +1315,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                 key: Key('sidebar-tab-inspector-button'),
                 icon: Icon(Icons.tune_outlined),
                 text: 'Inspector',
-              ),
-              Tab(
-                key: Key('sidebar-tab-runs-button'),
-                icon: Icon(Icons.history),
-                text: 'Runs',
               ),
             ],
           ),
@@ -1272,60 +1359,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     onSetPrimaryOutput: selectedNode == null
                         ? null
                         : () => _setPrimaryOutputNode(selectedNode.id),
-                  ),
-                ),
-                KeyedSubtree(
-                  key: const Key('sidebar_tab_runs'),
-                  child: Column(
-                    children: [
-                      _RunPanel(
-                        inputFileController: _inputFileController,
-                        outputFileController: _outputFileController,
-                        inputFileHint: _defaultRunInputFile,
-                        outputFileHint: _defaultRunOutputFile,
-                        status: _lastRunStatus,
-                        blockers: runGuard.blockers,
-                        showBlockers: _hasAttemptedRun,
-                        subtleHint:
-                            !_hasAttemptedRun && runGuard.blockers.isNotEmpty
-                            ? runGuard.blockers.first
-                            : null,
-                        showEmptyHint: nodes.isEmpty,
-                        validationError: _runValidationError,
-                        runId: _lastRunId,
-                        runVerId: _lastRunVerId,
-                        error: _lastRunError,
-                        errorKind: _lastRunErrorKind,
-                        errorNodeId: _lastRunErrorNodeId,
-                        errorCopyText: _lastRunErrorCopyText,
-                        errorCopyJson: _lastRunErrorCopyJson,
-                        invocations: _lastRunInvocations,
-                        outputArtifactSummary: _lastOutputArtifactSummary,
-                        outputPath: _lastOutputPath,
-                        outputContent: _lastOutputContent,
-                        outputContentFull: _lastOutputContentFull,
-                        isRunning: _isRunning,
-                        duration: _lastRunDuration,
-                        retryable: _lastRunRetryable,
-                        runTimedOut: _lastRunTimedOut,
-                        onRetry: _runFlow,
-                        onCancel: _cancelRunWait,
-                        onOpenRunDetails: _openLatestRunDetailsFromPanel,
-                        onRefreshRuns: _loadRuns,
-                        onOpenOutputFileFromTimeout:
-                            _openKnownOutputFileFromRunPanel,
-                        onNotify: _showSnack,
-                      ),
-                      const Divider(height: 1),
-                      Expanded(
-                        child: _buildRunsListPanel(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ],
@@ -2409,7 +2442,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _runValidationError = null;
     });
     if (runGuard.blockers.isNotEmpty) {
-      _showSnack('Run blocked. Review requirements in Run Panel.');
+      _showSnack('Run blocked. Fix flow issues and try again.');
     }
   }
 
@@ -3023,23 +3056,32 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _lastRunTimedOut = false;
       _lastRunDuration = null;
     });
-    _showSnack('Running...');
+    logRunStartedMessage(
+      messageCenter: _messageCenter,
+      flowTitle: _flowTitleController.text,
+      workspaceId: workspaceId,
+      flowDocId: _currentFlowDocId,
+      flowVerId: _currentFlowVerId,
+      inputFile: params.inputFile,
+      outputFile: params.outputFile,
+    );
 
     final saveDecision = await ensureFlowSavedForRun(
       isFlowDirty: _isFlowDirty,
       saveNewVersion: _saveNewFlowVersionToServer,
     );
     if (!saveDecision.shouldContinue) {
+      final errorMessage = saveDecision.errorMessage ?? 'Run preflight failed.';
       if (mounted) {
         setState(() {
           _isRunning = false;
           _lastRunStatus = 'failed';
-          _lastRunError = saveDecision.errorMessage ?? 'Run preflight failed.';
+          _lastRunError = errorMessage;
           _lastRunErrorKind = 'client';
           _lastRunErrorNodeId = null;
           _lastRunErrorCopyText = _buildRunErrorCopyText(
             title: 'Run failed',
-            message: saveDecision.errorMessage ?? 'Run preflight failed.',
+            message: errorMessage,
             kind: 'client',
             workspaceId: workspaceId,
             flowDocId: _currentFlowDocId,
@@ -3049,6 +3091,16 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _lastRunTimedOut = false;
         });
       }
+      logRunFailedMessage(
+        messageCenter: _messageCenter,
+        message: errorMessage,
+        errorKind: 'client',
+        extraDetails: <String, dynamic>{
+          'workspace_id': workspaceId,
+          'flow_doc_id': _currentFlowDocId,
+          'flow_ver_id': _currentFlowVerId,
+        },
+      );
       return;
     }
     if (_currentFlowDocId == null || _currentFlowVerId == null) {
@@ -3069,7 +3121,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _lastRunTimedOut = false;
         });
       }
-      _showSnack('Run failed');
+      logRunFailedMessage(
+        messageCenter: _messageCenter,
+        message: 'Save flow before running.',
+        errorKind: 'client',
+        extraDetails: <String, dynamic>{'workspace_id': workspaceId},
+      );
       return;
     }
     if (_currentFlowWorkspaceId != workspaceId) {
@@ -3094,7 +3151,17 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           _lastRunTimedOut = false;
         });
       }
-      _showSnack('Run failed');
+      logRunFailedMessage(
+        messageCenter: _messageCenter,
+        message:
+            'Open or save a flow in the selected workspace before running.',
+        errorKind: 'client',
+        extraDetails: <String, dynamic>{
+          'workspace_id': workspaceId,
+          'flow_doc_id': _currentFlowDocId,
+          'flow_ver_id': _currentFlowVerId,
+        },
+      );
       return;
     }
 
@@ -3207,7 +3274,46 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunTimedOut = false;
         _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
-      _showSnack(status == 'succeeded' ? 'Run succeeded' : 'Run failed');
+      final durationMs =
+          _lastRunDuration?.inMilliseconds ??
+          DateTime.now().difference(runStartedAt).inMilliseconds;
+      if (status == 'succeeded' && runError == null) {
+        logRunSucceededMessage(
+          messageCenter: _messageCenter,
+          durationMs: durationMs,
+          runId: run.runId,
+          runVerId: run.runVerId,
+          outputPath: outputPath,
+          outputArtifactSummary: outputArtifactSummary,
+        );
+      } else if (status == 'succeeded') {
+        logRunWarningMessage(
+          messageCenter: _messageCenter,
+          message: runError ?? 'Run succeeded with warnings.',
+          runId: run.runId,
+          runVerId: run.runVerId,
+          extraDetails: <String, dynamic>{
+            'workspace_id': workspaceId,
+            'flow_doc_id': _currentFlowDocId,
+            'flow_ver_id': _currentFlowVerId,
+            'output_path': outputPath,
+          },
+        );
+      } else {
+        logRunFailedMessage(
+          messageCenter: _messageCenter,
+          message: runError ?? 'Run failed',
+          runId: run.runId,
+          runVerId: run.runVerId,
+          errorKind: traceError?.kind,
+          nodeId: traceError?.nodeId,
+          extraDetails: <String, dynamic>{
+            'workspace_id': workspaceId,
+            'flow_doc_id': _currentFlowDocId,
+            'flow_ver_id': _currentFlowVerId,
+          },
+        );
+      }
     } on ApiError catch (error) {
       String status = 'failed';
       String? runId;
@@ -3258,7 +3364,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final timeoutSeconds = error.timeoutSeconds ?? _runRequestTimeoutSeconds;
       final timeoutOutputPath = params.outputFile;
       final displayErrorMessage = isRunCreateTimeout
-          ? 'Run request timed out after ${timeoutSeconds}s. The run may have completed. Check Runs tab.'
+          ? 'Run request timed out after ${timeoutSeconds}s; server may still complete.'
           : (traceError?.message ?? _formatApiError(error));
 
       setState(() {
@@ -3290,11 +3396,35 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         _lastRunDuration = DateTime.now().difference(runStartedAt);
       });
       if (isRunCreateTimeout) {
-        _showSnack(
-          'Run request timed out after ${timeoutSeconds}s. The run may have completed.',
+        logRunWarningMessage(
+          messageCenter: _messageCenter,
+          message: 'Run request timed out; server may still complete.',
+          runId: runId,
+          runVerId: runVerId,
+          extraDetails: <String, dynamic>{
+            'workspace_id': workspaceId,
+            'flow_doc_id': _currentFlowDocId,
+            'flow_ver_id': _currentFlowVerId,
+            'output_file': params.outputFile,
+            'timeout_seconds': timeoutSeconds,
+          },
         );
       } else {
-        _showSnack('Run failed');
+        logRunFailedMessage(
+          messageCenter: _messageCenter,
+          message: displayErrorMessage,
+          runId: runId,
+          runVerId: runVerId,
+          errorKind: traceError?.kind,
+          nodeId: traceError?.nodeId,
+          extraDetails: <String, dynamic>{
+            'workspace_id': workspaceId,
+            'flow_doc_id': _currentFlowDocId,
+            'flow_ver_id': _currentFlowVerId,
+            if ((error.endpoint ?? '').isNotEmpty) 'endpoint': error.endpoint,
+            if (error.statusCode != null) 'status_code': error.statusCode,
+          },
+        );
       }
     } finally {
       if (mounted && _isRunRequestActive(runToken)) {
@@ -3306,7 +3436,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
           }
         });
       }
-      await _loadRuns();
     }
   }
 

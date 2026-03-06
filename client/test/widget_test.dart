@@ -126,7 +126,7 @@ void main() {
     expect(find.text('File Read 1'), findsWidgets);
   });
 
-  testWidgets('top nav group renders without flows and switches tabs', (
+  testWidgets('top nav group renders without flows/runs and switches tabs', (
     WidgetTester tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -160,7 +160,7 @@ void main() {
     );
     expect(
       find.descendant(of: topNavFinder, matching: find.text('Runs')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.descendant(of: topNavFinder, matching: find.text('Notes')),
@@ -168,11 +168,11 @@ void main() {
     );
 
     await tester.tap(
-      find.descendant(of: topNavFinder, matching: find.text('Runs')),
+      find.descendant(of: topNavFinder, matching: find.text('Notes')),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No runs found for this workspace.'), findsOneWidget);
+    expect(find.text('No notes found for this workspace.'), findsOneWidget);
   });
 
   testWidgets('app bar shows workspace section on left and new flow button', (
@@ -351,16 +351,16 @@ void main() {
     expect(find.byKey(const Key('sidebar_tab_nodes')), findsOneWidget);
     expect(find.byKey(const Key('sidebar_tab_inspector')), findsNothing);
     expect(find.byKey(const Key('sidebar_tab_runs')), findsNothing);
+    expect(find.byKey(const Key('sidebar-tab-runs-button')), findsNothing);
     expect(find.text('Flows'), findsNothing);
+    expect(find.text('Runs'), findsNothing);
 
     await tester.tap(find.byKey(const Key('sidebar-tab-inspector-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('sidebar_tab_inspector')), findsOneWidget);
     expect(find.text('Select a node to inspect'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('sidebar-tab-runs-button')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('sidebar_tab_runs')), findsOneWidget);
+    expect(find.byKey(const Key('sidebar_tab_nodes')), findsNothing);
   });
 
   testWidgets('message drawer log row renders and copy action works', (

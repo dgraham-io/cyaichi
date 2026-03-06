@@ -5,7 +5,7 @@ import 'package:client/api/api_client.dart';
 import 'package:client/src/flow/connection_validation.dart';
 import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/flow/flow_validation.dart';
-import 'package:client/src/flow/node_registry.dart';
+import 'package:client/src/flow/processor_registry.dart';
 import 'package:client/src/flow/primary_output.dart';
 import 'package:client/src/flow/run_request_builder.dart';
 import 'package:client/src/flow/run_preflight.dart';
@@ -215,7 +215,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   static const _prefSelectedWorkspaceId = 'client.selected_workspace_id';
   static const _prefHiddenWorkspaceIDs = 'client.hidden_workspace_ids';
   static const _prefAutoSetHeadOnSave = 'client.auto_set_head_on_save';
-  static const _prefNodeTypesCache = 'client.node_types.cache.v1';
+  static const _prefProcessorTypesCache = 'client.node_types.cache.v1';
   static const _prefRunRequestTimeoutSeconds =
       'client.run_request_timeout_seconds';
   static const _prefLastOpenedFlowWorkspaceId =
@@ -236,12 +236,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   late final TextEditingController _nodePaletteSearchController;
 
   late ApiClient _apiClient;
-  NodeTypeRegistry _nodeTypeRegistry = NodeTypeRegistry.fallback();
+  ProcessorTypeRegistry _processorTypeRegistry =
+      ProcessorTypeRegistry.fallback();
 
   String _serverBaseUrl = _defaultServerBaseUrl;
   late String _workspaceDataRoot = defaultWorkspaceDataRoot();
   bool _settingsLoaded = false;
-  String _nodeTypesStatus = 'cached/fallback';
+  String _processorTypesStatus = 'cached/fallback';
 
   final List<String> _workspaceIds = <String>[];
   final Map<String, String> _workspaceNames = <String, String>{};
@@ -423,12 +424,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     final loadedMessageDrawerHeight =
         prefs.getDouble(_prefMessageDrawerHeight) ??
         (prefs.getInt(_prefMessageDrawerHeight)?.toDouble() ?? 220);
-    final nodeTypeCacheRaw = prefs.getString(_prefNodeTypesCache);
+    final nodeTypeCacheRaw = prefs.getString(_prefProcessorTypesCache);
 
     _apiClient.close();
     _apiClient = _createApiClient(loadedBaseUrl, loadedRunRequestTimeout);
 
-    var loadedRegistry = NodeTypeRegistry.fallback();
+    var loadedRegistry = ProcessorTypeRegistry.fallback();
     if (nodeTypeCacheRaw != null && nodeTypeCacheRaw.trim().isNotEmpty) {
       try {
         final decoded = jsonDecode(nodeTypeCacheRaw);
@@ -437,13 +438,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
               .whereType<Map<String, dynamic>>()
               .map(NodeTypeDef.fromJson)
               .toList(growable: false);
-          loadedRegistry = NodeTypeRegistry.fromServerNodeTypes(
+          loadedRegistry = ProcessorTypeRegistry.fromServerProcessorTypes(
             cachedDefs,
-            source: NodeTypeRegistrySource.cached,
+            source: ProcessorTypeRegistrySource.cached,
           );
         }
       } catch (_) {
-        loadedRegistry = NodeTypeRegistry.fallback();
+        loadedRegistry = ProcessorTypeRegistry.fallback();
       }
     }
 
@@ -475,8 +476,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       _rightOverlaySidebarWidth = loadedRightOverlaySidebarWidth;
       _isMessageDrawerOpen = loadedMessageDrawerOpen;
       _messageDrawerHeight = loadedMessageDrawerHeight;
-      _nodeTypeRegistry = loadedRegistry;
-      _nodeTypesStatus = _nodeTypesStatusLabel(loadedRegistry.source);
+      _processorTypeRegistry = loadedRegistry;
+      _processorTypesStatus = _processorTypesStatusLabel(loadedRegistry.source);
       _settingsLoaded = true;
     });
 
@@ -1327,8 +1328,8 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
                     child: SizedBox.expand(
-                      child: _PalettePanel(
-                        nodeTypes: _nodeTypeRegistry.all,
+                      child: _ProcessorPalettePanel(
+                        nodeTypes: _processorTypeRegistry.all,
                         onAddNode: _addNode,
                         searchController: _nodePaletteSearchController,
                         searchQuery: _nodePaletteSearchQuery,
@@ -1349,7 +1350,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                         _isPrimaryWriteNode(selectedNode.id),
                     nodeType: selectedNode == null
                         ? null
-                        : _nodeTypeRegistry.byType(selectedNode.type),
+                        : _processorTypeRegistry.byType(selectedNode.type),
                     onTitleChanged: (value) =>
                         _updateNodeTitle(selectedNode, value),
                     onConfigChanged: (key, value) =>
@@ -1528,7 +1529,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
 
   Widget _buildNodeCard(BuildContext context, Node<Map<String, dynamic>> node) {
     final data = node.data;
-    final nodeType = _nodeTypeRegistry.byType(node.type);
+    final nodeType = _processorTypeRegistry.byType(node.type);
     final title = (data['title'] as String?)?.trim();
     final visibleTitle = (title == null || title.isEmpty)
         ? (nodeType?.displayName ?? node.type)
@@ -1684,7 +1685,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Processor types: $_nodeTypesStatus',
+                        'Processor types: $_processorTypesStatus',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
@@ -2342,21 +2343,21 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       if (defs.isEmpty) {
         throw ApiError(message: 'empty node type registry from server');
       }
-      final nextRegistry = NodeTypeRegistry.fromServerNodeTypes(
+      final nextRegistry = ProcessorTypeRegistry.fromServerProcessorTypes(
         defs,
-        source: NodeTypeRegistrySource.server,
+        source: ProcessorTypeRegistrySource.server,
       );
       final prefs = await SharedPreferences.getInstance();
       final encoded = jsonEncode(
         defs.map((item) => item.toJson()).toList(growable: false),
       );
-      await prefs.setString(_prefNodeTypesCache, encoded);
+      await prefs.setString(_prefProcessorTypesCache, encoded);
       if (!mounted) {
         return;
       }
       setState(() {
-        _nodeTypeRegistry = nextRegistry;
-        _nodeTypesStatus = _nodeTypesStatusLabel(nextRegistry.source);
+        _processorTypeRegistry = nextRegistry;
+        _processorTypesStatus = _processorTypesStatusLabel(nextRegistry.source);
       });
       _scheduleFlowValidation(immediate: true);
     } on ApiError catch (error) {
@@ -2364,7 +2365,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
         return;
       }
       setState(() {
-        _nodeTypesStatus = _nodeTypesStatusLabel(_nodeTypeRegistry.source);
+        _processorTypesStatus = _processorTypesStatusLabel(
+          _processorTypeRegistry.source,
+        );
       });
       if (showFailureSnack) {
         _showCopyableErrorSnack(
@@ -2380,12 +2383,12 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
     }
   }
 
-  String _nodeTypesStatusLabel(NodeTypeRegistrySource source) {
+  String _processorTypesStatusLabel(ProcessorTypeRegistrySource source) {
     switch (source) {
-      case NodeTypeRegistrySource.server:
+      case ProcessorTypeRegistrySource.server:
         return 'server';
-      case NodeTypeRegistrySource.cached:
-      case NodeTypeRegistrySource.fallback:
+      case ProcessorTypeRegistrySource.cached:
+      case ProcessorTypeRegistrySource.fallback:
         return 'cached/fallback';
     }
   }
@@ -2501,7 +2504,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
             ),
           )
           .toList(growable: false),
-      nodeTypeLookup: _nodeTypeRegistry.byType,
+      nodeTypeLookup: _processorTypeRegistry.byType,
     );
     if (!mounted) {
       return;
@@ -4399,7 +4402,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
       final uiMap = ui is Map<String, dynamic>
           ? ui
           : (legacyUI is Map<String, dynamic> ? legacyUI : <String, dynamic>{});
-      final nodeType = _nodeTypeRegistry.byType(item.type);
+      final nodeType = _processorTypeRegistry.byType(item.type);
       final inputs = item.inputs.isNotEmpty
           ? item.inputs
           : (nodeType?.inputs.map((port) => port.toFlowPort()).toList() ??
@@ -4487,7 +4490,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   }
 
   void _addNode(String typeId) {
-    final template = _nodeTypeRegistry.createTemplate(typeId);
+    final template = _processorTypeRegistry.createTemplate(typeId);
     final nodeId = _uuid.v4();
     final title = '${template.displayName} $_nodeCounter';
     final position = Offset(
@@ -4577,7 +4580,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen> {
   _collectCanvasFlowSnapshot() {
     final nodes = _controller.nodes.values
         .map((node) {
-          final nodeType = _nodeTypeRegistry.byType(node.type);
+          final nodeType = _processorTypeRegistry.byType(node.type);
           final fallbackInputs = _readFlowPorts(node.data['inputs']);
           final fallbackOutputs = _readFlowPorts(node.data['outputs']);
           final inputs = nodeType != null
@@ -5162,8 +5165,8 @@ class _FlowTitleOverlay extends StatelessWidget {
   }
 }
 
-class _PalettePanel extends StatelessWidget {
-  const _PalettePanel({
+class _ProcessorPalettePanel extends StatelessWidget {
+  const _ProcessorPalettePanel({
     required this.nodeTypes,
     required this.onAddNode,
     required this.searchController,
@@ -5172,7 +5175,7 @@ class _PalettePanel extends StatelessWidget {
     required this.onClearSearch,
   });
 
-  final List<NodeTypeDefinition> nodeTypes;
+  final List<ProcessorTypeDefinition> nodeTypes;
   final ValueChanged<String> onAddNode;
   final TextEditingController searchController;
   final String searchQuery;
@@ -5194,10 +5197,10 @@ class _PalettePanel extends StatelessWidget {
                     category.contains(normalizedQuery);
               })
               .toList(growable: false);
-    final grouped = <String, List<NodeTypeDefinition>>{};
+    final grouped = <String, List<ProcessorTypeDefinition>>{};
     for (final type in visibleNodeTypes) {
       grouped
-          .putIfAbsent(type.category, () => <NodeTypeDefinition>[])
+          .putIfAbsent(type.category, () => <ProcessorTypeDefinition>[])
           .add(type);
     }
 
@@ -5296,7 +5299,7 @@ class _InspectorPanel extends StatelessWidget {
   final Node<Map<String, dynamic>>? selectedNode;
   final Connection<dynamic>? selectedConnection;
   final bool isPrimaryWriteNode;
-  final NodeTypeDefinition? nodeType;
+  final ProcessorTypeDefinition? nodeType;
   final ValueChanged<String> onTitleChanged;
   final void Function(String key, dynamic value) onConfigChanged;
   final Future<void> Function() onDeleteNode;
@@ -5373,7 +5376,7 @@ class _InspectorPanel extends StatelessWidget {
                 ? '${field.label} (optional)'
                 : field.label;
             switch (field.kind) {
-              case NodeInspectorFieldKind.string:
+              case ProcessorInspectorFieldKind.string:
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: TextFormField(
@@ -5388,7 +5391,7 @@ class _InspectorPanel extends StatelessWidget {
                     onChanged: (value) => onConfigChanged(field.key, value),
                   ),
                 );
-              case NodeInspectorFieldKind.boolType:
+              case ProcessorInspectorFieldKind.boolType:
                 final value = config[field.key] == true;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),

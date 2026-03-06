@@ -2,12 +2,12 @@ import 'package:client/src/flow/flow_document_builder.dart';
 import 'package:client/src/models/server_models.dart';
 import 'package:flutter/material.dart';
 
-enum NodeInspectorFieldKind { string, boolType }
+enum ProcessorInspectorFieldKind { string, boolType }
 
-enum NodeTypeRegistrySource { server, cached, fallback }
+enum ProcessorTypeRegistrySource { server, cached, fallback }
 
-class NodePortDefinition {
-  const NodePortDefinition({required this.name, this.schema});
+class ProcessorPortDefinition {
+  const ProcessorPortDefinition({required this.name, this.schema});
 
   final String name;
   final String? schema;
@@ -15,8 +15,8 @@ class NodePortDefinition {
   FlowPort toFlowPort() => FlowPort(port: name, schema: schema ?? '');
 }
 
-class NodeInspectorFieldDefinition {
-  const NodeInspectorFieldDefinition({
+class ProcessorInspectorFieldDefinition {
+  const ProcessorInspectorFieldDefinition({
     required this.key,
     required this.label,
     required this.kind,
@@ -27,14 +27,14 @@ class NodeInspectorFieldDefinition {
 
   final String key;
   final String label;
-  final NodeInspectorFieldKind kind;
+  final ProcessorInspectorFieldKind kind;
   final bool required;
   final bool optionalHint;
   final bool multiline;
 }
 
-class NodeTypeDefinition {
-  const NodeTypeDefinition({
+class ProcessorTypeDefinition {
+  const ProcessorTypeDefinition({
     required this.typeId,
     required this.displayName,
     required this.category,
@@ -49,18 +49,18 @@ class NodeTypeDefinition {
   final String displayName;
   final String category;
   final IconData icon;
-  final List<NodePortDefinition> inputs;
-  final List<NodePortDefinition> outputs;
-  final List<NodeInspectorFieldDefinition> inspectorFields;
+  final List<ProcessorPortDefinition> inputs;
+  final List<ProcessorPortDefinition> outputs;
+  final List<ProcessorInspectorFieldDefinition> inspectorFields;
   final Map<String, dynamic> defaultConfig;
 
-  factory NodeTypeDefinition.fromServer(NodeTypeDef def) {
+  factory ProcessorTypeDefinition.fromServer(NodeTypeDef def) {
     final fields = def.configSchema
         .map((field) {
           final kind = field.kind == 'bool'
-              ? NodeInspectorFieldKind.boolType
-              : NodeInspectorFieldKind.string;
-          return NodeInspectorFieldDefinition(
+              ? ProcessorInspectorFieldKind.boolType
+              : ProcessorInspectorFieldKind.string;
+          return ProcessorInspectorFieldDefinition(
             key: field.key,
             label: field.label,
             kind: kind,
@@ -74,28 +74,30 @@ class NodeTypeDefinition {
     final defaults = <String, dynamic>{};
     for (final field in fields) {
       switch (field.kind) {
-        case NodeInspectorFieldKind.string:
+        case ProcessorInspectorFieldKind.string:
           defaults[field.key] = '';
           break;
-        case NodeInspectorFieldKind.boolType:
+        case ProcessorInspectorFieldKind.boolType:
           defaults[field.key] = false;
           break;
       }
     }
 
-    return NodeTypeDefinition(
+    return ProcessorTypeDefinition(
       typeId: def.type,
       displayName: def.displayName,
       category: def.category,
       icon: _iconFor(def.type, def.category),
       inputs: def.inputs
           .map(
-            (port) => NodePortDefinition(name: port.port, schema: port.schema),
+            (port) =>
+                ProcessorPortDefinition(name: port.port, schema: port.schema),
           )
           .toList(growable: false),
       outputs: def.outputs
           .map(
-            (port) => NodePortDefinition(name: port.port, schema: port.schema),
+            (port) =>
+                ProcessorPortDefinition(name: port.port, schema: port.schema),
           )
           .toList(growable: false),
       inspectorFields: fields,
@@ -104,8 +106,8 @@ class NodeTypeDefinition {
   }
 }
 
-class NodeTemplate {
-  const NodeTemplate({
+class ProcessorTemplate {
+  const ProcessorTemplate({
     required this.typeId,
     required this.displayName,
     required this.inputs,
@@ -120,86 +122,89 @@ class NodeTemplate {
   final Map<String, dynamic> config;
 }
 
-class NodeTypeRegistry {
-  const NodeTypeRegistry({
+class ProcessorTypeRegistry {
+  const ProcessorTypeRegistry({
     required this.all,
     required this.source,
     required this.rawServerDefs,
   });
 
-  final List<NodeTypeDefinition> all;
-  final NodeTypeRegistrySource source;
+  final List<ProcessorTypeDefinition> all;
+  final ProcessorTypeRegistrySource source;
   final List<NodeTypeDef> rawServerDefs;
 
-  static const List<NodeTypeDefinition> fallbackDefinitions =
-      <NodeTypeDefinition>[
-        NodeTypeDefinition(
+  static const List<ProcessorTypeDefinition> fallbackDefinitions =
+      <ProcessorTypeDefinition>[
+        ProcessorTypeDefinition(
           typeId: 'file.read',
           displayName: 'File Read',
           category: 'io',
           icon: Icons.file_open,
-          inputs: <NodePortDefinition>[],
-          outputs: <NodePortDefinition>[
-            NodePortDefinition(name: 'out', schema: 'artifact/text'),
+          inputs: <ProcessorPortDefinition>[],
+          outputs: <ProcessorPortDefinition>[
+            ProcessorPortDefinition(name: 'out', schema: 'artifact/text'),
           ],
-          inspectorFields: <NodeInspectorFieldDefinition>[
-            NodeInspectorFieldDefinition(
+          inspectorFields: <ProcessorInspectorFieldDefinition>[
+            ProcessorInspectorFieldDefinition(
               key: 'input_file',
               label: 'Input file',
-              kind: NodeInspectorFieldKind.string,
+              kind: ProcessorInspectorFieldKind.string,
               required: true,
             ),
           ],
           defaultConfig: <String, dynamic>{'input_file': ''},
         ),
-        NodeTypeDefinition(
+        ProcessorTypeDefinition(
           typeId: 'file.write',
           displayName: 'File Write',
           category: 'io',
           icon: Icons.save,
-          inputs: <NodePortDefinition>[
-            NodePortDefinition(name: 'in', schema: 'artifact/text'),
+          inputs: <ProcessorPortDefinition>[
+            ProcessorPortDefinition(name: 'in', schema: 'artifact/text'),
           ],
-          outputs: <NodePortDefinition>[
-            NodePortDefinition(name: 'out', schema: 'artifact/output_file'),
+          outputs: <ProcessorPortDefinition>[
+            ProcessorPortDefinition(
+              name: 'out',
+              schema: 'artifact/output_file',
+            ),
           ],
-          inspectorFields: <NodeInspectorFieldDefinition>[
-            NodeInspectorFieldDefinition(
+          inspectorFields: <ProcessorInspectorFieldDefinition>[
+            ProcessorInspectorFieldDefinition(
               key: 'output_file',
               label: 'Output file',
-              kind: NodeInspectorFieldKind.string,
+              kind: ProcessorInspectorFieldKind.string,
               required: true,
             ),
-            NodeInspectorFieldDefinition(
+            ProcessorInspectorFieldDefinition(
               key: 'primary',
               label: 'Primary output',
-              kind: NodeInspectorFieldKind.boolType,
+              kind: ProcessorInspectorFieldKind.boolType,
             ),
           ],
           defaultConfig: <String, dynamic>{'output_file': '', 'primary': false},
         ),
-        NodeTypeDefinition(
+        ProcessorTypeDefinition(
           typeId: 'llm.chat',
           displayName: 'LLM Chat',
           category: 'ai',
           icon: Icons.auto_awesome,
-          inputs: <NodePortDefinition>[
-            NodePortDefinition(name: 'in', schema: 'artifact/text'),
+          inputs: <ProcessorPortDefinition>[
+            ProcessorPortDefinition(name: 'in', schema: 'artifact/text'),
           ],
-          outputs: <NodePortDefinition>[
-            NodePortDefinition(name: 'out', schema: 'artifact/text'),
+          outputs: <ProcessorPortDefinition>[
+            ProcessorPortDefinition(name: 'out', schema: 'artifact/text'),
           ],
-          inspectorFields: <NodeInspectorFieldDefinition>[
-            NodeInspectorFieldDefinition(
+          inspectorFields: <ProcessorInspectorFieldDefinition>[
+            ProcessorInspectorFieldDefinition(
               key: 'model',
               label: 'Model override',
-              kind: NodeInspectorFieldKind.string,
+              kind: ProcessorInspectorFieldKind.string,
               optionalHint: true,
             ),
-            NodeInspectorFieldDefinition(
+            ProcessorInspectorFieldDefinition(
               key: 'system_prompt',
               label: 'System prompt',
-              kind: NodeInspectorFieldKind.string,
+              kind: ProcessorInspectorFieldKind.string,
               optionalHint: true,
               multiline: true,
             ),
@@ -208,33 +213,33 @@ class NodeTypeRegistry {
         ),
       ];
 
-  factory NodeTypeRegistry.fallback() {
-    return const NodeTypeRegistry(
+  factory ProcessorTypeRegistry.fallback() {
+    return const ProcessorTypeRegistry(
       all: fallbackDefinitions,
-      source: NodeTypeRegistrySource.fallback,
+      source: ProcessorTypeRegistrySource.fallback,
       rawServerDefs: <NodeTypeDef>[],
     );
   }
 
-  factory NodeTypeRegistry.fromServerNodeTypes(
+  factory ProcessorTypeRegistry.fromServerProcessorTypes(
     List<NodeTypeDef> defs, {
-    required NodeTypeRegistrySource source,
+    required ProcessorTypeRegistrySource source,
   }) {
     final parsed = defs
-        .map(NodeTypeDefinition.fromServer)
+        .map(ProcessorTypeDefinition.fromServer)
         .where((item) => item.typeId.trim().isNotEmpty)
         .toList(growable: false);
     if (parsed.isEmpty) {
-      return NodeTypeRegistry.fallback();
+      return ProcessorTypeRegistry.fallback();
     }
-    return NodeTypeRegistry(
+    return ProcessorTypeRegistry(
       all: parsed,
       source: source,
       rawServerDefs: List<NodeTypeDef>.unmodifiable(defs),
     );
   }
 
-  NodeTypeDefinition? byType(String typeId) {
+  ProcessorTypeDefinition? byType(String typeId) {
     for (final def in all) {
       if (def.typeId == typeId) {
         return def;
@@ -243,12 +248,12 @@ class NodeTypeRegistry {
     return null;
   }
 
-  NodeTemplate createTemplate(String typeId) {
+  ProcessorTemplate createTemplate(String typeId) {
     final def = byType(typeId);
     if (def == null) {
       throw ArgumentError('Unknown node type: $typeId');
     }
-    return NodeTemplate(
+    return ProcessorTemplate(
       typeId: def.typeId,
       displayName: def.displayName,
       inputs: def.inputs

@@ -1,4 +1,4 @@
-import 'package:client/src/flow/node_registry.dart';
+import 'package:client/src/flow/processor_registry.dart';
 
 class FlowValidationIssue {
   const FlowValidationIssue(this.message);
@@ -48,7 +48,7 @@ class FlowValidationEdge {
 FlowValidationResult validateFlowGraph({
   required List<FlowValidationNode> nodes,
   required List<FlowValidationEdge> edges,
-  NodeTypeDefinition? Function(String typeId)? nodeTypeLookup,
+  ProcessorTypeDefinition? Function(String typeId)? nodeTypeLookup,
 }) {
   final errors = <FlowValidationIssue>[];
   final warnings = <FlowValidationIssue>[];
@@ -96,7 +96,7 @@ FlowValidationResult validateFlowGraph({
   for (final node in nodes) {
     final def =
         nodeTypeLookup?.call(node.type) ??
-        NodeTypeRegistry.fallback().byType(node.type);
+        ProcessorTypeRegistry.fallback().byType(node.type);
     if (def == null) {
       continue;
     }

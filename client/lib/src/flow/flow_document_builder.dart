@@ -92,6 +92,7 @@ Map<String, dynamic> buildFlowDocumentEnvelope({
   required List<FlowEdgeSnapshot> edges,
 }) {
   final trimmedTitle = title.trim();
+  // UI terminology uses "processor", but the persisted schema keeps body.nodes.
   final body = <String, dynamic>{
     'mode_hint': 'hybrid',
     'nodes': nodes.map((node) => node.toJson()).toList(),

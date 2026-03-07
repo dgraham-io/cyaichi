@@ -395,6 +395,31 @@ class ApiClient {
     );
   }
 
+  Future<MemoryCreated> patchChannel({
+    required String channelDocId,
+    required String name,
+  }) async {
+    final json = await _requestJson(
+      'PATCH',
+      '/v1/channels/$channelDocId',
+      body: <String, dynamic>{'name': name},
+    );
+    return MemoryCreated(
+      docId: json['doc_id'] as String? ?? channelDocId,
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
+  Future<MemoryCreated> deleteChannel({
+    required String channelDocId,
+  }) async {
+    final json = await _requestJson('DELETE', '/v1/channels/$channelDocId');
+    return MemoryCreated(
+      docId: json['doc_id'] as String? ?? channelDocId,
+      verId: json['ver_id'] as String? ?? '',
+    );
+  }
+
   Future<List<MessageListItem>> getMessages({
     required String channelDocId,
   }) async {

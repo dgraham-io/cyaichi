@@ -402,6 +402,126 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     }
   }
 
+  Future<void> _showRenameChannelDialog() async {
+    final selectedChannel = _selectedChannel();
+    if (selectedChannel == null) {
+      widget.onNotify('Select a channel first.');
+      return;
+    }
+
+    final nameController = TextEditingController(text: selectedChannel.name);
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Rename Channel'),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Channel name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Rename'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final name = nameController.text.trim();
+    nameController.dispose();
+
+    if (submitted != true) {
+      return;
+    }
+    if (name.isEmpty) {
+      widget.onNotify('Channel name cannot be empty');
+      return;
+    }
+
+    try {
+      await widget.apiClient.patchChannel(
+        channelDocId: selectedChannel.docId,
+        name: name,
+      );
+      await _loadChannels();
+      widget.onNotify('Channel renamed');
+    } on ApiError catch (error) {
+      widget.onNotify(widget.formatApiError(error));
+    }
+  }
+
+  Future<void> _deleteSelectedChannel() async {
+    final selectedChannel = _selectedChannel();
+    if (selectedChannel == null) {
+      widget.onNotify('Select a channel first.');
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete Channel'),
+          content: Text(
+            'Delete "${selectedChannel.name.isEmpty ? '(untitled channel)' : selectedChannel.name}"?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await widget.apiClient.deleteChannel(
+        channelDocId: selectedChannel.docId,
+      );
+      await _loadChannels();
+      await _loadMessagesForSelectedChannel();
+      widget.onNotify('Channel deleted');
+    } on ApiError catch (error) {
+      widget.onNotify(widget.formatApiError(error));
+    }
+  }
+
+  Future<void> _handleChannelMenuAction(String value) async {
+    switch (value) {
+      case 'create':
+        await _showCreateChannelDialog();
+        break;
+      case 'rename':
+        await _showRenameChannelDialog();
+        break;
+      case 'delete':
+        await _deleteSelectedChannel();
+        break;
+    }
+  }
+
   Future<void> _submitInlineMessage() async {
     final workspaceId = widget.workspaceId;
     final channelDocId = _selectedChannelDocId;
@@ -529,36 +649,33 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    IconButton.filledTonal(
-                      key: const Key('activity-new-channel-button'),
-                      onPressed: _showCreateChannelDialog,
-                      icon: const Icon(Icons.add),
-                      tooltip: 'New channel',
+                    PopupMenuButton<String>(
+                      key: const Key('activity-channel-actions-button'),
+                      onSelected: (value) {
+                        unawaited(_handleChannelMenuAction(value));
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem<String>(
+                          value: 'create',
+                          child: Text('Create channel'),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'rename',
+                          child: Text('Rename channel'),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'delete',
+                          child: Text('Delete channel'),
+                        ),
+                      ],
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(Icons.more_vert),
+                      ),
                     ),
                   ],
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton.filledTonal(
-                  key: const Key('activity-inline-post-button'),
-                  onPressed:
-                      _selectedChannelDocId == null || _postingMessage
-                          ? null
-                          : _submitInlineMessage,
-                  icon: _postingMessage
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add),
-                  tooltip: 'Post message',
-                ),
-              ),
-            ),
             Expanded(child: _buildChatListContent()),
           ],
         ],

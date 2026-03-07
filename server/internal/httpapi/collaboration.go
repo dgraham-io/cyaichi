@@ -71,6 +71,10 @@ type createTaskRequest struct {
 	Refs         []collaborationRefInput `json:"refs"`
 }
 
+type patchChannelRequest struct {
+	Name string `json:"name"`
+}
+
 type patchTaskRequest struct {
 	Status string `json:"status"`
 }
@@ -162,6 +166,18 @@ func (h *CollaborationHandler) Handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.handleListMessagesForChannel(w, r, channelDocID)
+			return
+		}
+		if channelDocID, ok := parseChannelPath(r.URL.Path); ok {
+			switch r.Method {
+			case http.MethodPatch:
+				h.handlePatchChannel(w, r, channelDocID)
+			case http.MethodDelete:
+				h.handleDeleteChannel(w, r, channelDocID)
+			default:
+				w.Header().Set("Allow", "DELETE, PATCH")
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
 			return
 		}
 		if taskDocID, ok := parseTaskPath(r.URL.Path); ok {
@@ -365,6 +381,79 @@ func (h *CollaborationHandler) handleCreateChannel(w http.ResponseWriter, r *htt
 	}
 
 	writeJSON(w, http.StatusCreated, createMemoryResponse{DocID: docID, VerID: verID})
+}
+
+func (h *CollaborationHandler) handlePatchChannel(w http.ResponseWriter, r *http.Request, channelDocID string) {
+	var req patchChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	latestDoc, docMap, body, err := h.latestMemoryDocOfType(r.Context(), channelDocID, "channel")
+	if err != nil {
+		h.respondDocLookupError(w, r, err, "channel")
+		return
+	}
+
+	meta, _ := docMap["meta"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["title"] = name
+	docMap["meta"] = meta
+	docMap["ver_id"] = uuid.NewString()
+	docMap["created_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	docMap["parents"] = []string{latestDoc.VerID}
+	docMap["body"] = body
+
+	if err := h.storeMemoryDoc(r, docMap); err != nil {
+		h.respondStoreError(w, err, "channel")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, createMemoryResponse{
+		DocID: channelDocID,
+		VerID: stringValue(docMap["ver_id"]),
+	})
+}
+
+func (h *CollaborationHandler) handleDeleteChannel(w http.ResponseWriter, r *http.Request, channelDocID string) {
+	latestDoc, docMap, body, err := h.latestMemoryDocOfType(r.Context(), channelDocID, "channel")
+	if err != nil {
+		h.respondDocLookupError(w, r, err, "channel")
+		return
+	}
+
+	attrs := attrsMap(body)
+	attrs["is_archived"] = true
+	body["attrs"] = attrs
+
+	meta, _ := docMap["meta"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["comment"] = "cyaichi.deleted=true"
+	docMap["meta"] = meta
+	docMap["body"] = body
+	docMap["ver_id"] = uuid.NewString()
+	docMap["created_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	docMap["parents"] = []string{latestDoc.VerID}
+
+	if err := h.storeMemoryDoc(r, docMap); err != nil {
+		h.respondStoreError(w, err, "channel")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, createMemoryResponse{
+		DocID: channelDocID,
+		VerID: stringValue(docMap["ver_id"]),
+	})
 }
 
 func (h *CollaborationHandler) handleCreateMessage(w http.ResponseWriter, r *http.Request) {
@@ -711,6 +800,18 @@ func (h *CollaborationHandler) respondStoreError(w http.ResponseWriter, err erro
 	default:
 		http.Error(w, "failed to store "+label, http.StatusInternalServerError)
 	}
+}
+
+func parseChannelPath(path string) (channelDocID string, ok bool) {
+	trimmed := strings.Trim(path, "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 3 || parts[0] != "v1" || parts[1] != "channels" {
+		return "", false
+	}
+	if parts[2] == "" {
+		return "", false
+	}
+	return parts[2], true
 }
 
 func decodeMemoryDoc(raw string) (map[string]any, map[string]any, bool) {

@@ -71,6 +71,34 @@ func TestCollaborationChannelsMessagesTasksLifecycle(t *testing.T) {
 		t.Fatalf("expected flow doc ref on channel, got %q", listedChannels.Items[0].FlowDocID)
 	}
 
+	renameChannelReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/channels/"+createdChannel.DocID,
+		strings.NewReader(`{"name":"Renamed Flow Chat"}`),
+	)
+	renameChannelReq.Header.Set("Content-Type", "application/json")
+	renameChannelRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(renameChannelRR, renameChannelReq)
+	if renameChannelRR.Code != http.StatusOK {
+		t.Fatalf("rename channel failed: %d body=%s", renameChannelRR.Code, renameChannelRR.Body.String())
+	}
+
+	listChannelsAfterRenameReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces/"+workspace.WorkspaceID+"/channels", nil)
+	listChannelsAfterRenameRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(listChannelsAfterRenameRR, listChannelsAfterRenameReq)
+	if listChannelsAfterRenameRR.Code != http.StatusOK {
+		t.Fatalf("list channels after rename failed: %d body=%s", listChannelsAfterRenameRR.Code, listChannelsAfterRenameRR.Body.String())
+	}
+	if err := json.Unmarshal(listChannelsAfterRenameRR.Body.Bytes(), &listedChannels); err != nil {
+		t.Fatalf("decode list channels after rename response: %v", err)
+	}
+	if len(listedChannels.Items) != 1 {
+		t.Fatalf("expected 1 channel after rename, got %d", len(listedChannels.Items))
+	}
+	if listedChannels.Items[0].Name != "Renamed Flow Chat" {
+		t.Fatalf("expected renamed channel, got %+v", listedChannels.Items[0])
+	}
+
 	createMessageBody := fmt.Sprintf(`{
 	  "workspace_id":"%s",
 	  "scope":"team",
@@ -206,5 +234,28 @@ func TestCollaborationChannelsMessagesTasksLifecycle(t *testing.T) {
 	}
 	if listedTasks.Items[0].Status != "done" {
 		t.Fatalf("expected updated task status done, got %+v", listedTasks.Items[0])
+	}
+
+	deleteChannelReq := httptest.NewRequest(http.MethodDelete, "/v1/channels/"+createdChannel.DocID, nil)
+	deleteChannelRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(deleteChannelRR, deleteChannelReq)
+	if deleteChannelRR.Code != http.StatusOK {
+		t.Fatalf("delete channel failed: %d body=%s", deleteChannelRR.Code, deleteChannelRR.Body.String())
+	}
+
+	listChannelsAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/v1/workspaces/"+workspace.WorkspaceID+"/channels", nil)
+	listChannelsAfterDeleteRR := httptest.NewRecorder()
+	h.mux.ServeHTTP(listChannelsAfterDeleteRR, listChannelsAfterDeleteReq)
+	if listChannelsAfterDeleteRR.Code != http.StatusOK {
+		t.Fatalf("list channels after delete failed: %d body=%s", listChannelsAfterDeleteRR.Code, listChannelsAfterDeleteRR.Body.String())
+	}
+	if err := json.Unmarshal(listChannelsAfterDeleteRR.Body.Bytes(), &listedChannels); err != nil {
+		t.Fatalf("decode list channels after delete response: %v", err)
+	}
+	if len(listedChannels.Items) != 1 {
+		t.Fatalf("expected 1 archived channel entry, got %d", len(listedChannels.Items))
+	}
+	if listedChannels.Items[0].Name != "Renamed Flow Chat" {
+		t.Fatalf("expected archived channel to retain renamed title, got %+v", listedChannels.Items[0])
 	}
 }

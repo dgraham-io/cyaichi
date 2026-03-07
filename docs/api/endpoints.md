@@ -41,6 +41,8 @@ Authoritative server HTTP endpoints.
 | Method | Path | Purpose | Request | Response |
 | --- | --- | --- | --- | --- |
 | POST | `/v1/channels` | Create a workspace, flow, topic, or direct-message channel. | JSON: workspace_id, scope, name, kind, optional topic/flow refs. | 201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace not found. |
+| DELETE | `/v1/channels/{channel_doc_id}` | Archive a channel by writing a new archived version. | No body. | 200 JSON { doc_id, ver_id }; 404 channel not found. |
+| PATCH | `/v1/channels/{channel_doc_id}` | Rename a channel by writing a new channel version. | JSON: name. | 200 JSON { doc_id, ver_id }; 400 invalid payload; 404 channel not found. |
 | GET | `/v1/channels/{channel_doc_id}/messages` | List messages in a channel in timeline order. | Path param: channel_doc_id. | 200 JSON { items: [{ doc_id, ver_id, created_at, body, author_*, refs }] }. |
 | POST | `/v1/messages` | Create a chat message in a channel. | JSON: workspace_id, scope, channel_doc_id, body, author, optional refs. | 201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace/channel not found. |
 | POST | `/v1/tasks` | Create a task linked to a workspace or channel. | JSON: workspace_id, scope, title, body, optional channel_doc_id/assignee/refs. | 201 JSON { doc_id, ver_id }; 400 invalid payload; 404 workspace/channel not found. |

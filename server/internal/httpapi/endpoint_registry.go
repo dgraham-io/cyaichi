@@ -168,6 +168,22 @@ func buildRouteSpecs() []routeSpec {
 					Request:  "Path param: channel_doc_id.",
 					Response: "200 JSON { items: [{ doc_id, ver_id, created_at, body, author_*, refs }] }.",
 				},
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodPatch,
+					Path:     "/v1/channels/{channel_doc_id}",
+					Summary:  "Rename a channel by writing a new channel version.",
+					Request:  "JSON: name.",
+					Response: "200 JSON { doc_id, ver_id }; 400 invalid payload; 404 channel not found.",
+				},
+				{
+					Area:     "Collaboration",
+					Method:   http.MethodDelete,
+					Path:     "/v1/channels/{channel_doc_id}",
+					Summary:  "Archive a channel by writing a new archived version.",
+					Request:  "No body.",
+					Response: "200 JSON { doc_id, ver_id }; 404 channel not found.",
+				},
 			},
 		},
 		{

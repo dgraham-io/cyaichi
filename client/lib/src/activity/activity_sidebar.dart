@@ -42,10 +42,9 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
   bool _messagesLoading = false;
   String? _messagesError;
   List<MessageListItem> _messages = const <MessageListItem>[];
-
-  bool _tasksLoading = false;
-  String? _tasksError;
-  List<TaskListItem> _tasks = const <TaskListItem>[];
+  final ScrollController _messagesScrollController = ScrollController();
+  final TextEditingController _composerController = TextEditingController();
+  bool _postingMessage = false;
 
   @override
   void initState() {
@@ -53,6 +52,13 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     if (widget.isActive) {
       unawaited(_ensureLoaded());
     }
+  }
+
+  @override
+  void dispose() {
+    _messagesScrollController.dispose();
+    _composerController.dispose();
+    super.dispose();
   }
 
   @override
@@ -83,9 +89,8 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     _messagesLoading = false;
     _messagesError = null;
     _messages = const <MessageListItem>[];
-    _tasksLoading = false;
-    _tasksError = null;
-    _tasks = const <TaskListItem>[];
+    _composerController.clear();
+    _postingMessage = false;
   }
 
   Future<void> _ensureLoaded() async {
@@ -102,14 +107,10 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
           !_messagesLoading) {
         await _loadMessagesForSelectedChannel();
       }
-      if (_tasks.isEmpty && !_tasksLoading) {
-        await _loadTasks();
-      }
       return;
     }
 
     await _loadChannels();
-    await _loadTasks();
     await _loadMessagesForSelectedChannel();
     if (!mounted) {
       return;
@@ -178,6 +179,7 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
       _selectedChannelDocId = channelDocId;
       _messages = const <MessageListItem>[];
       _messagesError = null;
+      _composerController.clear();
     });
     await _loadMessagesForSelectedChannel();
   }
@@ -213,6 +215,7 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
       setState(() {
         _messages = messages;
       });
+      _scrollMessagesToBottom();
     } on ApiError catch (error) {
       if (!mounted) {
         return;
@@ -229,49 +232,17 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     }
   }
 
-  Future<void> _loadTasks() async {
-    final workspaceId = widget.workspaceId;
-    if (workspaceId == null) {
-      if (!mounted) {
+  void _scrollMessagesToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_messagesScrollController.hasClients) {
         return;
       }
-      setState(() {
-        _tasksLoading = false;
-        _tasksError = null;
-        _tasks = const <TaskListItem>[];
-      });
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _tasksLoading = true;
-        _tasksError = null;
-      });
-    }
-
-    try {
-      final tasks = await widget.apiClient.getTasks(workspaceId: workspaceId);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _tasks = tasks;
-      });
-    } on ApiError catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _tasksError = widget.formatApiError(error);
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _tasksLoading = false;
-        });
-      }
-    }
+      _messagesScrollController.animateTo(
+        _messagesScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   ChannelListItem? _selectedChannel() {
@@ -300,86 +271,6 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     return false;
   }
 
-  Future<CollaborationRef?> _showAddCustomReferenceDialog() async {
-    var kind = 'user';
-    final idController = TextEditingController();
-    final labelController = TextEditingController();
-    final submitted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Add Reference'),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: kind,
-                      decoration: const InputDecoration(
-                        labelText: 'Reference kind',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'user', child: Text('user')),
-                        DropdownMenuItem(value: 'agent', child: Text('agent')),
-                        DropdownMenuItem(value: 'topic', child: Text('topic')),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          kind = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: idController,
-                      decoration: const InputDecoration(
-                        labelText: 'ID',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: labelController,
-                      decoration: const InputDecoration(
-                        labelText: 'Label (optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Add'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    final id = idController.text.trim();
-    final label = labelController.text.trim();
-    idController.dispose();
-    labelController.dispose();
-    if (submitted != true || id.isEmpty) {
-      return null;
-    }
-    return CollaborationRef(kind: kind, id: id, label: label);
-  }
-
   Future<void> _showCreateChannelDialog() async {
     final workspaceId = widget.workspaceId;
     if (workspaceId == null) {
@@ -391,7 +282,6 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     final nameController = TextEditingController();
     final topicController = TextEditingController();
     var scope = selectedChannel?.scope ?? 'team';
-    var kind = 'workspace';
 
     final submitted = await showDialog<bool>(
       context: context,
@@ -429,31 +319,6 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
                         }
                         setDialogState(() {
                           scope = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: kind,
-                      decoration: const InputDecoration(
-                        labelText: 'Kind',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'workspace',
-                          child: Text('workspace'),
-                        ),
-                        DropdownMenuItem(value: 'flow', child: Text('flow')),
-                        DropdownMenuItem(value: 'topic', child: Text('topic')),
-                        DropdownMenuItem(value: 'dm', child: Text('dm')),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          kind = value;
                         });
                       },
                     ),
@@ -510,22 +375,13 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
       return;
     }
 
-    final currentFlowRef = widget.currentFlowRef;
-    if (kind == 'flow' && currentFlowRef == null) {
-      widget.onNotify('Open or save a flow before creating a flow channel.');
-      return;
-    }
-
     try {
       final created = await widget.apiClient.createChannel(
         workspaceId: workspaceId,
         scope: scope,
         name: name,
-        kind: kind,
+        kind: 'workspace',
         topic: topic,
-        flowDocId: kind == 'flow' ? currentFlowRef?.docId : null,
-        flowVerId: kind == 'flow' ? currentFlowRef?.verId : null,
-        flowTitle: kind == 'flow' ? currentFlowRef?.displayLabel : null,
       );
       await _loadChannels();
       if (mounted) {
@@ -546,7 +402,7 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     }
   }
 
-  Future<void> _showCreateMessageDialog() async {
+  Future<void> _submitInlineMessage() async {
     final workspaceId = widget.workspaceId;
     final channelDocId = _selectedChannelDocId;
     if (workspaceId == null) {
@@ -558,447 +414,55 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
       return;
     }
 
-    final selectedChannel = _selectedChannel();
-    final bodyController = TextEditingController();
-    final authorLabelController = TextEditingController(text: 'You');
-    var scope = selectedChannel?.scope ?? 'team';
-    var authorKind = 'user';
-    final refs = <CollaborationRef>[];
-
-    final submitted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Post Message'),
-              content: SizedBox(
-                width: 620,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: scope,
-                      decoration: const InputDecoration(
-                        labelText: 'Scope',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'personal',
-                          child: Text('personal'),
-                        ),
-                        DropdownMenuItem(value: 'team', child: Text('team')),
-                        DropdownMenuItem(value: 'org', child: Text('org')),
-                        DropdownMenuItem(
-                          value: 'public_read',
-                          child: Text('public_read'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          scope = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: authorKind,
-                      decoration: const InputDecoration(
-                        labelText: 'Author kind',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'user', child: Text('user')),
-                        DropdownMenuItem(value: 'agent', child: Text('agent')),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          authorKind = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: authorLabelController,
-                      decoration: const InputDecoration(
-                        labelText: 'Author label',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: bodyController,
-                      minLines: 5,
-                      maxLines: 10,
-                      decoration: const InputDecoration(
-                        labelText: 'Message',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            final ref = widget.currentFlowRef;
-                            if (ref == null || _hasSameRef(refs, ref)) {
-                              return;
-                            }
-                            setDialogState(() {
-                              refs.add(ref);
-                            });
-                          },
-                          icon: const Icon(Icons.account_tree_outlined),
-                          label: const Text('Ref current flow'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            final ref = widget.selectedProcessorRef;
-                            if (ref == null || _hasSameRef(refs, ref)) {
-                              return;
-                            }
-                            setDialogState(() {
-                              refs.add(ref);
-                            });
-                          },
-                          icon: const Icon(Icons.memory_outlined),
-                          label: const Text('Ref processor'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () async {
-                            final ref = await _showAddCustomReferenceDialog();
-                            if (ref == null || !context.mounted) {
-                              return;
-                            }
-                            setDialogState(() {
-                              if (!_hasSameRef(refs, ref)) {
-                                refs.add(ref);
-                              }
-                            });
-                          },
-                          icon: const Icon(Icons.alternate_email_outlined),
-                          label: const Text('Custom ref'),
-                        ),
-                      ],
-                    ),
-                    if (refs.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      _RefWrap(
-                        refs: refs,
-                        onDeleted: (ref) {
-                          setDialogState(() {
-                            refs.remove(ref);
-                          });
-                        },
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Post'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    final body = bodyController.text.trim();
-    final authorLabel = authorLabelController.text.trim();
-    bodyController.dispose();
-    authorLabelController.dispose();
-    if (submitted != true) {
+    final body = _composerController.text.trim();
+    if (body.isEmpty) {
       return;
     }
-    if (body.isEmpty) {
-      widget.onNotify('Message body cannot be empty');
-      return;
+
+    final selectedChannel = _selectedChannel();
+    final refs = <CollaborationRef>[];
+    final currentFlowRef = widget.currentFlowRef;
+    final selectedProcessorRef = widget.selectedProcessorRef;
+    if (currentFlowRef != null && !_hasSameRef(refs, currentFlowRef)) {
+      refs.add(currentFlowRef);
+    }
+    if (selectedProcessorRef != null &&
+        !_hasSameRef(refs, selectedProcessorRef)) {
+      refs.add(selectedProcessorRef);
+    }
+
+    if (mounted) {
+      setState(() {
+        _postingMessage = true;
+      });
     }
 
     try {
       await widget.apiClient.createMessage(
         workspaceId: workspaceId,
-        scope: scope,
+        scope: selectedChannel?.scope ?? 'team',
         channelDocId: channelDocId,
         body: body,
-        authorKind: authorKind,
-        authorId: _normalizeRefId(authorLabel),
-        authorLabel: authorLabel.isEmpty ? 'You' : authorLabel,
+        authorKind: 'user',
+        authorId: 'local-user',
+        authorLabel: 'You',
         refs: refs,
       );
+      _composerController.clear();
       await _loadMessagesForSelectedChannel();
       widget.onNotify('Message posted');
     } on ApiError catch (error) {
       widget.onNotify(widget.formatApiError(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _postingMessage = false;
+        });
+      }
     }
   }
 
-  Future<void> _showCreateTaskDialog() async {
-    final workspaceId = widget.workspaceId;
-    if (workspaceId == null) {
-      widget.onNotify('Select or create a workspace first.');
-      return;
-    }
 
-    final selectedChannel = _selectedChannel();
-    final titleController = TextEditingController();
-    final bodyController = TextEditingController();
-    final assigneeLabelController = TextEditingController();
-    var scope = selectedChannel?.scope ?? 'team';
-    var status = 'open';
-    var assigneeKind = 'agent';
-    final refs = <CollaborationRef>[];
-
-    final submitted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('New Task'),
-              content: SizedBox(
-                width: 620,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: scope,
-                      decoration: const InputDecoration(
-                        labelText: 'Scope',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'personal',
-                          child: Text('personal'),
-                        ),
-                        DropdownMenuItem(value: 'team', child: Text('team')),
-                        DropdownMenuItem(value: 'org', child: Text('org')),
-                        DropdownMenuItem(
-                          value: 'public_read',
-                          child: Text('public_read'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          scope = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: status,
-                      decoration: const InputDecoration(
-                        labelText: 'Status',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'open', child: Text('open')),
-                        DropdownMenuItem(
-                          value: 'in_progress',
-                          child: Text('in_progress'),
-                        ),
-                        DropdownMenuItem(value: 'done', child: Text('done')),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          status = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: titleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Title',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: bodyController,
-                      minLines: 4,
-                      maxLines: 8,
-                      decoration: const InputDecoration(
-                        labelText: 'Body',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: assigneeKind,
-                      decoration: const InputDecoration(
-                        labelText: 'Assignee kind',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'agent', child: Text('agent')),
-                        DropdownMenuItem(value: 'user', child: Text('user')),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          assigneeKind = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: assigneeLabelController,
-                      decoration: const InputDecoration(
-                        labelText: 'Assignee label (optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            final ref = widget.currentFlowRef;
-                            if (ref == null || _hasSameRef(refs, ref)) {
-                              return;
-                            }
-                            setDialogState(() {
-                              refs.add(ref);
-                            });
-                          },
-                          icon: const Icon(Icons.account_tree_outlined),
-                          label: const Text('Ref current flow'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () {
-                            final ref = widget.selectedProcessorRef;
-                            if (ref == null || _hasSameRef(refs, ref)) {
-                              return;
-                            }
-                            setDialogState(() {
-                              refs.add(ref);
-                            });
-                          },
-                          icon: const Icon(Icons.memory_outlined),
-                          label: const Text('Ref processor'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () async {
-                            final ref = await _showAddCustomReferenceDialog();
-                            if (ref == null || !context.mounted) {
-                              return;
-                            }
-                            setDialogState(() {
-                              if (!_hasSameRef(refs, ref)) {
-                                refs.add(ref);
-                              }
-                            });
-                          },
-                          icon: const Icon(Icons.add_link_outlined),
-                          label: const Text('Custom ref'),
-                        ),
-                      ],
-                    ),
-                    if (refs.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      _RefWrap(
-                        refs: refs,
-                        onDeleted: (ref) {
-                          setDialogState(() {
-                            refs.remove(ref);
-                          });
-                        },
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Create'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    final title = titleController.text.trim();
-    final body = bodyController.text.trim();
-    final assigneeLabel = assigneeLabelController.text.trim();
-    titleController.dispose();
-    bodyController.dispose();
-    assigneeLabelController.dispose();
-    if (submitted != true) {
-      return;
-    }
-    if (title.isEmpty) {
-      widget.onNotify('Task title cannot be empty');
-      return;
-    }
-
-    try {
-      await widget.apiClient.createTask(
-        workspaceId: workspaceId,
-        scope: scope,
-        title: title,
-        body: body,
-        status: status,
-        channelDocId: _selectedChannelDocId,
-        assigneeKind: assigneeLabel.isEmpty ? '' : assigneeKind,
-        assigneeId: assigneeLabel.isEmpty ? '' : _normalizeRefId(assigneeLabel),
-        assigneeLabel: assigneeLabel,
-        refs: refs,
-      );
-      await _loadTasks();
-      widget.onNotify('Task created');
-    } on ApiError catch (error) {
-      widget.onNotify(widget.formatApiError(error));
-    }
-  }
-
-  Future<void> _updateTaskStatus(TaskListItem item, String status) async {
-    try {
-      await widget.apiClient.patchTaskStatus(
-        taskDocId: item.docId,
-        status: status,
-      );
-      await _loadTasks();
-      widget.onNotify('Task updated');
-    } on ApiError catch (error) {
-      widget.onNotify(widget.formatApiError(error));
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1008,31 +472,6 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.tonalIcon(
-                key: const Key('sidebar-activity-new-channel-button'),
-                onPressed: hasWorkspace ? _showCreateChannelDialog : null,
-                icon: const Icon(Icons.forum_outlined),
-                label: const Text('New channel'),
-              ),
-              FilledButton.tonalIcon(
-                key: const Key('sidebar-activity-new-message-button'),
-                onPressed: hasWorkspace ? _showCreateMessageDialog : null,
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Post'),
-              ),
-              FilledButton.tonalIcon(
-                key: const Key('sidebar-activity-new-task-button'),
-                onPressed: hasWorkspace ? _showCreateTaskDialog : null,
-                icon: const Icon(Icons.task_alt_outlined),
-                label: const Text('New task'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
           if (!hasWorkspace)
             const Expanded(
               child: Center(
@@ -1048,89 +487,79 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
             if (_channels.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: KeyedSubtree(
-                  key: ValueKey<String>(
-                    'activity-channel-dropdown-${_selectedChannelDocId ?? _channels.first.docId}',
-                  ),
-                  child: DropdownButtonFormField<String>(
-                    key: const Key('activity-channel-dropdown'),
-                    initialValue:
-                        _selectedChannelDocId != null &&
-                            _channels.any(
-                              (item) => item.docId == _selectedChannelDocId,
-                            )
-                        ? _selectedChannelDocId
-                        : _channels.first.docId,
-                    decoration: const InputDecoration(
-                      labelText: 'Channel',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: _channels
-                        .map(
-                          (item) => DropdownMenuItem<String>(
-                            value: item.docId,
-                            child: Text(
-                              item.name.isEmpty
-                                  ? '(untitled channel)'
-                                  : item.name,
-                            ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      unawaited(_onChannelSelected(value));
-                    },
-                  ),
-                ),
-              ),
-            Expanded(
-              child: DefaultTabController(
-                length: 2,
-                child: Column(
+                child: Row(
                   children: [
-                    TabBar(
-                      onTap: (index) {
-                        if (index == 0) {
-                          unawaited(_loadMessagesForSelectedChannel());
-                        } else {
-                          unawaited(_loadTasks());
-                        }
-                      },
-                      tabs: const [
-                        Tab(
-                          key: Key('activity-chat-tab-button'),
-                          icon: Icon(Icons.chat_outlined),
-                          text: 'Chat',
-                        ),
-                        Tab(
-                          key: Key('activity-tasks-tab-button'),
-                          icon: Icon(Icons.checklist_outlined),
-                          text: 'Tasks',
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 1),
                     Expanded(
-                      child: TabBarView(
-                        children: [
-                          KeyedSubtree(
-                            key: const Key('activity_chat_tab'),
-                            child: _buildChatListContent(),
+                      child: KeyedSubtree(
+                        key: ValueKey<String>(
+                          'activity-channel-dropdown-${_selectedChannelDocId ?? _channels.first.docId}',
+                        ),
+                        child: DropdownButtonFormField<String>(
+                          key: const Key('activity-channel-dropdown'),
+                          initialValue:
+                              _selectedChannelDocId != null &&
+                                  _channels.any(
+                                    (item) => item.docId == _selectedChannelDocId,
+                                  )
+                              ? _selectedChannelDocId
+                              : _channels.first.docId,
+                          decoration: const InputDecoration(
+                            labelText: 'Channel',
+                            border: OutlineInputBorder(),
                           ),
-                          KeyedSubtree(
-                            key: const Key('activity_tasks_tab'),
-                            child: _buildTaskListContent(),
-                          ),
-                        ],
+                          items: _channels
+                              .map(
+                                (item) => DropdownMenuItem<String>(
+                                  value: item.docId,
+                                  child: Text(
+                                    item.name.isEmpty
+                                        ? '(untitled channel)'
+                                        : item.name,
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) {
+                              return;
+                            }
+                            unawaited(_onChannelSelected(value));
+                          },
+                        ),
                       ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      key: const Key('activity-new-channel-button'),
+                      onPressed: _showCreateChannelDialog,
+                      icon: const Icon(Icons.add),
+                      tooltip: 'New channel',
                     ),
                   ],
                 ),
               ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton.filledTonal(
+                  key: const Key('activity-inline-post-button'),
+                  onPressed:
+                      _selectedChannelDocId == null || _postingMessage
+                          ? null
+                          : _submitInlineMessage,
+                  icon: _postingMessage
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add),
+                  tooltip: 'Post message',
+                ),
+              ),
             ),
+            Expanded(child: _buildChatListContent()),
           ],
         ],
       ),
@@ -1175,91 +604,46 @@ class _ActivitySidebarState extends State<ActivitySidebar> {
     }
     return RefreshIndicator(
       onRefresh: _loadMessagesForSelectedChannel,
-      child: _messages.isEmpty
-          ? ListView(
-              padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-              children: const [
-                Center(
+      child: ListView.separated(
+        key: const Key('activity-message-list'),
+        controller: _messagesScrollController,
+        padding: const EdgeInsets.all(12),
+        itemCount: _messages.isEmpty ? 2 : _messages.length + 1,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          if (_messages.isEmpty) {
+            if (index == 0) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
                   child: Text(
                     'No messages yet in this channel. Post a message.',
                   ),
                 ),
-              ],
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final item = _messages[index];
-                return _ActivityMessageCard(
-                  message: item,
-                  friendlyDate: _friendlyDate,
-                );
-              },
-            ),
-    );
-  }
+              );
+            }
+            return _InlineComposer(
+              controller: _composerController,
+              enabled: !_postingMessage,
+              onSubmitted: _submitInlineMessage,
+            );
+          }
 
-  Widget _buildTaskListContent() {
-    if (widget.workspaceId == null) {
-      return const Center(child: Text('Select a workspace to view tasks.'));
-    }
-    if (_tasksLoading && _tasks.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_tasksError != null && _tasks.isEmpty) {
-      return _ActivityErrorState(
-        title: 'Tasks error',
-        message: _tasksError!,
-        onRetry: _loadTasks,
-      );
-    }
-    return RefreshIndicator(
-      onRefresh: _loadTasks,
-      child: _tasks.isEmpty
-          ? ListView(
-              padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-              children: const [
-                Center(child: Text('No tasks yet for this workspace.')),
-              ],
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: _tasks.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final item = _tasks[index];
-                return _ActivityTaskCard(
-                  task: item,
-                  friendlyDate: _friendlyDate,
-                  onStatusChanged: (status) => _updateTaskStatus(item, status),
-                );
-              },
-            ),
-    );
-  }
-}
+          if (index < _messages.length) {
+            final item = _messages[index];
+            return _ActivityMessageCard(
+              message: item,
+              friendlyDate: _friendlyDate,
+            );
+          }
 
-class _RefWrap extends StatelessWidget {
-  const _RefWrap({required this.refs, this.onDeleted});
-
-  final List<CollaborationRef> refs;
-  final ValueChanged<CollaborationRef>? onDeleted;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: refs
-          .map(
-            (ref) => InputChip(
-              label: Text(_activityRefLabel(ref)),
-              onDeleted: onDeleted == null ? null : () => onDeleted!(ref),
-            ),
-          )
-          .toList(growable: false),
+          return _InlineComposer(
+            controller: _composerController,
+            enabled: !_postingMessage,
+            onSubmitted: _submitInlineMessage,
+          );
+        },
+      ),
     );
   }
 }
@@ -1276,9 +660,6 @@ class _ActivityMessageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final authorLabel = message.authorLabel.trim().isEmpty
-        ? (message.authorId.trim().isEmpty ? '(unknown)' : message.authorId)
-        : message.authorLabel;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -1286,23 +667,6 @@ class _ActivityMessageCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  authorLabel,
-                  style: Theme.of(context).textTheme.titleSmall,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                _ActivityPill(
-                  label: message.authorKind,
-                  color: scheme.surfaceContainerHighest,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerRight,
               child: Text(
@@ -1334,96 +698,50 @@ class _ActivityMessageCard extends StatelessWidget {
   }
 }
 
-class _ActivityTaskCard extends StatelessWidget {
-  const _ActivityTaskCard({
-    required this.task,
-    required this.friendlyDate,
-    required this.onStatusChanged,
+
+
+class _InlineComposer extends StatelessWidget {
+  const _InlineComposer({
+    required this.controller,
+    required this.enabled,
+    required this.onSubmitted,
   });
 
-  final TaskListItem task;
-  final String Function(String raw) friendlyDate;
-  final ValueChanged<String> onStatusChanged;
+  final TextEditingController controller;
+  final bool enabled;
+  final VoidCallback onSubmitted;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        task.title.trim().isEmpty
-                            ? '(untitled task)'
-                            : task.title,
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${friendlyDate(task.createdAt)} • ${task.scope}',
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    ],
-                  ),
+            Expanded(
+              child: TextField(
+                key: const Key('activity-inline-message-box'),
+                controller: controller,
+                enabled: enabled,
+                minLines: 1,
+                maxLines: 6,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => onSubmitted(),
+                decoration: const InputDecoration(
+                  hintText: 'Write a message...',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(width: 8),
-                DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: task.status,
-                    items: const [
-                      DropdownMenuItem(value: 'open', child: Text('open')),
-                      DropdownMenuItem(
-                        value: 'in_progress',
-                        child: Text('in_progress'),
-                      ),
-                      DropdownMenuItem(value: 'done', child: Text('done')),
-                    ],
-                    onChanged: (value) {
-                      if (value == null || value == task.status) {
-                        return;
-                      }
-                      onStatusChanged(value);
-                    },
-                  ),
-                ),
-              ],
+              ),
             ),
-            if (task.assigneeLabel.trim().isNotEmpty) ...[
-              const SizedBox(height: 6),
-              _ActivityPill(
-                label: 'assignee:${task.assigneeLabel}',
-                color: scheme.surfaceContainerHighest,
-              ),
-            ],
-            if (task.bodyPreview.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(task.bodyPreview),
-            ],
-            if (task.refs.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: task.refs
-                    .map(
-                      (ref) => _ActivityPill(
-                        label: _activityRefLabel(ref),
-                        color: scheme.surfaceContainerHighest,
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ],
+            const SizedBox(width: 8),
+            IconButton.filled(
+              key: const Key('activity-inline-send-button'),
+              onPressed: enabled ? onSubmitted : null,
+              icon: const Icon(Icons.send),
+              tooltip: 'Send',
+            ),
           ],
         ),
       ),
@@ -1483,11 +801,6 @@ class _ActivityPill extends StatelessWidget {
   }
 }
 
-String _normalizeRefId(String value) {
-  final normalized = value.trim().toLowerCase().replaceAll(' ', '_');
-  return normalized.isEmpty ? 'local-user' : normalized;
-}
-
 String _friendlyDate(String raw) {
   final parsed = DateTime.tryParse(raw);
   if (parsed == null) {
@@ -1508,7 +821,6 @@ String _activityRefLabel(CollaborationRef ref) {
     'agent' => 'agent:${ref.displayLabel}',
     'flow' => 'flow:${ref.displayLabel}',
     'processor' => 'processor:${ref.displayLabel}',
-    'task' => 'task:${ref.displayLabel}',
     'channel' => '#${ref.displayLabel}',
     _ => '${ref.kind}:${ref.displayLabel}',
   };

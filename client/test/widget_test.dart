@@ -94,10 +94,7 @@ class _WidgetTestApiClient extends ApiClient {
     return const <MessageListItem>[];
   }
 
-  @override
-  Future<List<TaskListItem>> getTasks({required String workspaceId}) async {
-    return const <TaskListItem>[];
-  }
+
 
   @override
   Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
@@ -422,10 +419,6 @@ void main() {
     await tester.tap(find.byKey(const Key('sidebar-tab-activity-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('sidebar_tab_activity')), findsOneWidget);
-    expect(
-      find.byKey(const Key('sidebar-activity-new-channel-button')),
-      findsOneWidget,
-    );
   });
 
   testWidgets('activity sidebar tab loads and renders chat list items', (
@@ -454,9 +447,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('sidebar_tab_activity')), findsOneWidget);
+    expect(find.byKey(const Key('activity-channel-dropdown')), findsOneWidget);
     expect(find.text('Daily Log'), findsOneWidget);
     expect(find.textContaining('First preview line'), findsOneWidget);
     expect(find.textContaining('Second preview line'), findsOneWidget);
+    expect(find.byKey(const Key('activity-message-list')), findsOneWidget);
+    expect(find.byKey(const Key('activity-inline-message-box')), findsOneWidget);
+    expect(find.byKey(const Key('activity-inline-send-button')), findsOneWidget);
+    expect(find.text('Dana'), findsNothing);
+    expect(find.text('Planner Agent'), findsNothing);
+    expect(find.text('user'), findsNothing);
+    expect(find.text('agent'), findsNothing);
   });
 
   testWidgets('message drawer log row renders and copy action works', (

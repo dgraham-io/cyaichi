@@ -270,6 +270,36 @@ void main() {
     },
   );
 
+  testWidgets('workspace header stays stable at narrow widths', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FlowCanvasScreen(
+          apiClientFactory:
+              ({
+                required String baseUrl,
+                required int runRequestTimeoutSeconds,
+              }) => _WidgetTestApiClient(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('workspace-title-row')), findsOneWidget);
+    expect(find.byKey(const Key('workspace-title-label')), findsOneWidget);
+    expect(find.byKey(const Key('workspace-actions-button')), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-actions-button')), findsOneWidget);
+    expect(find.byKey(const Key('flow-title-run-button')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('node palette search filters and clear restores list', (
     WidgetTester tester,
   ) async {

@@ -75,6 +75,13 @@ Get built-in node type templates used by the server:
 curl -s http://127.0.0.1:8080/v1/node-types | jq
 ```
 
+Current built-in processors:
+
+- `file.read`
+- `file.write`
+- `file.monitor`
+- `llm.chat`
+
 ## Documents API
 
 Store a memory document:
@@ -382,6 +389,7 @@ curl -s -X PATCH "http://127.0.0.1:8080/v1/tasks/$TASK_ID" \
 ## Workspace List Endpoints
 
 Legacy `/v1/notes` endpoints still exist for compatibility, but the current client uses the collaboration endpoints above for the Activity sidebar.
+Today that Activity UI is channels + messages. Task endpoints are implemented on the server, but client task workflow UI has not landed yet.
 
 List flows for a workspace:
 
@@ -428,6 +436,8 @@ curl -s "http://127.0.0.1:8080/v1/docs/run/$FAIL_RUN_ID/$FAIL_RUN_VER" | jq
 ```
 
 ## Package Export API
+
+Package export is implemented today. Package import and reconciliation are not yet available.
 
 Create a workspace:
 

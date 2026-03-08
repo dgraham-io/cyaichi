@@ -67,7 +67,7 @@ Authoritative server HTTP endpoints.
 
 | Method | Path | Purpose | Request | Response |
 | --- | --- | --- | --- | --- |
-| POST | `/v1/runs` | Create and execute a run for the current flow head. | JSON: workspace_id, flow_doc_id, input_file, output_file. | 201 JSON run IDs and status; 400 validation; 404 missing workspace/flow; 502 upstream LLM error. |
+| POST | `/v1/runs` | Create and execute a run for a selected flow reference. | JSON: workspace_id, flow_ref { doc_id, ver_id\|null, selector }, optional inputs map for file path overrides. | 201 JSON { run_id, run_ver_id, flow }; 400 validation; 404 missing workspace/flow; 502 upstream LLM error. |
 | GET | `/v1/workspaces/{workspace_id}/runs` | List latest run versions for a workspace. | Path param: workspace_id. | 200 JSON { items: [{ doc_id, ver_id, created_at, status, mode }] }. |
 
 ## Notes
@@ -79,6 +79,8 @@ Authoritative server HTTP endpoints.
 | GET | `/v1/workspaces/{workspace_id}/notes` | List note memory docs for a workspace. | Path param: workspace_id. | 200 JSON { items: [{ doc_id, ver_id, created_at, title, scope, body_preview }] }. |
 
 ## Packages
+
+Export is implemented today. Package import and reconciliation endpoints do not exist yet.
 
 | Method | Path | Purpose | Request | Response |
 | --- | --- | --- | --- | --- |

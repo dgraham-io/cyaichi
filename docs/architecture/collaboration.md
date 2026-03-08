@@ -73,12 +73,14 @@ These endpoints are intentionally polling-friendly. Realtime delivery can be lay
 The right sidebar now exposes an `Activity` panel with:
 
 - channel creation and selection
+- channel rename/delete actions
 - chat timeline
-- task list
-- create dialogs for channels, posts, and tasks
+- inline message composer
 
 The old Notes sidebar is replaced by this Activity surface. Long-form notes can still be represented as messages in a dedicated channel.
 Legacy note endpoints may remain temporarily for compatibility, but new product work should build on channels, messages, and tasks.
+
+Task storage and task endpoints already exist on the server, but task list/create/update UI has not landed in the client yet. Today the Activity panel is the primary collaboration surface for channels and messages.
 
 ## Retrieval and AI path
 

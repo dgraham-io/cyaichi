@@ -15,6 +15,19 @@ void main() {
     expect(template.config['input_file'], '');
   });
 
+  test('file.monitor template is available in the fallback registry', () {
+    final registry = ProcessorTypeRegistry.fallback();
+    final template = registry.createTemplate('file.monitor');
+
+    expect(template.typeId, 'file.monitor');
+    expect(template.inputs, isEmpty);
+    expect(template.outputs, hasLength(1));
+    expect(template.outputs.first.port, 'out');
+    expect(template.outputs.first.schema, 'artifact/text');
+    expect(template.config.containsKey('file_path'), isTrue);
+    expect(template.config['file_path'], '');
+  });
+
   test(
     'processor created from server node type has ports and default config',
     () {

@@ -184,6 +184,25 @@ class ProcessorTypeRegistry {
           defaultConfig: <String, dynamic>{'output_file': '', 'primary': false},
         ),
         ProcessorTypeDefinition(
+          typeId: 'file.monitor',
+          displayName: 'File Monitor',
+          category: 'io',
+          icon: Icons.visibility,
+          inputs: <ProcessorPortDefinition>[],
+          outputs: <ProcessorPortDefinition>[
+            ProcessorPortDefinition(name: 'out', schema: 'artifact/text'),
+          ],
+          inspectorFields: <ProcessorInspectorFieldDefinition>[
+            ProcessorInspectorFieldDefinition(
+              key: 'file_path',
+              label: 'File path',
+              kind: ProcessorInspectorFieldKind.string,
+              required: true,
+            ),
+          ],
+          defaultConfig: <String, dynamic>{'file_path': ''},
+        ),
+        ProcessorTypeDefinition(
           typeId: 'llm.chat',
           displayName: 'LLM Chat',
           category: 'ai',

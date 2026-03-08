@@ -49,10 +49,10 @@ func TestNodeTypesHandler(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if len(resp.Items) != 3 {
-		t.Fatalf("expected 3 node types, got %d", len(resp.Items))
+	if len(resp.Items) != 4 {
+		t.Fatalf("expected 4 node types, got %d", len(resp.Items))
 	}
-	if resp.Items[0].Type != "file.read" || resp.Items[1].Type != "file.write" || resp.Items[2].Type != "llm.chat" {
+	if resp.Items[0].Type != "file.read" || resp.Items[1].Type != "file.write" || resp.Items[2].Type != "file.monitor" || resp.Items[3].Type != "llm.chat" {
 		t.Fatalf("unexpected node type order: %#v", resp.Items)
 	}
 

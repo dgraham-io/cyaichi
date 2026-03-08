@@ -614,7 +614,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
             const SizedBox(width: 6),
           ],
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 240),
+            constraints: const BoxConstraints(maxWidth: 160),
             child: Text(
               key: const Key('workspace-title-label'),
               _currentWorkspaceLabel,
@@ -643,22 +643,190 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
               ),
             ),
           ),
-          SizedBox(
-            height: 24,
-            child: VerticalDivider(
-              width: 16,
-              thickness: 1,
-              color: Theme.of(context).colorScheme.outlineVariant,
-            ),
-          ),
-          IconButton(
-            key: const Key('new-flow-button'),
-            tooltip: 'New flow',
-            onPressed: _onNewFlowPressed,
-            icon: const Icon(Icons.add),
-          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFlowTitleRow() {
+    final runGuard = _computeRunGuard();
+    final hasWorkspaceSelected = _selectedWorkspaceId != null;
+    final hasFlowErrors = _flowValidationErrors.isNotEmpty;
+    final hasOtherFlowBlockers =
+        runGuard.blockers.isNotEmpty && hasWorkspaceSelected && !hasFlowErrors;
+    final runDisabledNoWorkspace = !hasWorkspaceSelected;
+    final runDisabledInvalid = hasFlowErrors || hasOtherFlowBlockers;
+    final runDisabledRunning = _isRunning;
+    final runEnabled =
+        !runDisabledNoWorkspace && !runDisabledInvalid && !runDisabledRunning;
+    final showRunBlockedOverlay = !runEnabled;
+    final firstValidationIssue = hasFlowErrors
+        ? _flowValidationErrors.first
+        : (hasOtherFlowBlockers ? runGuard.blockers.first : null);
+    final runTooltip = runDisabledRunning
+        ? 'Running...'
+        : runDisabledNoWorkspace
+        ? 'Run (select a workspace)'
+        : runEnabled
+        ? 'Run'
+        : firstValidationIssue == null
+        ? 'Run (fix flow errors)'
+        : 'Run (fix flow errors): $firstValidationIssue';
+
+    final displayTitle = _flowTitleController.text.trim().isEmpty ? '(untitled flow)' : _flowTitleController.text;
+    return Row(
+      key: const Key('flow-title-overlay'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            key: const Key('flow-title-display'),
+            displayTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+        const SizedBox(width: 6),
+        MenuAnchor(
+          menuChildren: [
+            MenuItemButton(
+              key: const Key('flow-title-edit-menu-new-flow'),
+              leadingIcon: const Icon(Icons.add),
+              onPressed: _onNewFlowPressed,
+              child: const Text('New flow'),
+            ),
+            MenuItemButton(
+              key: const Key('flow-title-edit-menu-select-flow'),
+              leadingIcon: const Icon(Icons.folder_open),
+              onPressed: !_isSavingToServer && _selectedWorkspaceId != null ? () { unawaited(_showSelectFlowDialog()); } : null,
+              child: Tooltip(
+                message: _selectedWorkspaceId != null
+                    ? 'Open a saved flow'
+                    : 'Select a workspace first',
+                child: const Text('Select flow…'),
+              ),
+            ),
+            MenuItemButton(
+              key: const Key('flow-title-edit-menu-rename'),
+              leadingIcon: const Icon(Icons.drive_file_rename_outline),
+              onPressed: _showRenameFlowDialog,
+              child: const Text('Rename flow'),
+            ),
+            MenuItemButton(
+              key: const Key('flow-title-edit-menu-update'),
+              leadingIcon: const Icon(Icons.system_update_alt),
+              onPressed: !_isSavingToServer && _selectedWorkspaceId != null && _isFlowDirty ? () { unawaited(_saveNewFlowVersionToServer()); } : null,
+              child: const Tooltip(
+                message: 'Save as new flow version',
+                child: Text('Update'),
+              ),
+            ),
+            MenuItemButton(
+              key: const Key('flow-title-edit-menu-duplicate'),
+              leadingIcon: const Icon(Icons.content_copy_outlined),
+              onPressed: !_isSavingToServer ? () { unawaited(_duplicateCurrentFlow()); } : null,
+              child: const Tooltip(
+                message: 'Duplicate this flow',
+                child: Text('Duplicate'),
+              ),
+            ),
+            MenuItemButton(
+              key: const Key('flow-title-edit-menu-set-head'),
+              leadingIcon: const Icon(Icons.push_pin_outlined),
+              onPressed: !_isSavingToServer && _selectedWorkspaceId != null ? () { unawaited(_setCurrentFlowAsHead()); } : null,
+              child: const Tooltip(
+                message: 'Set workspace head to current flow',
+                child: Text('Set head'),
+              ),
+            ),
+          ],
+          builder: (context, controller, child) {
+            return Tooltip(
+              message: 'Flow actions',
+              child: IconButton(
+                key: const Key('flow-title-actions-button'),
+                tooltip: null,
+                onPressed: () {
+                  if (controller.isOpen) {
+                    controller.close();
+                    return;
+                  }
+                  controller.open();
+                },
+                icon: const Icon(Icons.more_vert),
+                iconSize: 20,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 40,
+                  height: 40,
+                ),
+              ),
+            );
+          },
+        ),
+        SizedBox(
+          key: const Key('flow-title-run-divider'),
+          height: 24,
+          child: VerticalDivider(
+            width: 1,
+            thickness: 1,
+            color: Theme.of(
+              context,
+            ).colorScheme.outlineVariant.withValues(alpha: 0.8),
+          ),
+        ),
+        Tooltip(
+          key: const Key('flow-title-run-tooltip'),
+          message: runTooltip,
+          child: IconButton(
+            key: const Key('flow-title-run-button'),
+            tooltip: null,
+            onPressed: runEnabled ? () { unawaited(_runFlow()); } : null,
+            icon: SizedBox(
+              width: 22,
+              height: 22,
+              child: _isRunning
+                  ? const Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Center(
+                          child: Icon(Icons.play_arrow_rounded),
+                        ),
+                        if (showRunBlockedOverlay)
+                          Positioned(
+                            right: -2,
+                            top: -2,
+                            child: Icon(
+                              Icons.block,
+                              key: const Key(
+                                'flow-title-run-blocked-overlay',
+                              ),
+                              size: 13,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.error.withValues(alpha: 0.8),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            iconSize: 20,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(
+              width: 40,
+              height: 40,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -668,10 +836,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        leadingWidth: 420,
+        leadingWidth: 200,
         leading: _buildWorkspaceLeadingSection(
           hasSelectedWorkspace: hasSelectedWorkspace,
         ),
+        title: Center(child: _buildFlowTitleRow()),
         actions: [
           IconButton(
             tooltip: 'Export JSON',
@@ -696,7 +865,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
   }
 
   Widget _buildFlowTab() {
-    final runGuard = _computeRunGuard();
     final hasWorkspaceSelected = _selectedWorkspaceId != null;
     final selectedNode = _selectedNodeId == null
         ? null
@@ -705,28 +873,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
         ? null
         : _controller.getConnection(_selectedConnectionId!);
     final canvasTheme = NodeFlowTheme.dark;
-
-    final hasFlowErrors = _flowValidationErrors.isNotEmpty;
-    final hasOtherFlowBlockers =
-        runGuard.blockers.isNotEmpty && hasWorkspaceSelected && !hasFlowErrors;
-    final runDisabledNoWorkspace = !hasWorkspaceSelected;
-    final runDisabledInvalid = hasFlowErrors || hasOtherFlowBlockers;
-    final runDisabledRunning = _isRunning;
-    final runEnabled =
-        !runDisabledNoWorkspace && !runDisabledInvalid && !runDisabledRunning;
-    final showRunBlockedOverlay = !runEnabled;
-    final firstValidationIssue = hasFlowErrors
-        ? _flowValidationErrors.first
-        : (hasOtherFlowBlockers ? runGuard.blockers.first : null);
-    final runTooltip = runDisabledRunning
-        ? 'Running...'
-        : runDisabledNoWorkspace
-        ? 'Run (select a workspace)'
-        : runEnabled
-        ? 'Run'
-        : firstValidationIssue == null
-        ? 'Run (fix flow errors)'
-        : 'Run (fix flow errors): $firstValidationIssue';
 
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
@@ -862,44 +1008,6 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
                                         });
                                       },
                                     ),
-                              ),
-                              Positioned(
-                                left: 12,
-                                top: 12,
-                                child: _FlowTitleOverlay(
-                                  title: _flowTitleController.text,
-                                  canUpdate:
-                                      !_isSavingToServer &&
-                                      _selectedWorkspaceId != null &&
-                                      _isFlowDirty,
-                                  canDuplicate: !_isSavingToServer,
-                                  canSetHead:
-                                      !_isSavingToServer &&
-                                      _selectedWorkspaceId != null,
-                                  onRename: _showRenameFlowDialog,
-                                  onUpdate: () {
-                                    unawaited(_saveNewFlowVersionToServer());
-                                  },
-                                  onDuplicate: () {
-                                    unawaited(_duplicateCurrentFlow());
-                                  },
-                                  onSetHead: () {
-                                    unawaited(_setCurrentFlowAsHead());
-                                  },
-                                  canSelectFlow:
-                                      !_isSavingToServer &&
-                                      _selectedWorkspaceId != null,
-                                  onSelectFlow: () {
-                                    unawaited(_showSelectFlowDialog());
-                                  },
-                                  runEnabled: runEnabled,
-                                  showRunBlockedOverlay: showRunBlockedOverlay,
-                                  isRunning: _isRunning,
-                                  runTooltip: runTooltip,
-                                  onRun: () {
-                                    unawaited(_runFlow());
-                                  },
-                                ),
                               ),
                               AnimatedPositioned(
                                 duration: const Duration(milliseconds: 220),
@@ -2106,11 +2214,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
     }
 
     final hasFileReadNode = nodes.any((node) => node.type == 'file.read');
+    final hasFileMonitorNode = nodes.any((node) => node.type == 'file.monitor');
     final hasFileWriteNode = nodes.any((node) => node.type == 'file.write');
     final includePathRequirements =
         forRunAttempt ||
         _hasAttemptedRun ||
         hasFileReadNode ||
+        hasFileMonitorNode ||
         hasFileWriteNode;
     if (includePathRequirements) {
       final runDefaultsCheck = buildRunRequestParams(
@@ -2885,8 +2995,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
 
   List<String> _collectReadNodeInputDefaults() {
     return _controller.nodes.values
-        .where((node) => node.type == 'file.read')
-        .map((node) => (_readConfig(node.data)['input_file'] as String?) ?? '')
+        .where((node) => node.type == 'file.read' || node.type == 'file.monitor')
+        .map((node) {
+          final configKey = node.type == 'file.monitor' ? 'file_path' : 'input_file';
+          return (_readConfig(node.data)[configKey] as String?) ?? '';
+        })
         .toList(growable: false);
   }
 
@@ -4083,206 +4196,6 @@ class _SelectFlowDialogState extends State<_SelectFlowDialog> {
   }
 }
 
-class _FlowTitleOverlay extends StatelessWidget {
-  const _FlowTitleOverlay({
-    required this.title,
-    required this.canUpdate,
-    required this.canDuplicate,
-    required this.canSetHead,
-    required this.onRename,
-    required this.onUpdate,
-    required this.onDuplicate,
-    required this.onSetHead,
-    required this.canSelectFlow,
-    required this.onSelectFlow,
-    required this.runEnabled,
-    required this.showRunBlockedOverlay,
-    required this.isRunning,
-    required this.runTooltip,
-    required this.onRun,
-  });
-
-  final String title;
-  final bool canUpdate;
-  final bool canDuplicate;
-  final bool canSetHead;
-  final VoidCallback onRename;
-  final VoidCallback onUpdate;
-  final VoidCallback onDuplicate;
-  final VoidCallback onSetHead;
-  final bool canSelectFlow;
-  final VoidCallback onSelectFlow;
-  final bool runEnabled;
-  final bool showRunBlockedOverlay;
-  final bool isRunning;
-  final String runTooltip;
-  final VoidCallback onRun;
-
-  @override
-  Widget build(BuildContext context) {
-    final displayTitle = title.trim().isEmpty ? '(untitled flow)' : title;
-    return Card(
-      key: const Key('flow-title-overlay'),
-      margin: EdgeInsets.zero,
-      elevation: 3,
-      color: Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  key: const Key('flow-title-display'),
-                  displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              const SizedBox(width: 6),
-              MenuAnchor(
-                menuChildren: [
-                  MenuItemButton(
-                    key: const Key('flow-title-edit-menu-select-flow'),
-                    leadingIcon: const Icon(Icons.folder_open),
-                    onPressed: canSelectFlow ? onSelectFlow : null,
-                    child: Tooltip(
-                      message: canSelectFlow
-                          ? 'Open a saved flow'
-                          : 'Select a workspace first',
-                      child: const Text('Select flow…'),
-                    ),
-                  ),
-                  MenuItemButton(
-                    key: const Key('flow-title-edit-menu-rename'),
-                    leadingIcon: const Icon(Icons.drive_file_rename_outline),
-                    onPressed: onRename,
-                    child: const Text('Rename flow'),
-                  ),
-                  MenuItemButton(
-                    key: const Key('flow-title-edit-menu-update'),
-                    leadingIcon: const Icon(Icons.system_update_alt),
-                    onPressed: canUpdate ? onUpdate : null,
-                    child: const Tooltip(
-                      message: 'Save as new flow version',
-                      child: Text('Update'),
-                    ),
-                  ),
-                  MenuItemButton(
-                    key: const Key('flow-title-edit-menu-duplicate'),
-                    leadingIcon: const Icon(Icons.content_copy_outlined),
-                    onPressed: canDuplicate ? onDuplicate : null,
-                    child: const Tooltip(
-                      message: 'Duplicate this flow',
-                      child: Text('Duplicate'),
-                    ),
-                  ),
-                  MenuItemButton(
-                    key: const Key('flow-title-edit-menu-set-head'),
-                    leadingIcon: const Icon(Icons.push_pin_outlined),
-                    onPressed: canSetHead ? onSetHead : null,
-                    child: const Tooltip(
-                      message: 'Set workspace head to current flow',
-                      child: Text('Set head'),
-                    ),
-                  ),
-                ],
-                builder: (context, controller, child) {
-                  return Tooltip(
-                    message: 'Flow actions',
-                    child: IconButton(
-                      key: const Key('flow-title-actions-button'),
-                      tooltip: null,
-                      onPressed: () {
-                        if (controller.isOpen) {
-                          controller.close();
-                          return;
-                        }
-                        controller.open();
-                      },
-                      icon: const Icon(Icons.more_vert),
-                      iconSize: 20,
-                      visualDensity: VisualDensity.compact,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              SizedBox(
-                key: const Key('flow-title-run-divider'),
-                height: 24,
-                child: VerticalDivider(
-                  width: 1,
-                  thickness: 1,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.outlineVariant.withValues(alpha: 0.8),
-                ),
-              ),
-              Tooltip(
-                key: const Key('flow-title-run-tooltip'),
-                message: runTooltip,
-                child: IconButton(
-                  key: const Key('flow-title-run-button'),
-                  tooltip: null,
-                  onPressed: runEnabled ? onRun : null,
-                  icon: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: isRunning
-                        ? const Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              const Center(
-                                child: Icon(Icons.play_arrow_rounded),
-                              ),
-                              if (showRunBlockedOverlay)
-                                Positioned(
-                                  right: -2,
-                                  top: -2,
-                                  child: Icon(
-                                    Icons.block,
-                                    key: const Key(
-                                      'flow-title-run-blocked-overlay',
-                                    ),
-                                    size: 13,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.error.withValues(alpha: 0.8),
-                                  ),
-                                ),
-                            ],
-                          ),
-                  ),
-                  iconSize: 20,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 40,
-                    height: 40,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _ProcessorPalettePanel extends StatelessWidget {
   const _ProcessorPalettePanel({

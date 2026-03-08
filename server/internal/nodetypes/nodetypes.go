@@ -22,9 +22,10 @@ type NodeTypeDef struct {
 }
 
 const (
-	TypeFileRead  = "file.read"
-	TypeLLMChat   = "llm.chat"
-	TypeFileWrite = "file.write"
+	TypeFileRead   = "file.read"
+	TypeLLMChat    = "llm.chat"
+	TypeFileWrite  = "file.write"
+	TypeFileMonitor = "file.monitor"
 )
 
 var builtins = []NodeTypeDef{
@@ -53,6 +54,18 @@ var builtins = []NodeTypeDef{
 		ConfigSchema: []ConfigFieldDef{
 			{Key: "output_file", Kind: "string", Required: true, Label: "Output file"},
 			{Key: "primary", Kind: "bool", Required: false, Label: "Primary output"},
+		},
+	},
+	{
+		Type:        TypeFileMonitor,
+		DisplayName: "File Monitor",
+		Category:    "io",
+		Inputs:      []PortDef{},
+		Outputs: []PortDef{
+			{Port: "out", Schema: "artifact/text"},
+		},
+		ConfigSchema: []ConfigFieldDef{
+			{Key: "file_path", Kind: "string", Required: true, Label: "File path"},
 		},
 	},
 	{

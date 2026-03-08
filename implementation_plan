@@ -1,0 +1,216 @@
+# Implementation Plan
+
+## Goal
+
+Close the gap between the current local-first prototype and the target product described in `docs/cyaichi_spec.md`, while keeping the existing document model and Studio work as the foundation instead of replacing it.
+
+## Current implementation snapshot
+
+- The repo already has a solid document core: schema-validated `workspace`, `flow`, `run`, `artifact`, `memory`, and `package` documents, plus an append-only SQLite store and workspace heads map.
+- The client already ships a real Studio shell: canvas authoring, processor palette, inspector, activity sidebar, flow import/export, flow versioning, set-head, run launch, and run history.
+- The runtime is still a small synchronous executor. It validates a DAG, resolves a flow head, runs nodes serially, and persists artifacts plus run summaries.
+- The current built-in node catalog is still narrow: `file.read`, `file.monitor`, `llm.chat`, and `file.write`.
+- Collaboration and note storage exist on the server as `memory` documents, but the client mainly exposes channels and messages. There is not yet a full Notebook/Records product surface, and task UI is still missing.
+- Package export exists on the server, but package import/reconciliation does not.
+- Quality is mixed:
+  - `server`: `go test ./...` passes.
+  - `client`: `flutter test` currently fails because the workspace title row overflows in narrow layouts at `client/lib/src/flow_canvas_screen.dart`.
+
+## What is already aligned with the spec
+
+- Versioned graphs, runs, artifacts, memory items, and packages are already represented in the canonical document model.
+- Workspaces already act as the container for flows, runs, artifacts, and memory.
+- Runs already persist flow refs, invocation summaries, output artifact refs, and failure details.
+- Artifacts already carry provenance, including `run_ref`, `node_id`, and `derived_from`.
+- The Studio already has the basic shape of a single place to author flows, inspect some results, and collaborate.
+
+## Biggest gaps versus the spec
+
+### 1. Execution semantics are much smaller than the spec
+
+- The validator still enforces an acyclic single-chain style graph, including a hard failure on cycles and multiple edges from a port.
+- The engine hardcodes run mode to `hybrid` instead of actually supporting distinct durable, dataflow, and hybrid semantics.
+- There is no durable execution model yet: no waits, retries, resumability, approvals, checkpoints, or long-running state.
+- There is no real high-volume dataflow engine, batching, routing, or event-driven execution path.
+
+### 2. Observability is partial
+
+- Runs and artifacts are persisted, but there is no live graph execution status, no execution timeline view, no artifact lineage UI, and no deep trace explorer.
+- Invocation records do not yet persist the richer metrics implied by the spec, such as latency, token usage, and cost.
+- The inspector is still configuration-focused rather than execution-focused.
+
+### 3. Memory is canonical, but not yet a shared AI memory layer
+
+- Notes, channels, messages, and tasks are stored as `memory` documents, but there is no notebook/records UX that matches the spec.
+- There is no search stack yet: no FTS, no semantic retrieval, and no indexing of run traces/artifacts into a retrieval layer.
+- The runtime does not read from or write to governed memory during execution.
+- Provenance exists on documents, but AI retrieval/reuse is not yet visible in run traces.
+
+### 4. Collaboration is only partially productized
+
+- The server exposes notes, channels, messages, tasks, and task updates.
+- The client surfaces activity chat, but not the full task workflow or a richer shared-workspace collaboration model.
+- There is no realtime collaboration, edit conflict model, or branching strategy for shared graph editing yet.
+
+### 5. Governance and trust features are mostly absent
+
+- There is currently no authentication middleware, no RBAC, no workspace membership model, and no approval system.
+- There is no policy engine for side effects or memory writes.
+- There is no cost accounting, budgeting, audit reporting surface, redaction system, or data residency story beyond local file paths.
+
+### 6. Extensibility and AI meta-layer are still early
+
+- The node catalog is built-in and very small.
+- There is no plugin/connector SDK.
+- Package export exists, but import is missing.
+- There is no AI Flow Builder, no prompt-to-graph workflow, and no grounded AI change suggestions.
+- Model support is effectively a single vLLM-style chat integration, not a multi-provider abstraction.
+
+## Sequencing rules
+
+- Do not start the AI Flow Builder before memory retrieval, provenance surfacing, and richer run observability exist. Otherwise it will produce ungrounded suggestions and fight the trust contract in the spec.
+- Do not start enterprise governance work before execution semantics are explicit. Policies only make sense once durable nodes, side effects, and memory operations are first-class.
+- Do not build high-volume dataflow on top of the current single-chain validator. The execution planner needs to be generalized first.
+- Get the Flutter suite green early. Right now the layout regression will hide real UI breakage.
+
+## Recommended phases
+
+## Phase 0: Stabilize the current baseline
+
+1. Fix the top-bar workspace overflow and get `flutter test` green again.
+2. Add responsive layout coverage around narrow widths so similar regressions fail fast.
+3. Update repo docs to match the actual product surface:
+   - `file.monitor` is now a built-in processor.
+   - Activity is the primary collaboration UI.
+   - package export exists, but import does not.
+4. Write a spec-to-repo gap matrix so every major section of `docs/cyaichi_spec.md` maps to explicit deliverables.
+
+Exit criteria:
+
+- Server tests remain green.
+- Client tests are green again.
+- The repo documentation describes the current product honestly.
+
+## Phase 1: Deliver a strong Phase 1 product
+
+This phase should correspond to the spec roadmap item: Studio canvas, durable/agent-graph execution, core observability, and shared memory plus Notebook.
+
+1. Upgrade the graph model from “small runnable DAG” to “real graph document”.
+2. Add first-class subflow authoring, loading, and reuse in the client.
+3. Stop hardcoding `mode_hint` and run `mode`; make flow/run mode explicit in the editor and runtime.
+4. Replace the current single-chain validator with a graph planner that supports normal branching and merging.
+5. Add a first durable runtime slice:
+   - checkpointable nodes
+   - retries
+   - pause/cancel/resume
+   - explicit failure states
+6. Expand run observability:
+   - execution timeline view
+   - node-level invocation details
+   - prompt/config snapshots
+   - artifact drill-down with provenance
+7. Add a Notebook/Records surface on top of `memory` documents:
+   - create/list/open notes and records
+   - link notes to flows, runs, artifacts, and processors
+   - show provenance and version history
+8. Add server-side projections or indexes for latest documents, run lists, and memory lists so the product does not depend on repeated JSON scans for every screen.
+
+Exit criteria:
+
+- Flows support reusable subgraphs.
+- Runs have a real timeline/details experience.
+- Users can create and browse notebook-style memory items in the client.
+- The runtime can pause/retry/resume at least a minimal durable workflow.
+
+## Phase 2: Build the real hybrid engine
+
+This phase should correspond to the spec roadmap item: high-volume dataflow mode, hybrid interoperation, and advanced debugging.
+
+1. Separate the execution engine into explicit durable and dataflow paths.
+2. Define routing semantics for branching, fan-out, fan-in, and selected-item escalation.
+3. Add high-volume dataflow primitives:
+   - ingestion
+   - transform/enrich
+   - route/filter
+   - batch/sample
+4. Add hybrid handoff semantics between dataflow and durable work.
+5. Implement advanced debugging features:
+   - sampled tracing for high-volume runs
+   - richer trace storage
+   - replay hooks
+   - branch-and-compare groundwork
+6. Add streaming or polling-friendly live run updates so the Studio can show execution state on the graph instead of only after completion.
+
+Exit criteria:
+
+- Durable and dataflow are separate operational modes, not just labels.
+- Hybrid graphs can hand work across those modes.
+- The Studio can inspect both normal runs and sampled high-volume traces.
+
+## Phase 3: Turn memory and collaboration into a governed system
+
+This phase should correspond to the spec roadmap item: memory-aware AI, governance, and seamless team collaboration.
+
+1. Build the retrieval layer over canonical memory/run/artifact documents:
+   - metadata filters
+   - FTS
+   - semantic index as a derived layer
+2. Add memory read/write nodes and persist those reads/writes into run traces.
+3. Add record types and workflow-oriented memory items beyond free-form notes.
+4. Complete collaboration productization:
+   - task UI in the client
+   - richer channel types
+   - better linking between flows, runs, tasks, and notes
+5. Introduce workspace membership, authentication, and RBAC.
+6. Add policy gates:
+   - side-effect approvals
+   - memory write approvals/review states
+   - scope enforcement
+7. Add trust/accountability features:
+   - audit views
+   - redaction policy hooks
+   - cost tracking
+   - per-flow budgets
+
+Exit criteria:
+
+- Memory retrieval is visible, inspectable, and attributable in runs.
+- Team workflows exist beyond chat.
+- Side effects and memory writes can be governed by policy.
+
+## Phase 4: Add the AI meta-layer
+
+1. Build a prompt-to-graph workflow that generates versioned flow drafts rather than mutating live flows directly.
+2. Let AI inspect existing graphs and propose improvements as explicit diffs.
+3. Ground every AI suggestion in notes, runs, artifacts, or prior outcomes.
+4. Add mode recommendation and safe-conversion guidance between durable and dataflow graphs.
+5. Generalize provider support so model selection is not tied to a single backend.
+
+Exit criteria:
+
+- AI can propose flows and changes with traceable evidence.
+- Users can accept, tweak, or reject AI-generated versions safely.
+
+## Phase 5: Complete ecosystem and portability work
+
+1. Implement package import plus reconciliation rules.
+2. Add connector and plugin architecture.
+3. Add more built-in connectors and templates for real user journeys.
+4. Expose observability export hooks for external telemetry tools.
+5. Add solution packs and opinionated starter flows once the platform surfaces are stable.
+
+Exit criteria:
+
+- Flows and related documents can move across environments.
+- The platform can grow through connectors and packaged solutions.
+
+## Immediate next actions
+
+If the goal is to start moving this repo toward the spec now, the next concrete slice should be:
+
+1. Fix the client layout regression and restore a green Flutter suite.
+2. Add a richer run details screen with invocation timeline plus artifact provenance drill-down.
+3. Add a real Notebook/Records client surface on top of `memory`.
+4. Refactor the execution planner so flows can branch and stop hardcoding `hybrid`.
+
+That sequence improves quality first, then closes the biggest product gap between the current prototype and the Phase 1 spec.

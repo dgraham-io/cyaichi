@@ -111,6 +111,8 @@ func (r *DefaultNodeRunner) RunNode(ctx context.Context, req NodeRunRequest) (No
 		return r.runLLMChat(ctx, req)
 	case "file.write":
 		return r.runFileWrite(ctx, req)
+	case "file.monitor":
+		return r.runFileMonitor(ctx, req)
 	default:
 		now := time.Now().UTC().Format(time.RFC3339)
 		return NodeRunResult{
@@ -132,7 +134,7 @@ func (r *DefaultNodeRunner) RunNode(ctx context.Context, req NodeRunRequest) (No
 func (r *DefaultNodeRunner) runFileRead(_ context.Context, req NodeRunRequest) (NodeRunResult, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	text, err := readWorkspaceFile(req.WorkspaceRoot, req.WorkspaceID, req.InputFilePath)
+	text, err := readWorkspaceFile(req.WorkspaceRoot, req.WorkspaceID, req.InputFilePath, false)
 	if err != nil {
 		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("file.read failed: %v", err)}
 	}
@@ -449,6 +451,91 @@ func (r *DefaultNodeRunner) runFileWrite(_ context.Context, req NodeRunRequest) 
 	}, nil
 }
 
+func (r *DefaultNodeRunner) runFileMonitor(_ context.Context, req NodeRunRequest) (NodeRunResult, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	filePathRaw, ok := req.Node.Config["file_path"]
+	if !ok || filePathRaw == nil {
+		return NodeRunResult{}, &ValidationError{Message: "file_path config is required for file.monitor"}
+	}
+	filePath, ok := filePathRaw.(string)
+	if !ok || strings.TrimSpace(filePath) == "" {
+		return NodeRunResult{}, &ValidationError{Message: "file_path config must be a non-empty string"}
+	}
+
+	text, err := readWorkspaceFile(req.WorkspaceRoot, req.WorkspaceID, filePath, true)
+	if err != nil {
+		return NodeRunResult{}, &ValidationError{Message: fmt.Sprintf("file.monitor failed: %v", err)}
+	}
+
+	artifactID := uuid.NewString()
+	artifactVerID := uuid.NewString()
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	artifactDoc := map[string]any{
+		"doc_type":     "artifact",
+		"doc_id":       artifactID,
+		"ver_id":       artifactVerID,
+		"workspace_id": req.WorkspaceID,
+		"created_at":   createdAt,
+		"body": map[string]any{
+			"schema": "artifact/text",
+			"payload": map[string]any{
+				"text": text,
+				"path": filePath,
+			},
+			"provenance": map[string]any{
+				"run_ref": map[string]any{
+					"doc_id":   req.RunID,
+					"ver_id":   req.RunVerID,
+					"selector": "pinned",
+				},
+				"node_id": req.Node.ID,
+				"derived_from": []map[string]any{},
+			},
+		},
+	}
+	artifactBytes, err := json.Marshal(artifactDoc)
+	if err != nil {
+		return NodeRunResult{}, fmt.Errorf("marshal file.monitor artifact: %w", err)
+	}
+
+	return NodeRunResult{
+		Invocation: InvocationRecord{
+			InvocationID: uuid.NewString(),
+			NodeID:       req.Node.ID,
+			Status:       "succeeded",
+			StartedAt:    now,
+			EndedAt:      time.Now().UTC().Format(time.RFC3339),
+			Inputs:       []ArtifactRefWrapper{},
+			Outputs: []ArtifactRefWrapper{
+				{
+					ArtifactRef: map[string]any{
+						"doc_id":   artifactID,
+						"ver_id":   artifactVerID,
+						"selector": "pinned",
+					},
+				},
+			},
+		},
+		Artifacts: []ArtifactDocument{
+			{
+				DocID:     artifactID,
+				VerID:     artifactVerID,
+				CreatedAt: createdAt,
+				JSON:      string(artifactBytes),
+			},
+		},
+		NextArtifact: &ResolvedArtifact{
+			Ref: ArtifactRef{
+				DocID: artifactID,
+				VerID: artifactVerID,
+			},
+			Schema: "artifact/text",
+			Text:   text,
+		},
+	}, nil
+}
+
 type VLLMChatClient struct {
 	baseURL    string
 	apiKey     string
@@ -618,20 +705,25 @@ func clampLLMTimeoutSeconds(seconds int) int {
 	return seconds
 }
 
-func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, error) {
-	rootReal, workspaceDirReal, clean, err := resolveWorkspacePath(workspaceRoot, workspaceID, relPath, false)
+func readWorkspaceFile(workspaceRoot, workspaceID, relPath string, allowOutsideWorkspace bool) (string, error) {
+	rootReal, workspaceDirReal, clean, err := resolveWorkspacePath(workspaceRoot, workspaceID, relPath, false, allowOutsideWorkspace)
 	if err != nil {
 		return "", err
 	}
-	_ = rootReal
-	targetPath := filepath.Join(workspaceDirReal, clean)
+	var targetPath string
+	if rootReal == "" && workspaceDirReal == "" {
+		// absolute path
+		targetPath = clean
+	} else {
+		targetPath = filepath.Join(workspaceDirReal, clean)
+	}
 	targetReal, err := filepath.EvalSymlinks(targetPath)
 	if err != nil {
 		return "", fmt.Errorf("input file is not accessible: %w", err)
 	}
 	targetReal = filepath.Clean(targetReal)
 
-	if !isWithinRoot(workspaceDirReal, targetReal) {
+	if !allowOutsideWorkspace && !isWithinRoot(workspaceDirReal, targetReal) {
 		return "", fmt.Errorf("path escapes workspace root")
 	}
 
@@ -643,7 +735,7 @@ func readWorkspaceFile(workspaceRoot, workspaceID, relPath string) (string, erro
 }
 
 func writeWorkspaceFile(workspaceRoot, workspaceID, relPath, text string) (int, error) {
-	_, workspaceDirReal, clean, err := resolveWorkspacePath(workspaceRoot, workspaceID, relPath, true)
+	_, workspaceDirReal, clean, err := resolveWorkspacePath(workspaceRoot, workspaceID, relPath, true, false)
 	if err != nil {
 		return 0, err
 	}
@@ -670,20 +762,27 @@ func writeWorkspaceFile(workspaceRoot, workspaceID, relPath, text string) (int, 
 	return len(bytes), nil
 }
 
-func resolveWorkspacePath(workspaceRoot, workspaceID, relPath string, allowCreateWorkspaceDir bool) (rootReal, workspaceDirReal, clean string, err error) {
+func resolveWorkspacePath(workspaceRoot, workspaceID, relPath string, allowCreateWorkspaceDir bool, allowAbsolute bool) (rootReal, workspaceDirReal, clean string, err error) {
 	if strings.TrimSpace(workspaceRoot) == "" {
 		workspaceRoot = defaultWorkspaceRoot
 	}
 	if strings.TrimSpace(relPath) == "" {
 		return "", "", "", fmt.Errorf("path is required")
 	}
-	if filepath.IsAbs(relPath) {
+	if filepath.IsAbs(relPath) && !allowAbsolute {
 		return "", "", "", fmt.Errorf("path must be relative")
 	}
 
 	clean = filepath.Clean(relPath)
-	if clean == "." || clean == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", "", "", fmt.Errorf("path traversal is not allowed")
+	if filepath.IsAbs(relPath) {
+		if allowAbsolute {
+			return "", "", clean, nil
+		}
+		// else error already returned above
+	} else {
+		if clean == "." || clean == "" || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return "", "", "", fmt.Errorf("path traversal is not allowed")
+		}
 	}
 
 	if allowCreateWorkspaceDir {

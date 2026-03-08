@@ -437,7 +437,7 @@ func resolveRunFilePaths(req CreateRunRequest, nodes []FlowNode) (filePathResolu
 	fileWriteNodes := make([]FlowNode, 0)
 	for _, node := range nodes {
 		switch node.Type {
-		case "file.read":
+		case "file.read", "file.monitor":
 			fileReadNodes = append(fileReadNodes, node)
 		case "file.write":
 			fileWriteNodes = append(fileWriteNodes, node)
@@ -445,9 +445,15 @@ func resolveRunFilePaths(req CreateRunRequest, nodes []FlowNode) (filePathResolu
 	}
 
 	if inputPath == "" && len(fileReadNodes) > 0 {
-		configInput, _, err := getNodeConfigString(fileReadNodes[0].Config, "input_file")
+		var configKey string
+		if fileReadNodes[0].Type == "file.monitor" {
+			configKey = "file_path"
+		} else {
+			configKey = "input_file"
+		}
+		configInput, _, err := getNodeConfigString(fileReadNodes[0].Config, configKey)
 		if err != nil {
-			return filePathResolution{}, fmt.Errorf("invalid file.read config.input_file: %v", err)
+			return filePathResolution{}, fmt.Errorf("invalid %s config.%s: %v", fileReadNodes[0].Type, configKey, err)
 		}
 		inputPath = strings.TrimSpace(configInput)
 	}

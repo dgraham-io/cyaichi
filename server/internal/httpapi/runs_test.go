@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraham-io/cyaichi/server/internal/engine"
 	"github.com/google/uuid"
 )
 
@@ -99,63 +100,93 @@ type mockChatMessage struct {
 	Content string
 }
 
-func newMockVLLMServer(t *testing.T, responseStatus int, responseBody string) (*httptest.Server, *mockChatRequest) {
-	t.Helper()
-
-	var mu sync.Mutex
-	captured := &mockChatRequest{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "read error", http.StatusBadRequest)
-			return
-		}
-
-		var payload struct {
-			Model       string            `json:"model"`
-			Messages    []mockChatMessage `json:"messages"`
-			Temperature float64           `json:"temperature"`
-		}
-		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
-			return
-		}
-
-		mu.Lock()
-		captured.Authorization = r.Header.Get("Authorization")
-		captured.Model = payload.Model
-		captured.Temperature = payload.Temperature
-		captured.Messages = append([]mockChatMessage{}, payload.Messages...)
-		mu.Unlock()
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(responseStatus)
-		_, _ = w.Write([]byte(responseBody))
-	}))
-
-	t.Cleanup(server.Close)
-	return server, captured
+type mockChatTransport struct {
+	responseStatus int
+	responseBody   string
+	delay          time.Duration
+	mu             sync.Mutex
+	captured       *mockChatRequest
 }
 
-func newDelayedMockVLLMServer(t *testing.T, delay time.Duration) *httptest.Server {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+func (t *mockChatTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Header:     http.Header{"Content-Type": []string{"text/plain"}},
+			Body:       io.NopCloser(strings.NewReader("not found")),
+			Request:    r,
+		}, nil
+	}
+
+	if t.delay > 0 {
+		timer := time.NewTimer(t.delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
 		}
-		time.Sleep(delay)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"too late"}}]}`))
-	}))
-	t.Cleanup(server.Close)
-	return server
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload struct {
+		Model       string            `json:"model"`
+		Messages    []mockChatMessage `json:"messages"`
+		Temperature float64           `json:"temperature"`
+	}
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"text/plain"}},
+			Body:       io.NopCloser(strings.NewReader("bad json")),
+			Request:    r,
+		}, nil
+	}
+
+	t.mu.Lock()
+	t.captured.Authorization = r.Header.Get("Authorization")
+	t.captured.Model = payload.Model
+	t.captured.Temperature = payload.Temperature
+	t.captured.Messages = append([]mockChatMessage{}, payload.Messages...)
+	t.mu.Unlock()
+
+	return &http.Response{
+		StatusCode: t.responseStatus,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(t.responseBody)),
+		Request:    r,
+	}, nil
+}
+
+func newMockVLLMRunner(
+	t *testing.T,
+	responseStatus int,
+	responseBody string,
+	delay time.Duration,
+) (engine.NodeRunner, *mockChatRequest) {
+	t.Helper()
+
+	captured := &mockChatRequest{}
+	httpClient := &http.Client{
+		Transport: &mockChatTransport{
+			responseStatus: responseStatus,
+			responseBody:   responseBody,
+			delay:          delay,
+			captured:       captured,
+		},
+	}
+
+	return engine.NewDefaultNodeRunner(
+		"https://mock-vllm.local",
+		"test-vllm-key",
+		"env-model",
+		120,
+		httpClient,
+	), captured
 }
 
 func TestRunsSelectorHeadResolvesThroughHeadsTable(t *testing.T) {
@@ -304,8 +335,8 @@ func TestRunsInvalidFlowReturnsBadRequest(t *testing.T) {
 
 func TestRunsValidFlowFileReadToLLMChatToFileWriteCreatesFinalOutput(t *testing.T) {
 	mockResp := `{"choices":[{"message":{"content":"mocked assistant response"}}]}`
-	mockServer, captured := newMockVLLMServer(t, http.StatusOK, mockResp)
-	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	runner, captured := newMockVLLMRunner(t, http.StatusOK, mockResp, 0)
+	h := newAPITestHarnessWithRunner(t, runner)
 	workspace := createWorkspaceViaAPI(t, h, "Runs Valid")
 
 	flowDocID := uuid.NewString()
@@ -544,8 +575,8 @@ func TestRunsRejectsPathTraversal(t *testing.T) {
 
 func TestRunsRejectsOutputPathTraversal(t *testing.T) {
 	mockResp := `{"choices":[{"message":{"content":"mocked assistant response"}}]}`
-	mockServer, _ := newMockVLLMServer(t, http.StatusOK, mockResp)
-	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	runner, _ := newMockVLLMRunner(t, http.StatusOK, mockResp, 0)
+	h := newAPITestHarnessWithRunner(t, runner)
 	workspace := createWorkspaceViaAPI(t, h, "Runs Output Traversal")
 
 	flowDocID := uuid.NewString()
@@ -580,8 +611,8 @@ func TestRunsRejectsOutputPathTraversal(t *testing.T) {
 }
 
 func TestRunsLLMFailureReturnsBadGateway(t *testing.T) {
-	mockServer, _ := newMockVLLMServer(t, http.StatusBadGateway, `{"error":"upstream unavailable"}`)
-	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	runner, _ := newMockVLLMRunner(t, http.StatusBadGateway, `{"error":"upstream unavailable"}`, 0)
+	h := newAPITestHarnessWithRunner(t, runner)
 	workspace := createWorkspaceViaAPI(t, h, "Runs LLM Failure")
 
 	flowDocID := uuid.NewString()
@@ -614,8 +645,13 @@ func TestRunsLLMFailureReturnsBadGateway(t *testing.T) {
 }
 
 func TestRunsLLMTimeoutReturnsBadGatewayAndPersistsFailedRun(t *testing.T) {
-	mockServer := newDelayedMockVLLMServer(t, 6*time.Second)
-	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	runner, _ := newMockVLLMRunner(
+		t,
+		http.StatusOK,
+		`{"choices":[{"message":{"content":"too late"}}]}`,
+		6*time.Second,
+	)
+	h := newAPITestHarnessWithRunner(t, runner)
 	workspace := createWorkspaceViaAPI(t, h, "Runs LLM Timeout")
 
 	flowDocID := uuid.NewString()
@@ -799,8 +835,8 @@ func TestRunsUsesFileReadConfigInputDefault(t *testing.T) {
 
 func TestRunsUsesFileWriteConfigOutputDefault(t *testing.T) {
 	mockResp := `{"choices":[{"message":{"content":"default output from config"}}]}`
-	mockServer, _ := newMockVLLMServer(t, http.StatusOK, mockResp)
-	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	runner, _ := newMockVLLMRunner(t, http.StatusOK, mockResp, 0)
+	h := newAPITestHarnessWithRunner(t, runner)
 	workspace := createWorkspaceViaAPI(t, h, "Runs file.write config default")
 
 	flowDocID := uuid.NewString()
@@ -912,8 +948,8 @@ func TestRunsMultipleWritesWithoutPrimaryReturnsBadRequest(t *testing.T) {
 
 func TestRunsLLMChatUsesSystemPromptAndModelOverride(t *testing.T) {
 	mockResp := `{"choices":[{"message":{"content":"mocked response"}}]}`
-	mockServer, captured := newMockVLLMServer(t, http.StatusOK, mockResp)
-	h := newAPITestHarnessWithLLM(t, mockServer.URL, "test-vllm-key", "env-model")
+	runner, captured := newMockVLLMRunner(t, http.StatusOK, mockResp, 0)
+	h := newAPITestHarnessWithRunner(t, runner)
 	workspace := createWorkspaceViaAPI(t, h, "Runs llm system prompt")
 
 	flowDocID := uuid.NewString()

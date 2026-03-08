@@ -29,6 +29,7 @@ type routeDeps struct {
 	vllmKey            string
 	llmModel           string
 	vllmTimeoutSeconds int
+	runner             engine.NodeRunner
 }
 
 type routeSpec struct {
@@ -486,11 +487,21 @@ func registerRoutes(mux *http.ServeMux, deps *routeDeps) {
 		ch := &CollaborationHandler{store: deps.docStore, validator: deps.validator}
 		dh := &DocsHandler{store: deps.docStore, validator: deps.validator}
 		wh := &WorkspacesHandler{store: deps.docStore, validator: deps.validator, notes: nh, collaboration: ch, workspaceRoot: deps.workspaceRoot}
+		runner := deps.runner
+		if runner == nil {
+			runner = engine.NewDefaultNodeRunner(
+				deps.vllmBaseURL,
+				deps.vllmKey,
+				deps.llmModel,
+				deps.vllmTimeoutSeconds,
+				nil,
+			)
+		}
 		rh := &RunsHandler{
 			service: engine.NewRunService(
 				deps.docStore,
 				deps.validator,
-				engine.NewDefaultNodeRunner(deps.vllmBaseURL, deps.vllmKey, deps.llmModel, deps.vllmTimeoutSeconds, nil),
+				runner,
 				deps.workspaceRoot,
 			),
 		}

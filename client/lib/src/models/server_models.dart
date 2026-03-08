@@ -235,7 +235,52 @@ class MessageListItem {
   }
 }
 
+class TaskListItem {
+  TaskListItem({
+    required this.docId,
+    required this.verId,
+    required this.createdAt,
+    required this.title,
+    required this.bodyPreview,
+    required this.scope,
+    required this.status,
+    required this.channelDocId,
+    required this.assigneeLabel,
+    required this.refs,
+  });
 
+  final String docId;
+  final String verId;
+  final String createdAt;
+  final String title;
+  final String bodyPreview;
+  final String scope;
+  final String status;
+  final String channelDocId;
+  final String assigneeLabel;
+  final List<CollaborationRef> refs;
+
+  factory TaskListItem.fromJson(Map<String, dynamic> json) {
+    final rawRefs = json['refs'];
+    return TaskListItem(
+      docId: json['doc_id'] as String? ?? '',
+      verId: json['ver_id'] as String? ?? '',
+      createdAt: json['created_at'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      bodyPreview: json['body_preview'] as String? ?? '',
+      scope: json['scope'] as String? ?? '',
+      status: json['status'] as String? ?? 'open',
+      channelDocId: json['channel_doc_id'] as String? ?? '',
+      assigneeLabel: json['assignee_label'] as String? ?? '',
+      refs: rawRefs is List<dynamic>
+          ? rawRefs
+                .whereType<Map<String, dynamic>>()
+                .map(CollaborationRef.fromJson)
+                .toList(growable: false)
+          : const <CollaborationRef>[],
+    );
+  }
+}
 
 class MemoryCreated {
   MemoryCreated({required this.docId, required this.verId});
@@ -487,7 +532,18 @@ List<MessageListItem> parseMessageListResponse(Map<String, dynamic> json) {
       .toList(growable: false);
 }
 
+List<TaskListItem> parseTaskListResponse(Map<String, dynamic> json) {
+  final rawItems = json['items'];
+  if (rawItems is! List<dynamic>) {
+    return const <TaskListItem>[];
+  }
 
+  return rawItems
+      .whereType<Map<String, dynamic>>()
+      .map(TaskListItem.fromJson)
+      .where((item) => item.docId.isNotEmpty && item.verId.isNotEmpty)
+      .toList(growable: false);
+}
 
 List<NodeTypeDef> parseNodeTypeListResponse(Map<String, dynamic> json) {
   final rawItems = json['items'];

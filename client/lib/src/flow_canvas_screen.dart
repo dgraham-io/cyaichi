@@ -601,49 +601,50 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
   Widget _buildWorkspaceLeadingSection({required bool hasSelectedWorkspace}) {
     return Padding(
       padding: const EdgeInsets.only(left: 12),
-      child: Row(
-        key: const Key('workspace-title-row'),
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_isLoadingWorkspaces) ...[
-            const SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 6),
-          ],
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 160),
-            child: Text(
-              key: const Key('workspace-title-label'),
-              _currentWorkspaceLabel,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: hasSelectedWorkspace
-                  ? null
-                  : Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-            ),
-          ),
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: PopupMenuButton<_WorkspaceMenuAction>(
-              key: const Key('workspace-actions-button'),
-              tooltip: 'Workspace actions',
-              iconSize: 18,
-              padding: EdgeInsets.zero,
-              icon: const Icon(Icons.more_vert),
-              onSelected: _openWorkspaceMenuAction,
-              itemBuilder: (context) => _buildWorkspaceMenuItems(
-                context,
-                hasSelectedWorkspace: hasSelectedWorkspace,
+      child: LayoutBuilder(
+        builder: (context, _) => Row(
+          key: const Key('workspace-title-row'),
+          mainAxisSize: MainAxisSize.max,
+          children: [
+            if (_isLoadingWorkspaces) ...[
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Expanded(
+              child: Text(
+                key: const Key('workspace-title-label'),
+                _currentWorkspaceLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: hasSelectedWorkspace
+                    ? null
+                    : Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
               ),
             ),
-          ),
-        ],
+            SizedBox(
+              width: 36,
+              height: 36,
+              child: PopupMenuButton<_WorkspaceMenuAction>(
+                key: const Key('workspace-actions-button'),
+                tooltip: 'Workspace actions',
+                iconSize: 18,
+                padding: EdgeInsets.zero,
+                icon: const Icon(Icons.more_vert),
+                onSelected: _openWorkspaceMenuAction,
+                itemBuilder: (context) => _buildWorkspaceMenuItems(
+                  context,
+                  hasSelectedWorkspace: hasSelectedWorkspace,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -673,7 +674,9 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
         ? 'Run (fix flow errors)'
         : 'Run (fix flow errors): $firstValidationIssue';
 
-    final displayTitle = _flowTitleController.text.trim().isEmpty ? '(untitled flow)' : _flowTitleController.text;
+    final displayTitle = _flowTitleController.text.trim().isEmpty
+        ? '(untitled flow)'
+        : _flowTitleController.text;
     return Row(
       key: const Key('flow-title-overlay'),
       mainAxisSize: MainAxisSize.min,
@@ -699,7 +702,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
             MenuItemButton(
               key: const Key('flow-title-edit-menu-select-flow'),
               leadingIcon: const Icon(Icons.folder_open),
-              onPressed: !_isSavingToServer && _selectedWorkspaceId != null ? () { unawaited(_showSelectFlowDialog()); } : null,
+              onPressed: !_isSavingToServer && _selectedWorkspaceId != null
+                  ? () {
+                      unawaited(_showSelectFlowDialog());
+                    }
+                  : null,
               child: Tooltip(
                 message: _selectedWorkspaceId != null
                     ? 'Open a saved flow'
@@ -716,7 +723,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
             MenuItemButton(
               key: const Key('flow-title-edit-menu-update'),
               leadingIcon: const Icon(Icons.system_update_alt),
-              onPressed: !_isSavingToServer && _selectedWorkspaceId != null && _isFlowDirty ? () { unawaited(_saveNewFlowVersionToServer()); } : null,
+              onPressed:
+                  !_isSavingToServer &&
+                      _selectedWorkspaceId != null &&
+                      _isFlowDirty
+                  ? () {
+                      unawaited(_saveNewFlowVersionToServer());
+                    }
+                  : null,
               child: const Tooltip(
                 message: 'Save as new flow version',
                 child: Text('Update'),
@@ -725,7 +739,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
             MenuItemButton(
               key: const Key('flow-title-edit-menu-duplicate'),
               leadingIcon: const Icon(Icons.content_copy_outlined),
-              onPressed: !_isSavingToServer ? () { unawaited(_duplicateCurrentFlow()); } : null,
+              onPressed: !_isSavingToServer
+                  ? () {
+                      unawaited(_duplicateCurrentFlow());
+                    }
+                  : null,
               child: const Tooltip(
                 message: 'Duplicate this flow',
                 child: Text('Duplicate'),
@@ -734,7 +752,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
             MenuItemButton(
               key: const Key('flow-title-edit-menu-set-head'),
               leadingIcon: const Icon(Icons.push_pin_outlined),
-              onPressed: !_isSavingToServer && _selectedWorkspaceId != null ? () { unawaited(_setCurrentFlowAsHead()); } : null,
+              onPressed: !_isSavingToServer && _selectedWorkspaceId != null
+                  ? () {
+                      unawaited(_setCurrentFlowAsHead());
+                    }
+                  : null,
               child: const Tooltip(
                 message: 'Set workspace head to current flow',
                 child: Text('Set head'),
@@ -782,7 +804,11 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
           child: IconButton(
             key: const Key('flow-title-run-button'),
             tooltip: null,
-            onPressed: runEnabled ? () { unawaited(_runFlow()); } : null,
+            onPressed: runEnabled
+                ? () {
+                    unawaited(_runFlow());
+                  }
+                : null,
             icon: SizedBox(
               width: 22,
               height: 22,
@@ -797,18 +823,14 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
                   : Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        const Center(
-                          child: Icon(Icons.play_arrow_rounded),
-                        ),
+                        const Center(child: Icon(Icons.play_arrow_rounded)),
                         if (showRunBlockedOverlay)
                           Positioned(
                             right: -2,
                             top: -2,
                             child: Icon(
                               Icons.block,
-                              key: const Key(
-                                'flow-title-run-blocked-overlay',
-                              ),
+                              key: const Key('flow-title-run-blocked-overlay'),
                               size: 13,
                               color: Theme.of(
                                 context,
@@ -820,10 +842,7 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
             ),
             iconSize: 20,
             visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints.tightFor(
-              width: 40,
-              height: 40,
-            ),
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
           ),
         ),
       ],
@@ -2995,9 +3014,13 @@ class _FlowCanvasScreenState extends State<FlowCanvasScreen>
 
   List<String> _collectReadNodeInputDefaults() {
     return _controller.nodes.values
-        .where((node) => node.type == 'file.read' || node.type == 'file.monitor')
+        .where(
+          (node) => node.type == 'file.read' || node.type == 'file.monitor',
+        )
         .map((node) {
-          final configKey = node.type == 'file.monitor' ? 'file_path' : 'input_file';
+          final configKey = node.type == 'file.monitor'
+              ? 'file_path'
+              : 'input_file';
           return (_readConfig(node.data)[configKey] as String?) ?? '';
         })
         .toList(growable: false);
@@ -4195,7 +4218,6 @@ class _SelectFlowDialogState extends State<_SelectFlowDialog> {
     return id.substring(0, 8);
   }
 }
-
 
 class _ProcessorPalettePanel extends StatelessWidget {
   const _ProcessorPalettePanel({

@@ -94,8 +94,6 @@ class _WidgetTestApiClient extends ApiClient {
     return const <MessageListItem>[];
   }
 
-
-
   @override
   Future<List<NoteListItem>> getNotes({required String workspaceId}) async {
     return const <NoteListItem>[];
@@ -232,38 +230,45 @@ void main() {
     },
   );
 
-  testWidgets('app bar shows workspace section on left and new flow button', (
-    WidgetTester tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1600, 1000));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets(
+    'app bar shows workspace section and flow menu can create a new flow',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1600, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
-    });
-    await tester.pumpWidget(
-      MaterialApp(
-        home: FlowCanvasScreen(
-          apiClientFactory:
-              ({
-                required String baseUrl,
-                required int runRequestTimeoutSeconds,
-              }) => _WidgetTestApiClient(),
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'client.selected_workspace_id': '11111111-1111-1111-1111-111111111111',
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlowCanvasScreen(
+            apiClientFactory:
+                ({
+                  required String baseUrl,
+                  required int runRequestTimeoutSeconds,
+                }) => _WidgetTestApiClient(),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('workspace-title-row')), findsOneWidget);
-    expect(find.byKey(const Key('workspace-actions-button')), findsOneWidget);
-    expect(find.byKey(const Key('new-flow-button')), findsOneWidget);
-    expect(find.text('My Flow'), findsOneWidget);
+      expect(find.byKey(const Key('workspace-title-row')), findsOneWidget);
+      expect(find.byKey(const Key('workspace-actions-button')), findsOneWidget);
+      expect(
+        find.byKey(const Key('flow-title-actions-button')),
+        findsOneWidget,
+      );
+      expect(find.text('My Flow'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('new-flow-button')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('flow-title-actions-button')));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Untitled Flow'), findsOneWidget);
-  });
+      await tester.tap(find.byKey(const Key('flow-title-edit-menu-new-flow')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Untitled Flow'), findsOneWidget);
+    },
+  );
 
   testWidgets('node palette search filters and clear restores list', (
     WidgetTester tester,
@@ -448,13 +453,22 @@ void main() {
 
     expect(find.byKey(const Key('sidebar_tab_activity')), findsOneWidget);
     expect(find.byKey(const Key('activity-channel-dropdown')), findsOneWidget);
-    expect(find.byKey(const Key('activity-channel-actions-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('activity-channel-actions-button')),
+      findsOneWidget,
+    );
     expect(find.text('Daily Log'), findsOneWidget);
     expect(find.textContaining('First preview line'), findsOneWidget);
     expect(find.textContaining('Second preview line'), findsOneWidget);
     expect(find.byKey(const Key('activity-message-list')), findsOneWidget);
-    expect(find.byKey(const Key('activity-inline-message-box')), findsOneWidget);
-    expect(find.byKey(const Key('activity-inline-send-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('activity-inline-message-box')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('activity-inline-send-button')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('activity-inline-post-button')), findsNothing);
     expect(find.text('Dana'), findsNothing);
     expect(find.text('Planner Agent'), findsNothing);

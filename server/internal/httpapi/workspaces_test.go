@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraham-io/cyaichi/server/internal/engine"
 	"github.com/dgraham-io/cyaichi/server/internal/schema"
 	"github.com/dgraham-io/cyaichi/server/internal/store"
 	"github.com/google/uuid"
@@ -30,6 +31,29 @@ func newAPITestHarness(t *testing.T) *apiTestHarness {
 func newAPITestHarnessWithLLM(t *testing.T, vllmBaseURL, vllmKey, llmModel string) *apiTestHarness {
 	t.Helper()
 
+	return newAPITestHarnessWithDeps(t, routeDeps{
+		workspaceRoot:      t.TempDir(),
+		vllmBaseURL:        vllmBaseURL,
+		vllmKey:            vllmKey,
+		llmModel:           llmModel,
+		vllmTimeoutSeconds: 120,
+	})
+}
+
+func newAPITestHarnessWithRunner(t *testing.T, runner engine.NodeRunner) *apiTestHarness {
+	t.Helper()
+
+	return newAPITestHarnessWithDeps(t, routeDeps{
+		workspaceRoot:      t.TempDir(),
+		llmModel:           "gpt-oss120:b",
+		vllmTimeoutSeconds: 120,
+		runner:             runner,
+	})
+}
+
+func newAPITestHarnessWithDeps(t *testing.T, deps routeDeps) *apiTestHarness {
+	t.Helper()
+
 	dbPath := filepath.Join(t.TempDir(), "api.db")
 	s, err := store.Open(context.Background(), dbPath)
 	if err != nil {
@@ -45,12 +69,15 @@ func newAPITestHarnessWithLLM(t *testing.T, vllmBaseURL, vllmKey, llmModel strin
 	if err != nil {
 		t.Fatalf("create validator: %v", err)
 	}
-	workspaceRoot := t.TempDir()
+	mux := http.NewServeMux()
+	deps.docStore = s
+	deps.validator = v
+	registerRoutes(mux, &deps)
 
 	return &apiTestHarness{
-		mux:           NewMux(s, v, workspaceRoot, vllmBaseURL, vllmKey, llmModel, 120),
+		mux:           mux,
 		store:         s,
-		workspaceRoot: workspaceRoot,
+		workspaceRoot: deps.workspaceRoot,
 	}
 }
 
